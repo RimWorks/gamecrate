@@ -1,28 +1,18 @@
 {
-  "name": "gamecrate",
-  "version": "0.1.0",
-  "type": "module",
-  "bin": {
-    "gamecrate": "./src/index.ts"
-  },
-  "exports": {
-    ".": "./src/lib.ts"
-  },
-  "types": "./src/lib.ts",
-  "files": ["src"],
+  "name": "gamecrate-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
-    "build": "bun build ./src/index.ts --compile --outfile dist/gamecrate"
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "vitest run",
+    "build": "npm run build --workspaces"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.7.0"
-  },
-  "dependencies": {
-    "commander": "15.0.0",
-    "jsonc-parser": "3.3.1",
-    "resolve.exports": "^2.0.3",
-    "zod": "4.6.4"
+    "oxlint": "1.83.0",
+    "vitest": "^5.0.1"
   }
 }

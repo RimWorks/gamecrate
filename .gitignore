@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.log
+
+# fetched by vale sync, never committed
+Styles/Google/

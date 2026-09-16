@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+    <name>No Steam Popup</name>
+    <packageId>CryptikLemur.NoSteamPopup</packageId>
+    <author>CryptikLemur</author>
+    <supportedVersions>
+        <li>1.6</li>
+    </supportedVersions>
+    <modDependencies>
+        <li>
+            <packageId>concordlib.concord</packageId>
+            <displayName>Concord</displayName>
+            <steamWorkshopUrl>steam://url/CommunityFilePage/3758333473</steamWorkshopUrl>
+        </li>
+    </modDependencies>
+    <loadAfter>
+        <li>concordlib.concord</li>
+    </loadAfter>
+    <description>Drops the "Could not initialize Steam API" dialog that RimWorld shows on the main menu when no Steam client is reachable.
+
+Built for gamecrate containers, where there is never a Steam client and the dialog is only ever in the way. Nothing else about Steam changes: workshop, stats and the overlay stay exactly as broken or working as they were.</description>
+</ModMetaData>

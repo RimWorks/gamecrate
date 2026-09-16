@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "rules": {
+    // Every sort here is on an array this code just built, so mutating it is the point.
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-array-reverse": "off",
+    // Nvidia's GLX offload vars really are spelled with two leading underscores.
+    "eslint/no-underscore-dangle": "off",
+    // Misses flags a closure sets from outside the loop, such as window.ts's `stopped`.
+    "eslint/no-unmodified-loop-condition": "off",
+    // Small helpers read better next to the one function that calls them.
+    "unicorn/consistent-function-scoping": "off"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "packages/rimworld/mods/"]
+}

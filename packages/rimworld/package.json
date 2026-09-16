@@ -1,0 +1,36 @@
+{
+  "name": "@gamecrate/rimworld",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "bun build ./src/index.ts --target=node --outfile dist/index.js",
+    "prepare": "npm run build",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "saxes": "^6.0.0",
+    "xmlchars": "^2.2.0"
+  },
+  "devDependencies": {
+    "@gamecrate/cli": "*",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

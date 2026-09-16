@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>NoSteamPopup</AssemblyName>
+    <RootNamespace>NoSteamPopup</RootNamespace>
+    <OutDir>$(MSBuildProjectDirectory)/../../Assemblies/</OutDir>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <DebugType>none</DebugType>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4871" PrivateAssets="all" />
+    <!-- Matches the Concord the workshop mod ships; it supplies the runtime, we only compile. -->
+    <PackageReference Include="Concord.Ref" Version="0.16.0" PrivateAssets="all" />
+    <PackageReference Include="Concord.Analyzers" Version="0.16.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

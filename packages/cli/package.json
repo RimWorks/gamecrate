@@ -1,0 +1,41 @@
+{
+  "name": "@gamecrate/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "gamecrate": "./dist/gamecrate.js"
+  },
+  "exports": {
+    ".": "./src/lib.ts"
+  },
+  "types": "./src/lib.ts",
+  "files": [
+    "src",
+    "dist/gamecrate.js"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "npm run build:node && npm run build:binary",
+    "build:node": "bun build ./src/index.ts --target=node --packages=external --outfile dist/gamecrate.js",
+    "build:binary": "bun build ./src/index.ts --compile --outfile dist/gamecrate",
+    "prepare": "npm run build:node",
+    "prepack": "npm run build:node"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/picomatch": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "jsonc-parser": "3.3.1",
+    "picomatch": "^4.0.2",
+    "resolve.exports": "^2.0.3",
+    "yaml": "^2.7.0",
+    "zod": "4.6.4"
+  }
+}
