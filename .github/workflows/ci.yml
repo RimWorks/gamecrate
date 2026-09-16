@@ -1,10 +1,9 @@
 name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -26,15 +25,13 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
 
-      # compiled.test.ts builds a real binary, and both build scripts shell out to bun
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
-      # --ignore-scripts skips each workspace's prepare, which would build before the lint runs
       - name: Install
         run: npm ci --ignore-scripts
 
@@ -44,7 +41,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # plugin.test.ts imports packages/rimworld/dist/index.js, the file a user's config points at
       - name: Build
         run: npm run build
 

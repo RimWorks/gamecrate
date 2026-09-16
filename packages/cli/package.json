@@ -1,6 +1,6 @@
 {
   "name": "@gamecrate/cli",
-  "version": "0.1.0",
+  "version": "0.0.0-dev",
   "description": "Run a modded game in a container, with mods resolved from your local checkouts.",
   "license": "MIT",
   "type": "module",
@@ -21,21 +21,26 @@
     "gamecrate": "./dist/gamecrate.js"
   },
   "exports": {
-    ".": "./src/lib.ts"
+    ".": {
+      "types": "./dist/types/lib.d.ts",
+      "default": "./dist/lib.js"
+    }
   },
-  "types": "./src/lib.ts",
+  "types": "./dist/types/lib.d.ts",
   "files": [
-    "src",
-    "dist/gamecrate.js"
+    "dist/gamecrate.js",
+    "dist/lib.js",
+    "dist/types"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "npm run build:node && npm run build:binary",
-    "build:node": "bun build ./src/index.ts --target=node --packages=external --outfile dist/gamecrate.js",
-    "build:binary": "bun build ./src/index.ts --compile --outfile dist/gamecrate",
-    "prepare": "npm run build:node",
-    "prepack": "npm run build:node"
+    "build": "npm run build:node && npm run build:types && npm run build:binary",
+    "build:node": "bun build ./src/index.ts --target=node --packages=external --define __VERSION__='\"'${npm_package_version:-0.0.0-dev}'\"' --outfile dist/gamecrate.js && bun build ./src/lib.ts --target=node --packages=external --outfile dist/lib.js",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:binary": "bun build ./src/index.ts --compile --define __VERSION__='\"'${npm_package_version:-0.0.0-dev}'\"' --outfile dist/gamecrate",
+    "prepare": "npm run build:node && npm run build:types",
+    "prepack": "npm run build:node && npm run build:types"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1,6 +1,6 @@
 {
   "name": "@gamecrate/rimworld",
-  "version": "0.1.0",
+  "version": "0.0.0-dev",
   "description": "RimWorld plugin for gamecrate: About.xml, ModsConfig.xml and Prefs.xml.",
   "license": "MIT",
   "type": "module",
@@ -20,19 +20,20 @@
   "main": "./dist/index.js",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": "./dist/types/index.d.ts",
       "default": "./dist/index.js"
     }
   },
-  "types": "./src/index.ts",
+  "types": "./dist/types/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "bun build ./src/index.ts --target=node --outfile dist/index.js",
+    "build": "npm run build:node && npm run build:types",
+    "build:node": "bun build ./src/index.ts --target=node --outfile dist/index.js",
+    "build:types": "tsc -p tsconfig.build.json",
     "prepare": "npm run build",
     "prepack": "npm run build"
   },
