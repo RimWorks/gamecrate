@@ -25,6 +25,10 @@ jobs:
       pull-requests: write
       id-token: write
       packages: read
+    env:
+      # npm version would otherwise reify the workspace, retiring the --no-save release
+      # tooling mid-run, npm's own directory included
+      npm_config_workspaces_update: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,9 +43,6 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
-
-      - name: Upgrade npm
-        run: npm install -g npm@latest
 
       - name: Install
         run: npm ci --ignore-scripts
