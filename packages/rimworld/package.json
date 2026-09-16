@@ -1,7 +1,19 @@
 {
   "name": "@gamecrate/rimworld",
   "version": "0.1.0",
+  "description": "RimWorld plugin for gamecrate: About.xml, ModsConfig.xml and Prefs.xml.",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RimWorks/gamecrate.git",
+    "directory": "packages/rimworld"
+  },
+  "homepage": "https://github.com/RimWorks/gamecrate/tree/main/packages/rimworld#readme",
+  "bugs": "https://github.com/RimWorks/gamecrate/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },

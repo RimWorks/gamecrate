@@ -1,7 +1,19 @@
 {
   "name": "@gamecrate/cli",
   "version": "0.1.0",
+  "description": "Run a modded game in a container, with mods resolved from your local checkouts.",
+  "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RimWorks/gamecrate.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/RimWorks/gamecrate#readme",
+  "bugs": "https://github.com/RimWorks/gamecrate/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22"
   },
