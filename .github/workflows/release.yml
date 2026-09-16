@@ -46,6 +46,11 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      # rimworld's prepare typechecks against the cli's emitted declarations, so the tooling
+      # install below cannot be the thing that first runs it
+      - name: Build
+        run: npm run build
+
       - name: Install release tooling
         env:
           GITHUB_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,9 +60,6 @@ jobs:
           npm install --no-save \
             semantic-release@25.0.9 \
             @discordservers/semantic-release-monorepo@1.0.0
-
-      - name: Build
-        run: npm run build
 
       - name: Release @gamecrate/cli
         working-directory: packages/cli
