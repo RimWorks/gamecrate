@@ -1,0 +1,28 @@
+{
+  "name": "gamecrate",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "gamecrate": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/lib.ts"
+  },
+  "types": "./src/lib.ts",
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "bun build ./src/index.ts --compile --outfile dist/gamecrate"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "jsonc-parser": "3.3.1",
+    "resolve.exports": "^2.0.3",
+    "zod": "4.6.4"
+  }
+}

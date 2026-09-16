@@ -1,0 +1,125 @@
+import { readdir, stat } from 'node:fs/promises'
+import { join, relative } from 'node:path'
+
+import type { StaleReport } from '../types'
+
+/** Directories that never hold a mod's own sources or shipped assemblies. */
+const SKIP_DIRS = new Set(['.git', '.retired', '.vs', 'bin', 'node_modules', 'obj'])
+
+/**
+ * A mod's Textures tree alone runs to five figures, so the cap has to clear it. A walk that
+ * stops before it reaches Source/ reports "fresh" for a mod it never looked at.
+ */
+const ENTRY_LIMIT = 20_000
+
+export interface Timestamped {
+  /** Relative to the mod directory. */
+  path: string
+  mtimeMs: number
+}
+
+export interface BuildTimes {
+  newestSource?: Timestamped
+  newestAssembly?: Timestamped
+  /** Every .cs mtime, so a report can count how many beat the assembly. */
+  sourceTimes: number[]
+}
+
+/** One walk answers both questions: is this stale, and which files say so. */
+export async function scanBuildTimes(dir: string): Promise<BuildTimes> {
+  const times: BuildTimes = { sourceTimes: [] }
+  let budget = ENTRY_LIMIT
+
+  const walk = async (current: string, inAssemblies: boolean): Promise<void> => {
+    let entries
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (budget-- <= 0) return
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name.toLowerCase())) continue
+        // RimWorld ships per-version Assemblies dirs, so it is any depth, not just the root.
+        await walk(path, inAssemblies || entry.name === 'Assemblies')
+        continue
+      }
+      if (!entry.isFile()) continue
+      const lower = entry.name.toLowerCase()
+      const isSource = lower.endsWith('.cs')
+      const isAssembly = inAssemblies && lower.endsWith('.dll')
+      if (!isSource && !isAssembly) continue
+
+      let mtimeMs: number
+      try {
+        mtimeMs = (await stat(path)).mtimeMs
+      } catch {
+        continue
+      }
+      const found: Timestamped = { path: relative(dir, path), mtimeMs }
+      if (isSource) {
+        times.sourceTimes.push(mtimeMs)
+        if (mtimeMs > (times.newestSource?.mtimeMs ?? -1)) times.newestSource = found
+      } else if (mtimeMs > (times.newestAssembly?.mtimeMs ?? -1)) {
+        times.newestAssembly = found
+      }
+    }
+  }
+
+  await walk(dir, false)
+  return times
+}
+
+/**
+ * Drives `--build auto`, so a mod that has never been compiled counts as stale. The warning
+ * is the stricter one: see staleReport.
+ */
+export function decideStale(times: BuildTimes): boolean {
+  const { newestSource, newestAssembly } = times
+  if (newestSource === undefined) return false
+  return newestAssembly === undefined || newestSource.mtimeMs > newestAssembly.mtimeMs
+}
+
+/**
+ * Null when there is nothing to say: no C#, no assemblies to compare against, or the build is
+ * current. A mod may legitimately ship XML only, so this never reports on one.
+ */
+export function staleReport(times: BuildTimes): StaleReport | null {
+  const { newestSource, newestAssembly } = times
+  if (newestSource === undefined || newestAssembly === undefined) return null
+  if (newestSource.mtimeMs <= newestAssembly.mtimeMs) return null
+  return {
+    newestSource: newestSource.path,
+    newestSourceMs: newestSource.mtimeMs,
+    assembly: newestAssembly.path,
+    assemblyMs: newestAssembly.mtimeMs,
+    newerCount: times.sourceTimes.filter((t) => t > newestAssembly.mtimeMs).length,
+  }
+}
+
+/** Lines up the continuation under the message, past the `warning: ` that warn() adds. */
+const INDENT = ' '.repeat('warning: '.length)
+
+export function staleWarning(packageId: string, report: StaleReport, now = Date.now()): string {
+  const files = report.newerCount === 1 ? '1 source file' : `${report.newerCount} source files`
+  return [
+    `${packageId} has ${files} newer than ${report.assembly}`,
+    `${INDENT}newest: ${report.newestSource} (${ago(report.newestSourceMs, now)})`,
+    `${INDENT}you are probably running a stale build`,
+  ].join('\n')
+}
+
+/** Coarse on purpose: "4m" is the whole signal, a duration to the second is noise. */
+export function duration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86_400)}d`
+}
+
+export function ago(mtimeMs: number, now = Date.now()): string {
+  return `${duration(now - mtimeMs)} ago`
+}
