@@ -17,6 +17,7 @@ import {
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
 import { parseJsonc } from '../src/config/jsonc'
+import { CONFIG_SUFFIXES, orderedKeys, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
 import { GamecrateError, Exit } from '../src/types'
 import type { GameConfig, Problem, RootConfig } from '../src/types'
@@ -834,5 +835,61 @@ describe('profile aliases', () => {
       games: { atlas: { profiles: { a: { mods: [], aliases: ['doctor'] } } } },
     })
     expect(find(problems, 'reserved name')).toBeDefined()
+  })
+})
+
+describe('config formats', () => {
+  test('yaml and json parse to the same object', () => {
+    const fromYaml = readConfigText('game: rimworld\nprofiles:\n  dev:\n    mods: [A.B]\n', 'x.yml')
+    const fromJson = readConfigText('{"game":"rimworld","profiles":{"dev":{"mods":["A.B"]}}}', 'x.json')
+    expect(fromYaml).toEqual(fromJson)
+  })
+
+  test('jsonc comments and trailing commas survive', () => {
+    const value = readConfigText('{\n  // a note\n  "game": "rimworld",\n}', 'x.jsonc')
+    expect(value).toEqual({ game: 'rimworld' })
+  })
+
+  test('an unknown suffix is a config error naming the file', () => {
+    try {
+      readConfigText('game: rimworld', '/tmp/profiles.toml')
+      throw new Error('expected a throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(GamecrateError)
+      expect((error as GamecrateError).code).toBe(Exit.Config)
+      expect((error as GamecrateError).message).toContain('/tmp/profiles.toml')
+    }
+  })
+
+  test('a yaml syntax error names the file and keeps the parser detail', () => {
+    try {
+      readConfigText('game: [unclosed\n', '/tmp/.gamecrate.yml')
+      throw new Error('expected a throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(GamecrateError)
+      expect((error as GamecrateError).message).toContain('/tmp/.gamecrate.yml')
+      expect((error as GamecrateError).detail).toBeTruthy()
+    }
+  })
+
+  // js sorts all-integer object keys to the front, so Object.keys lies about which
+  // profile was written first. NAME_PATTERN allows a profile called 2024.
+  test('orderedKeys reports source order, not Object.keys order', () => {
+    const yaml = 'profiles:\n  2024:\n    mods: []\n  dev:\n    mods: []\n  1:\n    mods: []\n'
+    expect(orderedKeys(yaml, 'x.yml', 'profiles')).toEqual(['2024', 'dev', '1'])
+
+    const json = '{"profiles":{"2024":{},"dev":{},"1":{}}}'
+    expect(orderedKeys(json, 'x.json', 'profiles')).toEqual(['2024', 'dev', '1'])
+
+    expect(Object.keys({ 2024: 1, dev: 1, 1: 1 })).toEqual(['1', '2024', 'dev'])
+  })
+
+  test('orderedKeys is empty when the key is missing or not an object', () => {
+    expect(orderedKeys('game: rimworld\n', 'x.yml', 'profiles')).toEqual([])
+    expect(orderedKeys('profiles: []\n', 'x.yml', 'profiles')).toEqual([])
+  })
+
+  test('CONFIG_SUFFIXES lists the formats gamecrate probes for', () => {
+    expect(CONFIG_SUFFIXES).toEqual(['.yml', '.yaml', '.json', '.jsonc'])
   })
 })
