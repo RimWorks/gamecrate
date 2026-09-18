@@ -12,10 +12,10 @@ let treeA: string
 let treeB: string
 
 function git(cwd: string, ...argv: string[]): void {
-  // The fixture commit would otherwise open the commit-msg review window and block, and only
-  // one of those can be open at a time, so it would also stall every other repo on the machine.
-  const env = { ...process.env, GIT_COMMIT_REVIEW: '0' }
-  const r = spawnSync('git', ['-C', cwd, ...argv], { encoding: 'utf8', env })
+  // A global core.hooksPath applies to this throwaway repo too. The fixture commit would open
+  // the commit-msg review window and block, and only one of those can be open at a time, so it
+  // would also stall every other repo on the machine.
+  const r = spawnSync('git', ['-C', cwd, '-c', 'core.hooksPath=', ...argv], { encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`git ${argv.join(' ')} failed: ${r.stderr}`)
 }
 

@@ -490,30 +490,6 @@ describe('help', () => {
   })
 })
 
-function captureStderr(body: () => void): { text: string; exit?: number } {
-  const realWrite = process.stderr.write.bind(process.stderr)
-  const realExit = process.exit.bind(process)
-  let text = ''
-  let exit: number | undefined
-  process.stderr.write = ((chunk: string) => {
-    text += chunk
-    return true
-  }) as typeof process.stderr.write
-  process.exit = ((code?: number) => {
-    exit = code
-    throw new Error('__exit__')
-  }) as typeof process.exit
-  try {
-    body()
-  } catch (error) {
-    if ((error as Error).message !== '__exit__') throw error
-  } finally {
-    process.stderr.write = realWrite
-    process.exit = realExit
-  }
-  return { text, ...(exit === undefined ? {} : { exit }) }
-}
-
 describe('reportProblems', () => {
   const problems: Problem[] = [
     { where: '/games/beacon/profiles/kitted/mods/0', message: 'unknown mod Bridge.Wayltih', suggestion: 'Bridge.Lantern' },
@@ -522,24 +498,45 @@ describe('reportProblems', () => {
     { where: '/games/beacon/profiles/kitted/mods/3', message: 'no configured steamAppId' },
   ]
 
-  test('every problem is printed, not just the first', () => {
-    const { text, exit } = captureStderr(() => reportProblems(problems))
-    for (const problem of problems) expect(text).toContain(problem.message)
-    expect(text).toContain('4 problems')
-    expect(text).toContain('did you mean Bridge.Lantern?')
-    expect(exit).toBe(Exit.Resolution)
+  function thrown(body: () => never): GamecrateError {
+    try {
+      body()
+    } catch (error) {
+      expect(error).toBeInstanceOf(GamecrateError)
+      return error as GamecrateError
+    }
+    throw new Error('expected a GamecrateError')
+  }
+
+  test('every problem is carried on the error, not just the first', () => {
+    const error = thrown(() => reportProblems(problems))
+    expect(error.code).toBe(Exit.Resolution)
+    expect(error.message).toBe('4 problems')
+    for (const problem of problems) expect(error.detail).toContain(problem.message)
+    expect(error.detail).toContain('did you mean Bridge.Lantern?')
   })
 
   test('problems sharing a location are grouped under one heading', () => {
-    const { text } = captureStderr(() =>
+    const error = thrown(() =>
       reportProblems([
         { where: 'profiles.json#/games/beacon', message: 'first' },
         { where: 'profiles.json#/games/beacon', message: 'second' },
       ]),
     )
-    expect(text.match(/profiles\.json#\/games\/beacon/g)?.length).toBe(1)
-    expect(text).toContain('first')
-    expect(text).toContain('second')
+    expect(error.detail?.match(/profiles\.json#\/games\/beacon/g)?.length).toBe(1)
+    expect(error.detail).toContain('first')
+    expect(error.detail).toContain('second')
+  })
+
+  test('an empty list still throws rather than exiting', () => {
+    const error = thrown(() => reportProblems([]))
+    expect(error.code).toBe(Exit.Resolution)
+    expect(error.message).toContain('no reported detail')
+  })
+
+  test('nothing in the module calls process.exit', () => {
+    const source = readFileSync(new URL('../src/cli/output.ts', import.meta.url), 'utf8')
+    expect(source).not.toContain('process.exit')
   })
 })
 

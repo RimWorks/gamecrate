@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
-import { Exit } from '../types'
+import { GamecrateError, Exit } from '../types'
 
 /** Tool status. Never stdout: stdout belongs to the game. */
 export function status(message: string): void {
@@ -62,8 +62,7 @@ function line(message: string): string {
  */
 export function reportProblems(problems: Problem[]): never {
   if (problems.length === 0) {
-    process.stderr.write(line('resolution failed with no reported detail'))
-    process.exit(Exit.Resolution)
+    throw new GamecrateError('resolution failed with no reported detail', Exit.Resolution)
   }
 
   const groups = new Map<string, Problem[]>()
@@ -73,7 +72,7 @@ export function reportProblems(problems: Problem[]): never {
     else groups.set(problem.where, [problem])
   }
 
-  const out = [`${problems.length} problem${problems.length === 1 ? '' : 's'}:`]
+  const out: string[] = []
   for (const [where, group] of groups) {
     out.push(`  ${where}`)
     for (const problem of group) {
@@ -81,8 +80,11 @@ export function reportProblems(problems: Problem[]): never {
       if (problem.suggestion) out.push(`      did you mean ${problem.suggestion}?`)
     }
   }
-  process.stderr.write(`${out.join('\n')}\n`)
-  process.exit(Exit.Resolution)
+  throw new GamecrateError(
+    `${problems.length} problem${problems.length === 1 ? '' : 's'}`,
+    Exit.Resolution,
+    out.join('\n'),
+  )
 }
 
 export interface PlanModPayload {

@@ -179,12 +179,16 @@ function instanceDir(args: ParsedArgs, config: RootConfig, game: string, profile
 
 /** Environment problems are exit 5, never 4: they are about this machine, not the config. */
 function reportEnvironment(problems: Problem[]): never {
-  process.stderr.write(`${problems.length} environment problem(s):\n`)
+  const out: string[] = []
   for (const problem of problems) {
-    process.stderr.write(`  ${problem.where}\n    ${problem.message}\n`)
-    if (problem.suggestion) process.stderr.write(`      try: ${problem.suggestion}\n`)
+    out.push(`  ${problem.where}\n    ${problem.message}`)
+    if (problem.suggestion) out.push(`      try: ${problem.suggestion}`)
   }
-  process.exit(Exit.Environment)
+  throw new GamecrateError(
+    `${problems.length} environment problem(s)`,
+    Exit.Environment,
+    out.join('\n'),
+  )
 }
 
 /**
@@ -212,7 +216,7 @@ async function run(
     buildRunSpec(plan, [], identity)
     if (args.printPlan) printPlan(plan, args.json)
     for (const warning of planWarnings(plan)) warn(warning)
-    if (environment.length > 0) return reportEnvironment(environment)
+    if (environment.length > 0) reportEnvironment(environment)
     if (!args.printPlan) {
       const what = plan.instance === undefined ? profile : `${profile}/${plan.instance}`
       status(`${game} ${what}: ${plan.mods.length} mods resolve cleanly`)
@@ -221,7 +225,7 @@ async function run(
   }
 
   const environment = await preflight(plan)
-  if (environment.length > 0) return reportEnvironment(environment)
+  if (environment.length > 0) reportEnvironment(environment)
 
   await ensureProfileTree(plan)
   if (args.replace) await replacePrevious(plan)
