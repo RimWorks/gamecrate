@@ -375,7 +375,6 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.cleanTier = cleanTier
 
   if (opts.defaults?.game !== undefined) out.game = opts.defaults.game
-  if (opts.defaults?.profile !== undefined) out.profile = opts.defaults.profile
 
   applyPositionals(out, program.args, opts.games)
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)

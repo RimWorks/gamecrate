@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { access, readdir } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseResolution } from '../cli/args'
@@ -16,7 +16,7 @@ import type {
 import { loadPlugins } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from './builtin'
-import { CONFIG_SUFFIXES, readConfigFile } from './read'
+import { CONFIG_SUFFIXES, orderedKeys, readConfigFile, readConfigText } from './read'
 import { isObj, validateConfig } from './validate'
 
 export function globalConfigDir(): string {
@@ -83,10 +83,13 @@ const projectResolution = z
   })
   .transform(parseResolution)
 
-const PROJECT_SCHEMA = z.strictObject(
+const PROJECT_OBJECT = z.strictObject(
   {
     game: projectName.optional(),
-    profile: projectName.optional(),
+    defaultProfile: projectName.optional(),
+    profiles: z.record(z.string(), z.unknown()).optional(),
+    settings: z.record(z.string(), z.unknown()).optional(),
+    detach: projectBool.optional(),
     mods: projectList.optional(),
     without: projectList.optional(),
     only: projectList.optional(),
@@ -121,6 +124,21 @@ const PROJECT_SCHEMA = z.strictObject(
   { error: 'expected an object' },
 )
 
+// profiles and settings land under one game, and a repo config has no games map to name it.
+const PROJECT_SCHEMA = PROJECT_OBJECT.check((ctx) => {
+  const { game, profiles, settings } = ctx.value
+  if (game !== undefined) return
+  for (const [key, value] of [['profiles', profiles], ['settings', settings]] as const) {
+    if (value === undefined) continue
+    ctx.issues.push({
+      code: 'custom',
+      path: [key],
+      message: 'needs a top-level game: to say which game it belongs to',
+      input: ctx.value,
+    })
+  }
+})
+
 export async function findProjectConfig(start = process.cwd()): Promise<string | undefined> {
   let dir = resolve(start)
   for (;;) {
@@ -136,8 +154,14 @@ export async function loadProjectDefaults(start = process.cwd()): Promise<Projec
   const file = await findProjectConfig(start)
   if (file === undefined) return {}
 
-  const raw = await readConfigFile(file)
-  return validateProjectDefaults(raw, file)
+  const text = await readFile(file, 'utf8')
+  const defaults = validateProjectDefaults(readConfigText(text, file), file)
+  if (defaults.profiles !== undefined) {
+    // jsonc keeps the last of two same-named keys, the tree walk reports the first.
+    const order = orderedKeys(text, file, 'profiles')
+    defaults.profileOrder = order.filter((key) => Object.hasOwn(defaults.profiles!, key))
+  }
+  return defaults
 }
 
 function validateProjectDefaults(raw: unknown, file: string): ProjectDefaults {

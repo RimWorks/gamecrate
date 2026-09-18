@@ -403,8 +403,18 @@ export interface ParsedArgs {
 }
 
 export type ProjectDefaults = Partial<
-  Omit<ParsedArgs, 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest'>
->
+  Omit<ParsedArgs, 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile'>
+> & {
+  /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
+  defaultProfile?: string
+  /** Validated by validateConfig after the splice, not here. */
+  profiles?: Record<string, unknown>
+  settings?: Record<string, unknown>
+  /** Profile keys in source order. Object.keys sorts integer-like names to the front. */
+  profileOrder?: string[]
+  /** Not a ParsedArgs flag yet; the detached-run task adds it there. */
+  detach?: boolean
+}
 
 /** Names that can never be a game or profile key. Enforced at config load. */
 export const RESERVED_NAMES: readonly string[] = [

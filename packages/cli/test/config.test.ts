@@ -651,12 +651,12 @@ describe('loadProjectDefaults', () => {
     await mkdir(nested, { recursive: true })
     await writeFile(
       join(dir, '.gamecrate.yml'),
-      'game: atlas\nprofile: kitted\nbuild: true\nreplace: true\nresolution: 2560x1440\nlog: game.log\nmods:\n  - Test.Mod\n',
+      'game: atlas\ndefaultProfile: kitted\nbuild: true\nreplace: true\nresolution: 2560x1440\nlog: game.log\nmods:\n  - Test.Mod\n',
     )
 
     expect(await loadProjectDefaults(nested)).toEqual({
       game: 'atlas',
-      profile: 'kitted',
+      defaultProfile: 'kitted',
       build: 'always',
       replace: true,
       resolution: { width: 2560, height: 1440 },
@@ -695,7 +695,7 @@ describe('loadProjectDefaults', () => {
     await writeFile(
       join(dir, '.gamecrate.yml'),
       [
-        'game: atlas', 'profile: kitted', 'mode: headless', 'pull: missing', 'sort: topo',
+        'game: atlas', 'defaultProfile: kitted', 'mode: headless', 'pull: missing', 'sort: topo',
         'network: host', 'build: auto', 'marker: ready', 'instance: dev', 'log: game.log',
         'timeout: 90', 'renderWait: 0', 'resolution: "1920x1080"',
         'mods: [A]', 'without: [B]', 'only: [C]', 'dockerArgs: ["-v"]', 'gameArgs: ["-q"]',
@@ -706,7 +706,7 @@ describe('loadProjectDefaults', () => {
     )
 
     expect(await loadProjectDefaults(dir)).toEqual({
-      game: 'atlas', profile: 'kitted', mode: 'headless', pull: 'missing', sort: 'topo',
+      game: 'atlas', defaultProfile: 'kitted', mode: 'headless', pull: 'missing', sort: 'topo',
       network: 'host', build: 'auto', marker: 'ready', instance: 'dev', log: 'game.log',
       timeout: 90, renderWait: 0, resolution: { width: 1920, height: 1080 },
       mods: ['A'], without: ['B'], only: ['C'], dockerArgs: ['-v'], gameArgs: ['-q'],
@@ -755,11 +755,11 @@ describe('loadProjectDefaults', () => {
 
   test('file defaults sit under the CLI and the environment', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
-    await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\nprofile: kitted\nmode: headless\nmarker: ready\n')
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\ndefaultProfile: kitted\nmode: headless\nmarker: ready\n')
     const defaults = await loadProjectDefaults(dir)
 
     const bare = parseArgs([], { env: {}, games: ['atlas'], defaults })
-    expect([bare.game, bare.profile, bare.mode, bare.marker]).toEqual(['atlas', 'kitted', 'headless', 'ready'])
+    expect([bare.game, bare.profile, bare.mode, bare.marker]).toEqual(['atlas', undefined, 'headless', 'ready'])
 
     const cli = parseArgs(['--mode', 'headed'], { env: { GAMECRATE_MARKER: 'env' }, games: ['atlas'], defaults })
     expect([cli.mode, cli.marker]).toEqual(['headed', 'env'])
@@ -989,5 +989,77 @@ describe('config discovery', () => {
       if (real === undefined) delete process.env['XDG_CONFIG_HOME']
       else process.env['XDG_CONFIG_HOME'] = real
     }
+  })
+})
+
+describe('project profiles', () => {
+  let dir = ''
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  async function write(body: string, suffix = '.yml'): Promise<void> {
+    await writeFile(join(dir, `.gamecrate${suffix}`), body)
+  }
+
+  test('profiles, settings and defaultProfile are read', async () => {
+    await write('game: rimworld\ndefaultProfile: dev\nprofiles:\n  dev:\n    mods: [A.B]\nsettings:\n  memory: 8g\n')
+    const defaults = await loadProjectDefaults(dir)
+    expect(defaults.defaultProfile).toBe('dev')
+    expect(defaults.profiles).toEqual({ dev: { mods: ['A.B'] } })
+    expect(defaults.settings).toEqual({ memory: '8g' })
+  })
+
+  test('profileOrder is source order, not Object.keys order', async () => {
+    await write('game: rimworld\nprofiles:\n  2024:\n    mods: []\n  dev:\n    mods: []\n')
+    const defaults = await loadProjectDefaults(dir)
+    expect(defaults.profileOrder).toEqual(['2024', 'dev'])
+  })
+
+  test('a duplicate profiles key does not leak a missing name into profileOrder', async () => {
+    await write('{"game":"rimworld","profiles":{"first":{}},"profiles":{"second":{}}}', '.json')
+    const defaults = await loadProjectDefaults(dir)
+    expect(Object.keys(defaults.profiles ?? {})).toEqual(['second'])
+    expect(defaults.profileOrder).not.toContain('first')
+    for (const key of defaults.profileOrder ?? []) expect(defaults.profiles).toHaveProperty(key)
+  })
+
+  test('profiles without a game is a config error that says why', async () => {
+    await write('profiles:\n  dev:\n    mods: []\n')
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
+    await loadProjectDefaults(dir).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('game')
+    })
+  })
+
+  test('settings without a game is the same error', async () => {
+    await write('settings:\n  memory: 8g\n')
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
+  })
+
+  test('the old profile key is gone', async () => {
+    await write('game: rimworld\nprofile: dev\n')
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
+    await loadProjectDefaults(dir).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('unknown key')
+    })
+  })
+
+  test('flag defaults still work with none of the new keys', async () => {
+    await write('game: rimworld\nmode: headless\ntimeout: 30\n')
+    const defaults = await loadProjectDefaults(dir)
+    expect(defaults.mode).toBe('headless')
+    expect(defaults.timeout).toBe(30)
+    expect(defaults.profiles).toBeUndefined()
+  })
+
+  test('detach is a project key like every other flag default', async () => {
+    await write('game: rimworld\ndetach: true\n')
+    expect((await loadProjectDefaults(dir)).detach).toBe(true)
   })
 })

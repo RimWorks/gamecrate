@@ -334,7 +334,7 @@ describe('env fallbacks', () => {
 describe('project defaults', () => {
   const defaults: ProjectDefaults = {
     game: 'atlas',
-    profile: 'kitted',
+    defaultProfile: 'kitted',
     mode: 'headless',
     build: 'always',
     replace: true,
@@ -350,7 +350,7 @@ describe('project defaults', () => {
     expect(args.subcommand).toBe('run')
     expect(args.help).toBe(false)
     expect(args.game).toBe('atlas')
-    expect(args.profile).toBe('kitted')
+    expect(args.profile).toBeUndefined()
     expect(args.build).toBe('always')
     expect(args.replace).toBe(true)
     expect(args.resolution).toEqual({ width: 2560, height: 1440 })
