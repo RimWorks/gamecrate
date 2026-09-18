@@ -18,7 +18,7 @@ import {
   subtract,
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
-import { profileOf } from '../src/index'
+import { profileOf } from '../src/cli/profile'
 import { parseJsonc } from '../src/config/jsonc'
 import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'

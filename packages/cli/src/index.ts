@@ -3,10 +3,10 @@ import { existsSync } from 'node:fs'
 import { chown, cp, mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { parseArgs } from './cli/args'
+import { profileOf } from './cli/profile'
 import { renderCompletion, renderHelp } from './cli/help'
 import { openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, warn } from './cli/output'
 import {
@@ -147,14 +147,6 @@ function help(args: ParsedArgs, config: RootConfig): number {
   }
   process.stdout.write(renderHelp(topic, config))
   return Exit.Ok
-}
-
-/**
- * Not in parseArgs: filling a default there would erase the difference between a typed
- * profile and a defaulted one, which clean and fix-perms both need.
- */
-export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
-  return args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0] ?? 'modless'
 }
 
 function requireGame(args: ParsedArgs, config: RootConfig): string {
@@ -905,12 +897,9 @@ function reportFatal(error: unknown): number {
   return Exit.GameFailed
 }
 
-// skipped when index is imported rather than run, so tests can reach profileOf.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try {
-    process.exit(await main(process.argv.slice(2)))
-  } catch (error) {
-    // Only reachable for failures before dispatch: arg parsing and config loading.
-    process.exit(reportFatal(error))
-  }
+try {
+  process.exit(await main(process.argv.slice(2)))
+} catch (error) {
+  // Only reachable for failures before dispatch: arg parsing and config loading.
+  process.exit(reportFatal(error))
 }
