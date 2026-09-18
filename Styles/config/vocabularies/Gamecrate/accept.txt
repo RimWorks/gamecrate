@@ -24,3 +24,11 @@ fullscreen
 loopback
 dev
 reflink
+vibecode
+Vibecoding
+typecheck
+typechecks
+gitignored
+zod
+oxlint
+READMEs
