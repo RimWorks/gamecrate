@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { open, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -216,27 +216,25 @@ export async function takeLock(plan: LaunchPlan): Promise<ProfileLock> {
     )
   }
 
-  if (existsSync(path)) {
-    const holder = await readFile(path, 'utf8').catch(() => '')
-    const pid = Number(holder.split('\n')[0])
-    const alive = Number.isInteger(pid) && pid > 0 && isRunning(pid)
-    if (alive) {
-      throw new GamecrateError(
-        `${plan.game} ${what} is already running (pid ${pid})`,
-        Exit.Refused,
-        `if that is wrong, delete ${path}\nor relaunch with --replace`,
-      )
-    }
-    await unlink(path).catch(() => {})
+  const held = await readLock(path)
+  if (held !== undefined && isRunning(held.pid, held.startedAt)) {
+    throw new GamecrateError(
+      `${plan.game} ${what} is already running (pid ${held.pid})`,
+      Exit.Refused,
+      `if that is wrong, delete ${path}\nor relaunch with --replace`,
+    )
   }
+  if (existsSync(path)) await unlink(path).catch(() => {})
 
-  // wx fails rather than truncating, which is what makes this a lock and not a note.
-  const handle = await open(path, 'wx').catch(() => null)
-  if (handle === null) {
-    throw new GamecrateError(`could not take the launch lock at ${path}`, Exit.Environment)
-  }
-  await handle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`)
-  await handle.close()
+  await writeLock(plan, {
+    pid: process.pid,
+    container: name,
+    game: plan.game,
+    profile: plan.profile,
+    ...(plan.instance === undefined ? {} : { instance: plan.instance }),
+    detached: false,
+    mode: plan.mode,
+  })
 
   return {
     release: async () => {
@@ -245,8 +243,45 @@ export async function takeLock(plan: LaunchPlan): Promise<ProfileLock> {
   }
 }
 
-function lockPath(plan: LaunchPlan): string {
+/** Everything ps, stop, attach and wait need about a run, without reopening the container. */
+export interface LockRecord {
+  pid: number
+  container: string
+  game: string
+  profile: string
+  instance?: string
+  detached: boolean
+  mode?: string
+  startedAt: string
+}
+
+export function lockPath(plan: LaunchPlan): string {
   return join(plan.instanceDir, '.gamecrate', 'lock')
+}
+
+export async function readLock(path: string): Promise<LockRecord | undefined> {
+  const text = await readFile(path, 'utf8').catch(() => undefined)
+  if (text === undefined) return undefined
+  try {
+    const value = JSON.parse(text) as LockRecord
+    return typeof value?.pid === 'number' ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** wx fails rather than truncating, which is what makes this a lock and not a note. */
+export async function writeLock(
+  plan: LaunchPlan,
+  record: Omit<LockRecord, 'startedAt'>,
+): Promise<void> {
+  const path = lockPath(plan)
+  const handle = await open(path, 'wx').catch(() => null)
+  if (handle === null) {
+    throw new GamecrateError(`could not take the launch lock at ${path}`, Exit.Environment)
+  }
+  await handle.writeFile(JSON.stringify({ ...record, startedAt: new Date().toISOString() }))
+  await handle.close()
 }
 
 /** How long to let the holder notice its container died and drop the lock on its own. */
@@ -273,21 +308,58 @@ export async function replacePrevious(plan: LaunchPlan): Promise<void> {
 
   const deadline = Date.now() + RELEASE_WAIT_MS
   while (existsSync(path) && Date.now() < deadline) {
-    const holder = await readFile(path, 'utf8').catch(() => '')
-    const pid = Number(holder.split('\n')[0])
-    if (!Number.isInteger(pid) || pid <= 0 || !isRunning(pid)) break
+    const held = await readLock(path)
+    if (held === undefined || !isRunning(held.pid, held.startedAt)) break
     await sleep(RELEASE_POLL_MS)
   }
   await unlink(path).catch(() => {})
 }
 
-function isRunning(pid: number): boolean {
+/** node does not expose sysconf(_SC_CLK_TCK); it is 100 on every linux that matters. */
+const CLOCK_TICKS_PER_SECOND = 100
+/** clock granularity, so a lock written in the same second as its process is not rejected. */
+const START_TIME_SLACK_MS = 2000
+
+/**
+ * A pid alone is not proof. Detach leaves a long-lived process per run, so a recycled number
+ * would refuse every future launch and give ps a ghost with an invented uptime.
+ */
+export function isRunning(pid: number, startedAt?: string): boolean {
   try {
     process.kill(pid, 0)
-    return true
   } catch {
     return false
   }
+  if (startedAt === undefined) return true
+  const written = Date.parse(startedAt)
+  if (Number.isNaN(written)) return true
+  const began = processStart(pid)
+  // a process that began after the lock was written cannot be the one that wrote it
+  return began === undefined || began <= written + START_TIME_SLACK_MS
+}
+
+/** Epoch ms the process began, or undefined wherever procfs is missing or unreadable. */
+function processStart(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    // comm can hold spaces and parens, so fields are counted from after the last one
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ')
+    // field 22 overall is starttime, in clock ticks since boot; state is field 3
+    const ticks = Number(fields[19])
+    const boot = bootTime()
+    if (!Number.isFinite(ticks) || boot === undefined) return undefined
+    return boot + (ticks / CLOCK_TICKS_PER_SECOND) * 1000
+  } catch {
+    return undefined
+  }
+}
+
+function bootTime(): number | undefined {
+  const line = readFileSync('/proc/stat', 'utf8')
+    .split('\n')
+    .find((each) => each.startsWith('btime '))
+  const seconds = Number(line?.slice('btime '.length))
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined
 }
 
 /**

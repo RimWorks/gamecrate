@@ -1,13 +1,27 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { capture } from '../src/docker/run'
-import { replacePrevious, takeLock } from '../src/launch/prepare'
+import { isRunning, lockPath, readLock, replacePrevious, takeLock, writeLock } from '../src/launch/prepare'
 import { GamecrateError, Exit } from '../src/types'
 import type { LaunchPlan } from '../src/types'
+
+/** Flipped on only by the fallback test; everything else reads the real procfs. */
+const procfs = vi.hoisted(() => ({ broken: false }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...real,
+    readFileSync: (path: unknown, ...rest: unknown[]) => {
+      if (procfs.broken && String(path).startsWith('/proc/')) throw new Error('no procfs here')
+      return (real.readFileSync as (...args: unknown[]) => unknown)(path, ...rest)
+    },
+  }
+})
 
 let tmp = ''
 let counter = 0
@@ -39,12 +53,19 @@ async function planFor(instance?: string): Promise<LaunchPlan> {
   } as unknown as LaunchPlan
 }
 
-function lockPath(plan: LaunchPlan): string {
-  return join(plan.instanceDir, '.gamecrate', 'lock')
-}
-
 async function holdWith(plan: LaunchPlan, pid: number): Promise<void> {
-  await writeFile(lockPath(plan), `${pid}\n2026-08-05T00:00:00Z\n`)
+  await writeFile(
+    lockPath(plan),
+    JSON.stringify({
+      pid,
+      container: `gamecrate-${GAME}-${PROFILE}`,
+      game: GAME,
+      profile: PROFILE,
+      detached: false,
+      // now, so a live holder reads as live: its process began before the lock was written
+      startedAt: new Date().toISOString(),
+    }),
+  )
 }
 
 /** The kernel hands pids out in order and wraps, so a free one has to be found, not assumed. */
@@ -98,7 +119,7 @@ describe('takeLock', () => {
     await holdWith(plan, DEAD_PID)
 
     const lock = await takeLock(plan)
-    expect((await readFile(lockPath(plan), 'utf8')).split('\n')[0]).toBe(String(process.pid))
+    expect((await readLock(lockPath(plan)))?.pid).toBe(process.pid)
     await lock.release()
     expect(existsSync(lockPath(plan))).toBe(false)
   })
@@ -153,5 +174,74 @@ describe('replacePrevious', () => {
     await replacePrevious(mine)
     expect(existsSync(lockPath(mine))).toBe(false)
     expect(existsSync(lockPath(theirs))).toBe(true)
+  })
+})
+
+describe('lock record', () => {
+  test('a taken lock round trips as json', async () => {
+    const plan = await planFor()
+    await writeLock(plan, {
+      pid: process.pid,
+      container: 'gamecrate-x-y',
+      game: GAME,
+      profile: PROFILE,
+      detached: true,
+      mode: 'headed',
+    })
+    const record = await readLock(lockPath(plan))
+    expect(record?.pid).toBe(process.pid)
+    expect(record?.detached).toBe(true)
+    expect(record?.container).toBe('gamecrate-x-y')
+    expect(record?.mode).toBe('headed')
+    expect(Date.parse(record!.startedAt)).not.toBeNaN()
+  })
+
+  test('writeLock refuses a second holder rather than truncating', async () => {
+    const plan = await planFor()
+    const record = { pid: process.pid, container: 'c', game: GAME, profile: PROFILE, detached: true }
+    await writeLock(plan, record)
+    await expect(writeLock(plan, record)).rejects.toBeInstanceOf(GamecrateError)
+  })
+
+  test('readLock returns undefined for a missing or corrupt file', async () => {
+    const plan = await planFor()
+    expect(await readLock(lockPath(plan))).toBeUndefined()
+    await writeFile(lockPath(plan), 'not json at all')
+    expect(await readLock(lockPath(plan))).toBeUndefined()
+  })
+})
+
+// Detach leaves a long-lived pid per run, so reuse of a recycled number stops being theoretical.
+describe('isRunning', () => {
+  test('a live pid with no lock timestamp is running', () => {
+    expect(isRunning(process.pid)).toBe(true)
+  })
+
+  test('a dead pid is not running', () => {
+    expect(isRunning(DEAD_PID)).toBe(false)
+    expect(isRunning(DEAD_PID, new Date().toISOString())).toBe(false)
+  })
+
+  test('a live pid that began after the lock was written is a recycled number', () => {
+    expect(isRunning(process.pid, '1970-01-01T00:00:00Z')).toBe(false)
+  })
+
+  test('a live pid that began before the lock was written is the holder', () => {
+    expect(isRunning(process.pid, new Date().toISOString())).toBe(true)
+    expect(isRunning(process.pid, new Date(Date.now() + 60_000).toISOString())).toBe(true)
+  })
+
+  test('an unparsable timestamp falls back to the signal check', () => {
+    expect(isRunning(process.pid, 'whenever')).toBe(true)
+  })
+
+  test('unreadable procfs falls back to the signal check instead of throwing', () => {
+    procfs.broken = true
+    try {
+      expect(isRunning(process.pid, '1970-01-01T00:00:00Z')).toBe(true)
+      expect(isRunning(DEAD_PID, '1970-01-01T00:00:00Z')).toBe(false)
+    } finally {
+      procfs.broken = false
+    }
   })
 })
