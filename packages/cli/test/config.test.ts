@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from '../src/config/builtin'
@@ -7,6 +7,8 @@ import { FIXTURE_DEFAULTS, writePluginPackage } from './fixture-plugin'
 import {
   canonicalProfile,
   deepMerge,
+  findGlobalConfig,
+  findProjectConfig,
   loadConfig,
   loadProjectDefaults,
   profileDataDir,
@@ -17,7 +19,7 @@ import {
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
 import { parseJsonc } from '../src/config/jsonc'
-import { CONFIG_SUFFIXES, orderedKeys, readConfigText } from '../src/config/read'
+import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
 import { GamecrateError, Exit } from '../src/types'
 import type { GameConfig, Problem, RootConfig } from '../src/types'
@@ -888,8 +890,104 @@ describe('config formats', () => {
     expect(orderedKeys('game: rimworld\n', 'x.yml', 'profiles')).toEqual([])
     expect(orderedKeys('profiles: []\n', 'x.yml', 'profiles')).toEqual([])
   })
+})
 
-  test('CONFIG_SUFFIXES lists the formats gamecrate probes for', () => {
-    expect(CONFIG_SUFFIXES).toEqual(['.yml', '.yaml', '.json', '.jsonc'])
+describe('readConfigFile', () => {
+  let dir = ''
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'gamecrate-read-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('reads every format it probes for', async () => {
+    const cases: [string, string][] = [
+      ['.yml', 'game: rimworld\n'],
+      ['.yaml', 'game: rimworld\n'],
+      ['.json', '{"game":"rimworld"}'],
+      ['.jsonc', '{ // a comment\n  "game": "rimworld" }'],
+    ]
+    for (const [suffix, text] of cases) {
+      const file = join(dir, `profiles${suffix}`)
+      await writeFile(file, text)
+      expect(await readConfigFile(file)).toEqual({ game: 'rimworld' })
+    }
+  })
+
+  test('a missing file is undefined, not an error', async () => {
+    expect(await readConfigFile(join(dir, 'profiles.yml'))).toBeUndefined()
+  })
+
+  test('a parse failure names the file and uses the config exit code', async () => {
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{"game": }')
+    await expect(readConfigFile(file)).rejects.toMatchObject({ code: Exit.Config })
+    await readConfigFile(file).catch((error: GamecrateError) => {
+      expect(error.message).toContain(file)
+    })
+  })
+})
+
+describe('config discovery', () => {
+  let dir = ''
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'gamecrate-discover-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('a project config is found in any of the four formats', async () => {
+    for (const suffix of ['.yml', '.yaml', '.json', '.jsonc']) {
+      const nested = join(dir, `case${suffix}`)
+      await mkdir(nested, { recursive: true })
+      await writeFile(join(nested, `.gamecrate${suffix}`), suffix.startsWith('.j') ? '{"game":"rimworld"}' : 'game: rimworld\n')
+      expect(await findProjectConfig(nested)).toBe(join(nested, `.gamecrate${suffix}`))
+    }
+  })
+
+  test('two project configs in one directory is an error naming both', async () => {
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: rimworld\n')
+    await writeFile(join(dir, '.gamecrate.json'), '{"game":"rimworld"}')
+    await expect(findProjectConfig(dir)).rejects.toMatchObject({ code: Exit.Config })
+    await findProjectConfig(dir).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('.gamecrate.yml')
+      expect(error.detail).toContain('.gamecrate.json')
+    })
+  })
+
+  // A yml in a parent and a json in a child is normal nesting, not a conflict.
+  test('the nearest directory wins across a walk, in any format', async () => {
+    const child = join(dir, 'a', 'b')
+    await mkdir(child, { recursive: true })
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: rimworld\n')
+    await writeFile(join(child, '.gamecrate.json'), '{"game":"rimworld"}')
+    expect(await findProjectConfig(child)).toBe(join(child, '.gamecrate.json'))
+  })
+
+  test('loadProjectDefaults reads a json project config', async () => {
+    await writeFile(join(dir, '.gamecrate.json'), '{"game":"rimworld","mode":"headless"}')
+    const defaults = await loadProjectDefaults(dir)
+    expect(defaults.game).toBe('rimworld')
+    expect(defaults.mode).toBe('headless')
+  })
+
+  test('findGlobalConfig probes the four suffixes under XDG_CONFIG_HOME', async () => {
+    const xdg = join(dir, 'xdg')
+    await mkdir(join(xdg, 'gamecrate'), { recursive: true })
+    await writeFile(join(xdg, 'gamecrate', 'profiles.yml'), 'games: {}\n')
+    const real = process.env['XDG_CONFIG_HOME']
+    process.env['XDG_CONFIG_HOME'] = xdg
+    try {
+      expect(await findGlobalConfig()).toBe(join(xdg, 'gamecrate', 'profiles.yml'))
+    } finally {
+      if (real === undefined) delete process.env['XDG_CONFIG_HOME']
+      else process.env['XDG_CONFIG_HOME'] = real
+    }
   })
 })

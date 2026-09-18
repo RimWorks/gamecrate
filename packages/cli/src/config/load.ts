@@ -1,8 +1,7 @@
-import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
-import { access, readdir, readFile } from 'node:fs/promises'
+import { access, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { parseResolution } from '../cli/args'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import type {
@@ -17,15 +16,42 @@ import type {
 import { loadPlugins } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from './builtin'
-import { parseJsonc } from './jsonc'
+import { CONFIG_SUFFIXES, readConfigFile } from './read'
 import { isObj, validateConfig } from './validate'
 
-export function defaultConfigPath(): string {
+export function globalConfigDir(): string {
   const base = process.env['XDG_CONFIG_HOME'] ?? join(homedir(), '.config')
-  return join(base, 'gamecrate', 'profiles.json')
+  return join(base, 'gamecrate')
 }
 
-const PROJECT_CONFIG = '.gamecrate.yml'
+export async function findGlobalConfig(): Promise<string | undefined> {
+  return probe(globalConfigDir(), 'profiles')
+}
+
+/**
+ * The one file in a directory, whatever its extension. Two is an error: silent precedence
+ * is how you end up editing the wrong file for twenty minutes.
+ */
+async function probe(dir: string, stem: string): Promise<string | undefined> {
+  const found: string[] = []
+  for (const suffix of CONFIG_SUFFIXES) {
+    const file = join(dir, `${stem}${suffix}`)
+    try {
+      await access(file)
+      found.push(file)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  if (found.length > 1) {
+    throw new GamecrateError(
+      `two configs in ${dir}`,
+      Exit.Config,
+      `${found.map((f) => `  ${basename(f)}`).join('\n')}\nkeep one`,
+    )
+  }
+  return found[0]
+}
 
 const projectName = z.custom<string>((v) => typeof v === 'string' && NAME_PATTERN.test(v), 'expected a name')
 const projectStr = z.string({ error: 'expected a string' })
@@ -98,13 +124,8 @@ const PROJECT_SCHEMA = z.strictObject(
 export async function findProjectConfig(start = process.cwd()): Promise<string | undefined> {
   let dir = resolve(start)
   for (;;) {
-    const file = join(dir, PROJECT_CONFIG)
-    try {
-      await access(file)
-      return file
-    } catch (error) {
-      if ((error as { code?: string }).code !== 'ENOENT') throw error
-    }
+    const file = await probe(dir, '.gamecrate')
+    if (file !== undefined) return file
     const parent = dirname(dir)
     if (parent === dir) return undefined
     dir = parent
@@ -115,12 +136,7 @@ export async function loadProjectDefaults(start = process.cwd()): Promise<Projec
   const file = await findProjectConfig(start)
   if (file === undefined) return {}
 
-  let raw: unknown
-  try {
-    raw = parseYaml(await readFile(file, 'utf8'))
-  } catch (error) {
-    throw new GamecrateError(`project config is invalid: ${file}`, Exit.Config, (error as Error).message)
-  }
+  const raw = await readConfigFile(file)
   return validateProjectDefaults(raw, file)
 }
 
@@ -147,20 +163,13 @@ export interface LoadedConfig {
 }
 
 /**
- * Reads profiles.json, loads the plugins it lists, then merges the user's blocks over each
+ * Reads the global config, loads the plugins it lists, then merges the user's blocks over each
  * plugin's defaults. A missing file means no games, which every non-launch subcommand survives.
  */
 export async function loadConfig(path?: string): Promise<LoadedConfig> {
-  const file = path ?? defaultConfigPath()
-  let user: unknown
-  try {
-    user = parseJsonc(await readFile(file, 'utf8'))
-  } catch (err) {
-    if (err instanceof GamecrateError) {
-      throw new GamecrateError(`${err.message}: ${file}`, err.code, err.detail)
-    }
-    if ((err as { code?: string }).code !== 'ENOENT') throw err
-  }
+  // with nothing on disk, the path the file would take: it still names plugin roots and errors.
+  const file = path ?? (await findGlobalConfig()) ?? join(globalConfigDir(), 'profiles.yml')
+  const user = await readConfigFile(file)
 
   const specs = isObj(user) && user['plugins'] !== undefined ? user['plugins'] : []
   if (!Array.isArray(specs) || specs.some((s) => typeof s !== 'string')) {

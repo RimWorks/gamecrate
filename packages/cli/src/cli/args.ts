@@ -119,7 +119,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   },
   {
     name: 'config',
-    summary: 'open profiles.json in $EDITOR, validate on save',
+    summary: 'open the global config in $EDITOR, validate on save',
     usage: 'edit',
     positionals: ['rest'],
     flags: [],

@@ -9,7 +9,8 @@ import { parseArgs } from './cli/args'
 import { renderCompletion, renderHelp } from './cli/help'
 import { openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, warn } from './cli/output'
 import {
-  defaultConfigPath,
+  findGlobalConfig,
+  globalConfigDir,
   loadConfig,
   loadProjectDefaults,
   profileDataDir,
@@ -775,9 +776,17 @@ async function build(args: ParsedArgs, config: RootConfig): Promise<number> {
 async function configEdit(args: ParsedArgs): Promise<number> {
   if (args.rest[0] !== 'edit') throw new GamecrateError('config takes one word: edit', Exit.Usage)
 
-  const path = defaultConfigPath()
+  const existing = await findGlobalConfig()
+  const path = existing ?? join(globalConfigDir(), 'profiles.yml')
   await mkdir(dirname(path), { recursive: true })
-  if (!existsSync(path)) await writeFile(path, '{\n  "games": {}\n}\n')
+  if (!existsSync(path)) {
+    await writeFile(
+      path,
+      '# gamecrate config. see https://github.com/RimWorks/gamecrate\n' +
+        'plugins: []\n' +
+        'games: {}\n',
+    )
+  }
 
   const editor = process.env.VISUAL ?? process.env.EDITOR
   if (editor === undefined) throw new GamecrateError('no $EDITOR or $VISUAL set', Exit.Usage, path)
