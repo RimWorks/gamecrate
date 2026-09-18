@@ -1146,6 +1146,49 @@ describe('repo profile splice', () => {
     })
   })
 
+  // a bare `profiles[name] = x` write would hit the prototype setter and drop the profile
+  // before validateConfig ever saw the name.
+  test('a repo profile named __proto__ lands as an own key, not on the prototype', async () => {
+    const path = await globalConfig({ rimworld: { ...fixtureGame(), profiles: { base: { mods: ['B'] } } } })
+    const profiles = JSON.parse('{"__proto__":{"mods":["Evil.Mod"]},"dev":{"mods":["Repo.One"]}}') as Record<
+      string,
+      unknown
+    >
+    const project = { game: 'rimworld', profiles }
+    await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path, project).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('__proto__')
+      // the sibling survived the spread, so validateConfig walked a map with both keys.
+      expect(error.detail).not.toContain('/profiles/dev')
+    })
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+  })
+
+  test('a repo profile shadowing a global one is still blamed on the repo file', async () => {
+    const path = await globalConfig({
+      rimworld: {
+        ...fixtureGame(),
+        profiles: { base: { mods: ['B'] }, dev: { extends: 'base', mods: ['A'] } },
+      },
+    })
+    const project = { game: 'rimworld', profiles: { dev: { extends: 'nope' } } }
+    await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path, project).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('.gamecrate')
+    })
+  })
+
+  test('a problem in a global key the repo never names is not blamed on the repo file', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), profiles: { base: { extends: 'nope' } } },
+    })
+    const project = { game: 'rimworld', profiles: { dev: { mods: [] } } }
+    await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path, project).catch((error: GamecrateError) => {
+      expect(error.detail).not.toContain('.gamecrate')
+    })
+  })
+
   test('naming a game the global config does not have is a config error', async () => {
     const path = await globalConfig({ rimworld: fixtureGame() })
     await expect(

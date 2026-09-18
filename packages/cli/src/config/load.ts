@@ -248,12 +248,13 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
   }
 
   // deepMerge hands back the user's own objects, and origin() reads that tree to decide who to
-  // blame. copy the two levels we write so the splice stays invisible to it.
-  const target: GameConfig = { ...existing, profiles: { ...existing.profiles } }
-  config.games[game] = target
-  for (const [name, profile] of Object.entries(project.profiles ?? {})) {
-    target.profiles[name] = profile as ProfileConfig
+  // blame. copy the two levels we write so the splice stays invisible to it. spread, not a loop:
+  // a repo file is untrusted, and `profiles[name] = x` on a __proto__ key hits the setter.
+  const target: GameConfig = {
+    ...existing,
+    profiles: { ...existing.profiles, ...(project.profiles as Record<string, ProfileConfig> | undefined) },
   }
+  config.games[game] = target
   if (project.settings !== undefined) {
     target.settings = deepMerge(target.settings ?? {}, project.settings)
   }
@@ -273,9 +274,10 @@ function origin(
 ): string {
   if (!where.startsWith('/')) return ''
   const segments = where.slice(1).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'))
-  if (valueAt(user, segments) !== undefined) return ''
-
   const [section, name, sub, ...rest] = segments
+
+  // ahead of the user check: a repo profile replacing a global one of the same name still
+  // resolves in the user tree, and that file holds the value they did not write.
   const repoGame = project?.game
   if (
     repoGame !== undefined &&
@@ -286,6 +288,7 @@ function origin(
   ) {
     return '  <- from the .gamecrate project config, not this file'
   }
+  if (valueAt(user, segments) !== undefined) return ''
 
   const plugin = section === 'games' && name !== undefined ? plugins.get(name) : undefined
   if (plugin === undefined) return '  <- not in this file'
