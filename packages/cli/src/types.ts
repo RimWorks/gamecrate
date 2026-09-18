@@ -24,6 +24,18 @@ export const Exit = {
 
 export type ExitCode = (typeof Exit)[keyof typeof Exit]
 
+export type ExitReason = 'exited' | 'marker' | 'marker-timeout' | 'stopped' | 'window-closed' | 'timeout'
+
+export interface LaunchResult {
+  code: number
+  reason: ExitReason
+}
+
+/** runContainer turns SIGINT and SIGTERM into a docker stop and returns 130, so 130 is a stop. */
+export function reasonFor(code: number): ExitReason {
+  return code === Exit.Interrupted ? 'stopped' : 'exited'
+}
+
 /** Every failure the tool raises deliberately. Anything else is a bug. */
 export class GamecrateError extends Error {
   constructor(

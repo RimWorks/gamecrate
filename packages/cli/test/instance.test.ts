@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { resolveInstance } from '../src/launch/instance'
+import { Exit, reasonFor } from '../src/types'
 import type { ParsedArgs, ProfileConfig } from '../src/types'
 
 let repo: string
@@ -160,5 +161,17 @@ describe('resolveInstance', () => {
     const got = select({ instance: 'wt-z' }, profile)
     expect(got.name).toBe('wt-z')
     expect(got.settings).toBeUndefined()
+  })
+})
+
+describe('exit reasons', () => {
+  test('an interrupted run reads as stopped, not a crash', () => {
+    expect(reasonFor(Exit.Interrupted)).toBe('stopped')
+  })
+
+  test('every other code reads as a plain exit', () => {
+    expect(reasonFor(0)).toBe('exited')
+    expect(reasonFor(1)).toBe('exited')
+    expect(reasonFor(137)).toBe('exited')
   })
 })

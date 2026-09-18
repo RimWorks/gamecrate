@@ -43,11 +43,12 @@ import { requirePlugin } from './plugin'
 import type { GamePlugin } from './plugin'
 import { ago, decideStale, duration, scanBuildTimes, staleReport } from './mods/staleness'
 import { resolveWorktree } from './mods/worktree'
-import { GamecrateError, Exit } from './types'
+import { GamecrateError, Exit, reasonFor } from './types'
 import type {
   DockerRunSpec,
   Identity,
   LaunchPlan,
+  LaunchResult,
   ParsedArgs,
   Problem,
   ProfileConfig,
@@ -221,7 +222,8 @@ async function run(
   if (args.replace) await replacePrevious(plan)
   const lock = await takeLock(plan)
   try {
-    return await launch(plan, args, config, identity, asShell)
+    const result = await launch(plan, args, config, identity, asShell)
+    return result.code
   } finally {
     await lock.release()
   }
@@ -233,7 +235,7 @@ async function launch(
   config: RootConfig,
   identity: Identity,
   asShell: boolean,
-): Promise<number> {
+): Promise<LaunchResult> {
   const game = plan.game
   const profile = plan.profile
   const foreign = await detectForeignOwnership(plan.dataDirHost, identity.uid, 5)
@@ -297,7 +299,8 @@ async function launch(
         logDir: runDir,
         stopTimeoutSeconds: STOP_TIMEOUT_SECONDS,
       })
-      return windowClosed ? Exit.Ok : normalize(code)
+      if (windowClosed) return { code: Exit.Ok, reason: 'window-closed' }
+      return { code: normalize(code), reason: reasonFor(code) }
     } finally {
       window?.stop()
     }
@@ -323,18 +326,18 @@ async function runBounded(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
-): Promise<number> {
+): Promise<LaunchResult> {
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
   const winner = await Promise.race([
     container.then((code) => ({ kind: 'exit' as const, code })),
     sleep(plan.timeoutSeconds * 1000).then(() => ({ kind: 'timeout' as const })),
   ])
-  if (winner.kind === 'exit') return normalize(winner.code)
+  if (winner.kind === 'exit') return { code: normalize(winner.code), reason: reasonFor(winner.code) }
 
   status(`no marker given; stopping after ${plan.timeoutSeconds}s`)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
   await container
-  return Exit.Ok
+  return { code: Exit.Ok, reason: 'timeout' }
 }
 
 /** Waits for the game to render, grabs one frame, then stops the container. */
@@ -342,7 +345,7 @@ async function runWithScreenshot(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
-): Promise<number> {
+): Promise<LaunchResult> {
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
   const settled = sleep(plan.renderWaitSeconds * 1000).then(() => 'ready' as const)
 
@@ -352,13 +355,13 @@ async function runWithScreenshot(
   ])
   if (winner.kind === 'exit') {
     status(`game exited before the ${plan.renderWaitSeconds}s render wait finished; no frame captured`)
-    return normalize(winner.code)
+    return { code: normalize(winner.code), reason: reasonFor(winner.code) }
   }
 
   const shot = await grabFrame(spec.name, plan)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
   await container
-  return shot === null ? Exit.Environment : Exit.Ok
+  return { code: shot === null ? Exit.Environment : Exit.Ok, reason: 'exited' }
 }
 
 async function grabFrame(container: string, plan: LaunchPlan): Promise<string | null> {
@@ -372,7 +375,7 @@ async function runWithMarker(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
-): Promise<number> {
+): Promise<LaunchResult> {
   const marker = plan.marker!
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
   const seen = waitForMarker(markerSources(plan, logDir), marker, plan.timeoutSeconds)
@@ -381,17 +384,17 @@ async function runWithMarker(
     container.then((code) => ({ kind: 'exit' as const, code })),
     seen.then((hit) => ({ kind: 'marker' as const, hit })),
   ])
-  if (winner.kind === 'exit') return normalize(winner.code)
+  if (winner.kind === 'exit') return { code: normalize(winner.code), reason: reasonFor(winner.code) }
 
   if (plan.mode === 'screenshot') await grabFrame(spec.name, plan)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
   await container
   if (winner.hit) {
     status(`marker seen: ${marker}`)
-    return Exit.Ok
+    return { code: Exit.Ok, reason: 'marker' }
   }
   status(`marker "${marker}" not seen within ${plan.timeoutSeconds}s`)
-  return Exit.MarkerTimeout
+  return { code: Exit.MarkerTimeout, reason: 'marker-timeout' }
 }
 
 function normalize(code: number): number {
