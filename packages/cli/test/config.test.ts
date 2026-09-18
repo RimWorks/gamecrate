@@ -18,11 +18,12 @@ import {
   subtract,
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
+import { profileOf } from '../src/index'
 import { parseJsonc } from '../src/config/jsonc'
 import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
 import { GamecrateError, Exit } from '../src/types'
-import type { GameConfig, Problem, RootConfig } from '../src/types'
+import type { GameConfig, ParsedArgs, Problem, RootConfig } from '../src/types'
 
 const ATLAS_DEFAULTS: GameConfig = {
   ...(FIXTURE_DEFAULTS as GameConfig),
@@ -1150,5 +1151,36 @@ describe('repo profile splice', () => {
     await expect(
       loadConfig(path, { game: 'nosuchgame', profiles: { dev: { mods: [] } } }),
     ).rejects.toMatchObject({ code: Exit.Config })
+  })
+})
+
+describe('profileOf', () => {
+  const noProfile = { } as ParsedArgs
+  const typed = { profile: 'typed' } as ParsedArgs
+
+  test('a typed profile beats every default', () => {
+    expect(profileOf(typed, { defaultProfile: 'yml', profileOrder: ['first'] })).toBe('typed')
+  })
+
+  test('defaultProfile beats the first profile key', () => {
+    expect(profileOf(noProfile, { defaultProfile: 'yml', profileOrder: ['first'] })).toBe('yml')
+  })
+
+  test('the first profile key wins when defaultProfile is absent', () => {
+    expect(profileOf(noProfile, { profileOrder: ['first', 'second'] })).toBe('first')
+  })
+
+  // Source order, so a profile named 2024 written first is still first.
+  test('the first key is source order, not Object.keys order', () => {
+    expect(profileOf(noProfile, { profileOrder: ['2024', 'dev'] })).toBe('2024')
+  })
+
+  test('modless is the floor with no project config at all', () => {
+    expect(profileOf(noProfile, {})).toBe('modless')
+  })
+
+  test('args.profile stays undefined so verbs can tell typed from defaulted', () => {
+    const args = parseArgs(['rimworld'], { env: {}, games: ['rimworld'] })
+    expect(args.profile).toBeUndefined()
   })
 })

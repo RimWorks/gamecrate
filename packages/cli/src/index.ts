@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { chown, cp, mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { parseArgs } from './cli/args'
@@ -48,6 +49,7 @@ import type {
   ParsedArgs,
   Problem,
   ProfileConfig,
+  ProjectDefaults,
   RootConfig,
   StaleReport,
 } from './types'
@@ -79,7 +81,7 @@ async function main(argv: string[]): Promise<number> {
       : undefined
 
   try {
-    return await dispatch(args, config, plugins)
+    return await dispatch(args, config, plugins, defaults)
   } catch (error) {
     // Printed here, not at the top level: with --log the failure belongs in the log file,
     // and the top-level printer only runs once the redirect is already closed.
@@ -93,6 +95,7 @@ async function dispatch(
   args: ParsedArgs,
   config: RootConfig,
   plugins: Map<string, GamePlugin>,
+  defaults: ProjectDefaults,
 ): Promise<number> {
   switch (args.subcommand) {
     case 'help':
@@ -100,27 +103,27 @@ async function dispatch(
     case 'list':
       return list(args, config)
     case 'mods':
-      return mods(args, config, plugins)
+      return mods(args, config, plugins, defaults)
     case 'doctor':
       return doctor(config, plugins)
     case 'clean':
-      return clean(args, config)
+      return clean(args, config, defaults)
     case 'clone':
       return clone(args, config)
     case 'logs':
-      return logs(args, config)
+      return logs(args, config, defaults)
     case 'verify':
-      return verify(args, config, plugins)
+      return verify(args, config, plugins, defaults)
     case 'build':
       return build(args, config)
     case 'shell':
-      return run(args, config, plugins, true)
+      return run(args, config, plugins, defaults, true)
     case 'config':
       return configEdit(args)
     case 'fix-perms':
       return fixPerms(args, config)
     case 'run':
-      return run(args, config, plugins, false)
+      return run(args, config, plugins, defaults, false)
     default:
       throw new GamecrateError(`no such subcommand ${args.subcommand}`, Exit.Usage)
   }
@@ -144,6 +147,14 @@ function help(args: ParsedArgs, config: RootConfig): number {
   }
   process.stdout.write(renderHelp(topic, config))
   return Exit.Ok
+}
+
+/**
+ * Not in parseArgs: filling a default there would erase the difference between a typed
+ * profile and a defaulted one, which clean and fix-perms both need.
+ */
+export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
+  return args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0] ?? 'modless'
 }
 
 function requireGame(args: ParsedArgs, config: RootConfig): string {
@@ -202,10 +213,11 @@ async function run(
   args: ParsedArgs,
   config: RootConfig,
   plugins: Map<string, GamePlugin>,
+  defaults: ProjectDefaults,
   asShell: boolean,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = args.profile ?? 'modless'
+  const profile = profileOf(args, defaults)
 
   const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
@@ -472,9 +484,14 @@ function list(args: ParsedArgs, config: RootConfig): number {
   return Exit.Ok
 }
 
-async function mods(args: ParsedArgs, config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {
+async function mods(
+  args: ParsedArgs,
+  config: RootConfig,
+  plugins: Map<string, GamePlugin>,
+  defaults: ProjectDefaults,
+): Promise<number> {
   const game = requireGame(args, config)
-  const profile = args.profile ?? 'modless'
+  const profile = profileOf(args, defaults)
   const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
   if (problems.length > 0) reportProblems(problems)
@@ -501,9 +518,9 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
   return failed ? Exit.Environment : Exit.Ok
 }
 
-async function logs(args: ParsedArgs, config: RootConfig): Promise<number> {
+async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  const profile = args.profile ?? 'modless'
+  const profile = profileOf(args, defaults)
   const runs = join(instanceDir(args, config, game, profile), 'logs', 'runs')
 
   const latest = (await readdir(runs, { withFileTypes: true }).catch(() => []))
@@ -592,9 +609,14 @@ function boundStatus(mod: BoundMod): string {
  * What the container is running right now, read off its own mounts. A green build proves the
  * compiler ran somewhere, not that it wrote into the directory this container bound.
  */
-async function verify(args: ParsedArgs, config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {
+async function verify(
+  args: ParsedArgs,
+  config: RootConfig,
+  plugins: Map<string, GamePlugin>,
+  defaults: ProjectDefaults,
+): Promise<number> {
   const game = requireGame(args, config)
-  const profile = args.profile ?? 'modless'
+  const profile = profileOf(args, defaults)
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args })
   if (problems.length > 0) reportProblems(problems)
 
@@ -697,10 +719,9 @@ function shortenHome(path: string): string {
 }
 
 /** Tiered on purpose: the default tier can never reach a save. */
-async function clean(args: ParsedArgs, config: RootConfig): Promise<number> {
+async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  const profile = args.profile
-  if (profile === undefined) throw new GamecrateError('clean needs a profile', Exit.Usage)
+  const profile = profileOf(args, defaults)
 
   const dir = profileDataDir(config, game, profile)
   const tier = args.cleanTier ?? 'staging'
@@ -884,9 +905,12 @@ function reportFatal(error: unknown): number {
   return Exit.GameFailed
 }
 
-try {
-  process.exit(await main(process.argv.slice(2)))
-} catch (error) {
-  // Only reachable for failures before dispatch: arg parsing and config loading.
-  process.exit(reportFatal(error))
+// skipped when index is imported rather than run, so tests can reach profileOf.
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try {
+    process.exit(await main(process.argv.slice(2)))
+  } catch (error) {
+    // Only reachable for failures before dispatch: arg parsing and config loading.
+    process.exit(reportFatal(error))
+  }
 }
