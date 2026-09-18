@@ -80,6 +80,14 @@ export const FIXTURE_DEFAULTS: Partial<GameConfig> = {
   profiles: {},
 }
 
+/** The minimal GameConfig validateConfig accepts. FIXTURE_DEFAULTS plus the one key it lacks. */
+export function fixtureGame(): GameConfig {
+  return structuredClone({
+    ...FIXTURE_DEFAULTS,
+    image: { ref: 'atlas:latest', acquire: 'pull' },
+  }) as GameConfig
+}
+
 export function fixturePlugin(game = 'atlas', defaults: Partial<GameConfig> = {}): GamePlugin {
   return {
     apiVersion: 1,

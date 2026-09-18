@@ -38,7 +38,7 @@ export class GamecrateError extends Error {
 
 /** Collected and reported together, so one run surfaces every problem at once. */
 export interface Problem {
-  /** JSON Pointer into profiles.json, or a file path, or a mod id. */
+  /** JSON Pointer into the global config, or a file path, or a mod id. */
   where: string
   message: string
   /** Populated by did-you-mean matching where it applies. */

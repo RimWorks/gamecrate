@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from '../src/config/builtin'
-import { FIXTURE_DEFAULTS, writePluginPackage } from './fixture-plugin'
+import { FIXTURE_DEFAULTS, fixtureGame, writePluginPackage } from './fixture-plugin'
 import {
   canonicalProfile,
   deepMerge,
@@ -1021,12 +1021,15 @@ describe('project profiles', () => {
     expect(defaults.profileOrder).toEqual(['2024', 'dev'])
   })
 
-  test('a duplicate profiles key does not leak a missing name into profileOrder', async () => {
+  // recovering source order from a duplicate key is guesswork, so it is an error now.
+  test('a duplicate profiles key is a config error', async () => {
     await write('{"game":"rimworld","profiles":{"first":{}},"profiles":{"second":{}}}', '.json')
-    const defaults = await loadProjectDefaults(dir)
-    expect(Object.keys(defaults.profiles ?? {})).toEqual(['second'])
-    expect(defaults.profileOrder).not.toContain('first')
-    for (const key of defaults.profileOrder ?? []) expect(defaults.profiles).toHaveProperty(key)
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
+  })
+
+  test('a duplicate key inside profiles is a config error', async () => {
+    await write('{"game":"rimworld","profiles":{"dev":{},"dev":{}}}', '.json')
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
   })
 
   test('profiles without a game is a config error that says why', async () => {
@@ -1061,5 +1064,91 @@ describe('project profiles', () => {
   test('detach is a project key like every other flag default', async () => {
     await write('game: rimworld\ndetach: true\n')
     expect((await loadProjectDefaults(dir)).detach).toBe(true)
+  })
+})
+
+describe('repo profile splice', () => {
+  let dir = ''
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'gamecrate-splice-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  async function globalConfig(games: unknown): Promise<string> {
+    const path = join(dir, 'profiles.json')
+    await writeFile(path, JSON.stringify({ plugins: [], games }))
+    return path
+  }
+
+  test('a repo profile replaces the global one wholesale', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), profiles: { dev: { mods: ['Global.One'], instances: { wt: {} } } } },
+    })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      profiles: { dev: { mods: ['Repo.One'] } },
+    })
+    expect(config.games['rimworld']!.profiles['dev']!.mods).toEqual(['Repo.One'])
+    // Replacement is wholesale, so the global instances are gone. Documented, not a bug.
+    expect(config.games['rimworld']!.profiles['dev']!.instances).toBeUndefined()
+  })
+
+  test('a global profile the repo does not name is untouched', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), profiles: { dev: { mods: ['A'] }, base: { mods: ['B'] } } },
+    })
+    const { config } = await loadConfig(path, { game: 'rimworld', profiles: { dev: { mods: ['C'] } } })
+    expect(config.games['rimworld']!.profiles['base']!.mods).toEqual(['B'])
+  })
+
+  test('a repo profile can extend a global parent', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), profiles: { base: { mods: ['Base.One'] } } },
+    })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      profiles: { dev: { extends: 'base', mods: ['Repo.One'] } },
+    })
+    const resolved = resolveProfile(config.games['rimworld']!, 'dev')
+    expect(resolved.mods).toEqual(['Base.One', 'Repo.One'])
+  })
+
+  test('repo settings merge into the game settings', async () => {
+    const path = await globalConfig({ rimworld: { ...fixtureGame(), settings: { memory: '4g', cpus: 2 } } })
+    const { config } = await loadConfig(path, { game: 'rimworld', settings: { memory: '8g' } })
+    expect(config.games['rimworld']!.settings).toMatchObject({ memory: '8g', cpus: 2 })
+  })
+
+  test('a repo profile colliding with a global alias is a config error', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), profiles: { base: { mods: [], aliases: ['dev'] } } },
+    })
+    await expect(
+      loadConfig(path, { game: 'rimworld', profiles: { dev: { mods: [] } } }),
+    ).rejects.toMatchObject({ code: Exit.Config })
+  })
+
+  test('a bad repo profile is blamed on the repo file, not the global config', async () => {
+    const path = await globalConfig({ rimworld: fixtureGame() })
+    await expect(
+      loadConfig(path, { game: 'rimworld', profiles: { dev: { extends: 'nope' } } }),
+    ).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path, {
+      game: 'rimworld',
+      profiles: { dev: { extends: 'nope' } },
+    }).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('.gamecrate')
+    })
+  })
+
+  test('naming a game the global config does not have is a config error', async () => {
+    const path = await globalConfig({ rimworld: fixtureGame() })
+    await expect(
+      loadConfig(path, { game: 'nosuchgame', profiles: { dev: { mods: [] } } }),
+    ).rejects.toMatchObject({ code: Exit.Config })
   })
 })

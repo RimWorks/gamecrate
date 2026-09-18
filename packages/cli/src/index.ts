@@ -64,7 +64,9 @@ async function main(argv: string[]): Promise<number> {
     return Exit.Ok
   }
 
-  const [{ config, plugins }, defaults] = await Promise.all([loadConfig(), loadProjectDefaults()])
+  // no longer parallel: the splice needs the project fragment before the global config validates.
+  const defaults = await loadProjectDefaults()
+  const { config, plugins } = await loadConfig(undefined, defaults)
   const args = parseArgs(argv, { games: Object.keys(config.games), defaults })
 
   if (args.help) {

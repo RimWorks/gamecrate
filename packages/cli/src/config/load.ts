@@ -156,10 +156,14 @@ export async function loadProjectDefaults(start = process.cwd()): Promise<Projec
 
   const text = await readFile(file, 'utf8')
   const defaults = validateProjectDefaults(readConfigText(text, file), file)
-  if (defaults.profiles !== undefined) {
-    // jsonc keeps the last of two same-named keys, the tree walk reports the first.
+  const profiles = defaults.profiles
+  if (profiles !== undefined) {
+    // a duplicate key drops one profile and leaves source order a guess. refuse rather than guess.
     const order = orderedKeys(text, file, 'profiles')
-    defaults.profileOrder = order.filter((key) => Object.hasOwn(defaults.profiles!, key))
+    if (order.length !== Object.keys(profiles).length || order.some((key) => !Object.hasOwn(profiles, key))) {
+      throw new GamecrateError(`config is invalid: ${file}`, Exit.Config, 'duplicate profiles key')
+    }
+    defaults.profileOrder = order
   }
   return defaults
 }
@@ -190,8 +194,8 @@ export interface LoadedConfig {
  * Reads the global config, loads the plugins it lists, then merges the user's blocks over each
  * plugin's defaults. A missing file means no games, which every non-launch subcommand survives.
  */
-export async function loadConfig(path?: string): Promise<LoadedConfig> {
-  // with nothing on disk, the path the file would take: it still names plugin roots and errors.
+export async function loadConfig(path?: string, project?: ProjectDefaults): Promise<LoadedConfig> {
+  // with nothing on disk, the name an error message and `config edit` should both use.
   const file = path ?? (await findGlobalConfig()) ?? join(globalConfigDir(), 'profiles.yml')
   const user = await readConfigFile(file)
 
@@ -208,33 +212,84 @@ export async function loadConfig(path?: string): Promise<LoadedConfig> {
       [...plugins].map(([name, plugin]) => [name, structuredClone(plugin.defaults) as GameConfig]),
     ),
   }
-  const { config, problems } = validateConfig(user === undefined ? base : deepMerge(base, user))
+  const merged = user === undefined ? base : deepMerge(base, user)
+  const spliced = applyProject(merged, project)
+  const { config, problems } = validateConfig(spliced)
   if (problems.length > 0) {
     const detail = problems
       .map((p) => {
         const hint = p.suggestion ? ` (${p.suggestion})` : ''
-        return `  ${p.where || '/'}: ${p.message}${hint}${origin(p.where, user, plugins)}`
+        return `  ${p.where || '/'}: ${p.message}${hint}${origin(p.where, user, plugins, project)}`
       })
       .join('\n')
-    const merged = plugins.size === 0 ? '' : ` (merged with defaults from: ${[...plugins.keys()].join(', ')})`
-    throw new GamecrateError(`config is invalid: ${file}${merged}`, Exit.Config, detail)
+    const from = plugins.size === 0 ? '' : ` (merged with defaults from: ${[...plugins.keys()].join(', ')})`
+    throw new GamecrateError(`config is invalid: ${file}${from}`, Exit.Config, detail)
   }
   return { config: expandPaths(config), plugins }
 }
 
 /**
- * Says where a problem's key actually came from. A pointer the user's file does not contain
- * arrived with a plugin's defaults, and blaming profiles.json for it sends them key-hunting.
+ * Repo profiles are assigned, not merged: "replace wholesale" is the whole contract, and a
+ * deepMerge would leave the global profile's mods showing through the repo's shorter list.
  */
-function origin(where: string, user: unknown, plugins: Map<string, GamePlugin>): string {
+function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig {
+  if (project === undefined) return config
+  const game = project.game
+  if (game === undefined) return config
+  if (project.profiles === undefined && project.settings === undefined) return config
+
+  const existing = own(config.games, game)
+  if (existing === undefined) {
+    throw new GamecrateError(
+      `the project config names game "${game}", which is not configured`,
+      Exit.Config,
+      `known games: ${Object.keys(config.games).join(', ') || 'none'}`,
+    )
+  }
+
+  // deepMerge hands back the user's own objects, and origin() reads that tree to decide who to
+  // blame. copy the two levels we write so the splice stays invisible to it.
+  const target: GameConfig = { ...existing, profiles: { ...existing.profiles } }
+  config.games[game] = target
+  for (const [name, profile] of Object.entries(project.profiles ?? {})) {
+    target.profiles[name] = profile as ProfileConfig
+  }
+  if (project.settings !== undefined) {
+    target.settings = deepMerge(target.settings ?? {}, project.settings)
+  }
+  return config
+}
+
+/**
+ * Says where a problem's key actually came from. A pointer the user's file does not contain
+ * arrived with a plugin's defaults or the repo config, and blaming the global config for it
+ * sends them key-hunting.
+ */
+function origin(
+  where: string,
+  user: unknown,
+  plugins: Map<string, GamePlugin>,
+  project?: ProjectDefaults,
+): string {
   if (!where.startsWith('/')) return ''
   const segments = where.slice(1).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'))
   if (valueAt(user, segments) !== undefined) return ''
 
-  const [section, name, ...rest] = segments
+  const [section, name, sub, ...rest] = segments
+  const repoGame = project?.game
+  if (
+    repoGame !== undefined &&
+    section === 'games' &&
+    name === repoGame &&
+    (sub === 'profiles' || sub === 'settings') &&
+    valueAt(sub === 'profiles' ? project?.profiles : project?.settings, rest) !== undefined
+  ) {
+    return '  <- from the .gamecrate project config, not this file'
+  }
+
   const plugin = section === 'games' && name !== undefined ? plugins.get(name) : undefined
   if (plugin === undefined) return '  <- not in this file'
-  return valueAt(plugin.defaults, rest) === undefined
+  return valueAt(plugin.defaults, [sub, ...rest].filter((s) => s !== undefined)) === undefined
     ? `  <- not in this file, and the ${name} plugin's defaults do not supply it`
     : `  <- from the ${name} plugin's defaults, not this file`
 }
