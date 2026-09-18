@@ -361,7 +361,8 @@ async function runWithScreenshot(
   const shot = await grabFrame(spec.name, plan)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
   await container
-  return { code: shot === null ? Exit.Environment : Exit.Ok, reason: 'exited' }
+  // we stopped it right after the grab, so this is never a crash, even when the grab failed.
+  return { code: shot === null ? Exit.Environment : Exit.Ok, reason: 'stopped' }
 }
 
 async function grabFrame(container: string, plan: LaunchPlan): Promise<string | null> {

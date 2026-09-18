@@ -31,7 +31,7 @@ export interface LaunchResult {
   reason: ExitReason
 }
 
-/** runContainer turns SIGINT and SIGTERM into a docker stop and returns 130, so 130 is a stop. */
+/** 130 means runContainer caught a signal and stopped the container, not that the game died. */
 export function reasonFor(code: number): ExitReason {
   return code === Exit.Interrupted ? 'stopped' : 'exited'
 }
