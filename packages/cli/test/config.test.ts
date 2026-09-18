@@ -18,12 +18,13 @@ import {
   subtract,
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
+import { list } from '../src/cli/list'
 import { profileOf } from '../src/cli/profile'
 import { parseJsonc } from '../src/config/jsonc'
 import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
 import { GamecrateError, Exit } from '../src/types'
-import type { GameConfig, ParsedArgs, Problem, RootConfig } from '../src/types'
+import type { GameConfig, ParsedArgs, Problem, ProjectDefaults, RootConfig } from '../src/types'
 
 const ATLAS_DEFAULTS: GameConfig = {
   ...(FIXTURE_DEFAULTS as GameConfig),
@@ -1150,7 +1151,7 @@ describe('repo profile splice', () => {
   // before validateConfig ever saw the name.
   test('a repo profile named __proto__ lands as an own key, not on the prototype', async () => {
     const path = await globalConfig({ rimworld: { ...fixtureGame(), profiles: { base: { mods: ['B'] } } } })
-    const profiles = JSON.parse('{"__proto__":{"mods":["Evil.Mod"]},"dev":{"mods":["Repo.One"]}}') as Record<
+    const profiles = JSON.parse('{"__proto__":{"mods":["Evil.Mod"]},"dev":{"mods":7}}') as Record<
       string,
       unknown
     >
@@ -1158,10 +1159,9 @@ describe('repo profile splice', () => {
     await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
     await loadConfig(path, project).catch((error: GamecrateError) => {
       expect(error.detail).toContain('__proto__')
-      // the sibling survived the spread, so validateConfig walked a map with both keys.
-      expect(error.detail).not.toContain('/profiles/dev')
+      // dev is invalid too, so its pointer only shows up if the sibling survived the spread.
+      expect(error.detail).toContain('/profiles/dev')
     })
-    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
   })
 
   test('a repo profile shadowing a global one is still blamed on the repo file', async () => {
@@ -1227,3 +1227,116 @@ describe('profileOf', () => {
     expect(args.profile).toBeUndefined()
   })
 })
+
+describe('profile descriptions', () => {
+  test('a description is accepted and surfaces in both output shapes', () => {
+    const config = {
+      dataRoot: '/tmp',
+      games: {
+        rimworld: {
+          ...fixtureGame(),
+          modes: ['headed'],
+          profiles: {
+            dev: { mods: ['A'], description: 'my day to day modded run' },
+            bare: { mods: [] },
+          },
+        },
+      },
+    } as unknown as RootConfig
+
+    const text = captureStdout(() => list({ } as ParsedArgs, config, {}))
+    expect(text).toContain('my day to day modded run')
+
+    const json = JSON.parse(captureStdout(() => list({ json: true } as ParsedArgs, config, {})))
+    const profiles = json[0].profiles as { profile: string; description: string | null }[]
+    expect(profiles.find((p) => p.profile === 'dev')?.description).toBe('my day to day modded run')
+    expect(profiles.find((p) => p.profile === 'bare')?.description).toBeNull()
+  })
+
+  test('a profile carries its own launch defaults', async () => {
+    const path = join(await mkdtemp(join(tmpdir(), 'gamecrate-launchdefaults-')), 'profiles.json')
+    await writeFile(
+      path,
+      JSON.stringify({
+        plugins: [],
+        games: {
+          rimworld: {
+            ...fixtureGame(),
+            profiles: { server: { mods: [], detach: true, replace: true, build: 'always' } },
+          },
+        },
+      }),
+    )
+    const { config } = await loadConfig(path)
+    const server = config.games['rimworld']!.profiles['server']!
+    expect(server.detach).toBe(true)
+    expect(server.replace).toBe(true)
+    expect(server.build).toBe('always')
+  })
+
+  test('a bad build policy on a profile is a config error at the key', async () => {
+    const path = join(await mkdtemp(join(tmpdir(), 'gamecrate-badbuild-')), 'profiles.json')
+    await writeFile(
+      path,
+      JSON.stringify({ plugins: [], games: { rimworld: { ...fixtureGame(), profiles: { dev: { mods: [], build: 'sometimes' } } } } }),
+    )
+    await expect(loadConfig(path)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path).catch((error: GamecrateError) => {
+      expect(error.code).toBe(Exit.Config)
+      expect(error.detail).toContain('/games/rimworld/profiles/dev/build')
+    })
+  })
+
+  test('a non-string description is a config error pointing at the key', async () => {
+    const path = join(await mkdtemp(join(tmpdir(), 'gamecrate-desc-')), 'profiles.json')
+    await writeFile(
+      path,
+      JSON.stringify({ plugins: [], games: { rimworld: { ...fixtureGame(), profiles: { dev: { mods: [], description: 7 } } } } }),
+    )
+    await expect(loadConfig(path)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path).catch((error: GamecrateError) => {
+      expect(error.code).toBe(Exit.Config)
+      expect(error.detail).toContain('/games/rimworld/profiles/dev/description')
+    })
+  })
+})
+
+describe('list provenance', () => {
+  test('a repo profile is tagged in both output shapes', () => {
+    const config = {
+      dataRoot: '/tmp',
+      games: {
+        rimworld: {
+          ...fixtureGame(),
+          modes: ['headed'],
+          profiles: { dev: { mods: ['A'] }, base: { mods: ['B'] } },
+        },
+      },
+    } as unknown as RootConfig
+    const defaults: ProjectDefaults = { game: 'rimworld', profiles: { dev: { mods: ['A'] } } }
+
+    const text = captureStdout(() => list({ } as ParsedArgs, config, defaults))
+    expect(text).toContain('from .gamecrate.yml')
+    expect(text.split('\n').find((l) => l.includes('base'))).not.toContain('from .gamecrate')
+
+    const json = JSON.parse(captureStdout(() => list({ json: true } as ParsedArgs, config, defaults)))
+    const profiles = json[0].profiles as { profile: string; source: string }[]
+    expect(profiles.find((p) => p.profile === 'dev')?.source).toBe('project')
+    expect(profiles.find((p) => p.profile === 'base')?.source).toBe('config')
+  })
+})
+
+function captureStdout(body: () => void): string {
+  const real = process.stdout.write.bind(process.stdout)
+  let text = ''
+  process.stdout.write = ((chunk: string) => {
+    text += chunk
+    return true
+  }) as typeof process.stdout.write
+  try {
+    body()
+  } finally {
+    process.stdout.write = real
+  }
+  return text
+}

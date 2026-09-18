@@ -156,6 +156,12 @@ export interface ProfileConfig {
   alias?: string
   /** Extra names this profile answers to, so one entry covers several spellings. */
   aliases?: string[]
+  /** A one-line note for `gamecrate list`. Never read by the launcher. */
+  description?: string
+  /** Launch defaults for this profile. The matching --no-* flag overrides each one. */
+  detach?: boolean
+  replace?: boolean
+  build?: BuildPolicy
 }
 
 export interface GameConfig {

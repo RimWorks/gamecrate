@@ -6,6 +6,8 @@ import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { parseArgs } from './cli/args'
+import { requireGame } from './cli/game'
+import { list } from './cli/list'
 import { profileOf } from './cli/profile'
 import { renderCompletion, renderHelp } from './cli/help'
 import { openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, warn } from './cli/output'
@@ -101,7 +103,7 @@ async function dispatch(
     case 'help':
       return help(args, config)
     case 'list':
-      return list(args, config)
+      return list(args, config, defaults)
     case 'mods':
       return mods(args, config, plugins, defaults)
     case 'doctor':
@@ -147,25 +149,6 @@ function help(args: ParsedArgs, config: RootConfig): number {
   }
   process.stdout.write(renderHelp(topic, config))
   return Exit.Ok
-}
-
-function requireGame(args: ParsedArgs, config: RootConfig): string {
-  const game = args.game
-  if (game === undefined) {
-    throw new GamecrateError(
-      `${args.subcommand} needs a game`,
-      Exit.Usage,
-      `known games: ${Object.keys(config.games).join(', ')}`,
-    )
-  }
-  if (!Object.hasOwn(config.games, game)) {
-    throw new GamecrateError(
-      `unknown game "${game}"`,
-      Exit.Config,
-      `known games: ${Object.keys(config.games).join(', ')}`,
-    )
-  }
-  return game
 }
 
 /**
@@ -429,52 +412,6 @@ async function copyOutLogs(plan: LaunchPlan): Promise<void> {
   }
 }
 
-
-function list(args: ParsedArgs, config: RootConfig): number {
-  const games = args.game === undefined ? Object.keys(config.games) : [requireGame(args, config)]
-
-  if (args.json) {
-    const payload = games.map((name) => {
-      const game = config.games[name]!
-      return {
-        game: name,
-        core: game.core,
-        dlc: game.dlc,
-        modes: game.modes,
-        profiles: Object.entries(game.profiles).map(([profile, spec]) => ({
-          profile,
-          alias: spec.alias ?? null,
-          extends: spec.extends ?? null,
-          mods: spec.mods?.length ?? 0,
-          instances: Object.keys(spec.instances ?? {}),
-        })),
-      }
-    })
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
-    return Exit.Ok
-  }
-
-  const out: string[] = []
-  for (const name of games) {
-    const game = config.games[name]!
-    const width = Math.max(7, ...Object.keys(game.profiles).map((n) => n.length))
-    out.push(`${name}  (${game.modes.join(', ')})`)
-    out.push(`  ${'modless'.padEnd(width)}  built-in: core + official DLC`)
-    for (const [profile, spec] of Object.entries(game.profiles)) {
-      const notes: string[] = []
-      if (spec.alias) notes.push(`alias for ${spec.alias}`)
-      if (spec.extends) notes.push(`extends ${spec.extends}`)
-      const count = spec.mods?.length ?? 0
-      if (!spec.alias) notes.push(count === 1 ? '1 entry' : `${count} entries`)
-      if (spec.aliases?.length) notes.push(`aka ${spec.aliases.join(', ')}`)
-      out.push(`  ${profile.padEnd(width)}  ${notes.join(', ')}`)
-      const instances = Object.keys(spec.instances ?? {})
-      if (instances.length > 0) out.push(`  ${' '.repeat(width)}  instances: ${instances.join(', ')}`)
-    }
-  }
-  process.stdout.write(`${out.join('\n')}\n`)
-  return Exit.Ok
-}
 
 async function mods(
   args: ParsedArgs,
