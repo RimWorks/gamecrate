@@ -209,6 +209,14 @@ describe('lock record', () => {
     await writeFile(lockPath(plan), 'not json at all')
     expect(await readLock(lockPath(plan))).toBeUndefined()
   })
+
+  // kill(0) hits our own process group and kill(-1) broadcasts, so both would read as alive
+  // and refuse the profile forever.
+  test.each([0, -1, 1.5])('readLock rejects a pid of %s', async (pid) => {
+    const plan = await planFor()
+    await writeFile(lockPath(plan), JSON.stringify({ pid, detached: false, startedAt: 'x' }))
+    expect(await readLock(lockPath(plan))).toBeUndefined()
+  })
 })
 
 // Detach leaves a long-lived pid per run, so reuse of a recycled number stops being theoretical.

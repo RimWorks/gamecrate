@@ -264,7 +264,7 @@ export async function readLock(path: string): Promise<LockRecord | undefined> {
   if (text === undefined) return undefined
   try {
     const value = JSON.parse(text) as LockRecord
-    return typeof value?.pid === 'number' ? value : undefined
+    return Number.isInteger(value?.pid) && value.pid > 0 ? value : undefined
   } catch {
     return undefined
   }
@@ -315,7 +315,8 @@ export async function replacePrevious(plan: LaunchPlan): Promise<void> {
   await unlink(path).catch(() => {})
 }
 
-/** node does not expose sysconf(_SC_CLK_TCK); it is 100 on every linux that matters. */
+// ponytail: node does not expose sysconf(_SC_CLK_TCK) and it is 100 on every mainstream
+// linux, shell out to `getconf CLK_TCK` if one ever disagrees
 const CLOCK_TICKS_PER_SECOND = 100
 /** clock granularity, so a lock written in the same second as its process is not rejected. */
 const START_TIME_SLACK_MS = 2000

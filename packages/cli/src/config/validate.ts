@@ -8,7 +8,7 @@ type Bag = Record<string, unknown>
 const MODES = ['headed', 'headless', 'screenshot'] as const
 
 /** Marks a message as our hint payload. Zod's own messages never start with it. */
-const HINTS = '\\u0000gamecrate/hints:'
+const HINTS = '\u0000gamecrate/hints:'
 
 /**
  * Zod reports unrecognized keys as one issue with no room for a did-you-mean, so the message
@@ -27,7 +27,11 @@ function obj<T extends z.ZodRawShape>(shape: T) {
 /** Never falls back to reading a Zod message as a hint: no payload means no suggestions. */
 function hintsFor(message: string): (string | null)[] {
   if (!message.startsWith(HINTS)) return []
-  return JSON.parse(message.slice(HINTS.length)) as (string | null)[]
+  try {
+    return JSON.parse(message.slice(HINTS.length)) as (string | null)[]
+  } catch {
+    return []
+  }
 }
 
 /** A key the discriminant next to it makes required. */
