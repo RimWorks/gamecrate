@@ -1,6 +1,7 @@
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type { Readable } from 'node:stream'
+import { STDOUT_LOG } from '../docker/run'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
@@ -218,6 +219,55 @@ function uniqueRunDir(runsDir: string, stamp: string): string {
   let candidate = join(runsDir, stamp)
   for (let n = 2; existsSync(candidate); n++) candidate = join(runsDir, `${stamp}-${n}`)
   return candidate
+}
+
+/** Below the first a wait is not worth mentioning; the log normally appears in milliseconds. */
+export interface NoticeSchedule {
+  firstMs: number
+  everyMs: number
+}
+
+export const WAIT_NOTICE: NoticeSchedule = { firstMs: 2_000, everyMs: 30_000 }
+
+/**
+ * The elapsed label when a wait is due a line, else undefined. Driven by elapsed time and not
+ * by poll count: a quarter-second poll would scroll a line per pass and read as its own kind
+ * of broken, while a silent ten-minute image build looks exactly like a hang. Both branches
+ * floor, so the label never claims more time than has passed.
+ */
+export function waitNotice(
+  waitedMs: number,
+  lastNoticeMs: number,
+  schedule: NoticeSchedule = WAIT_NOTICE,
+): string | undefined {
+  if (waitedMs < schedule.firstMs) return undefined
+  if (lastNoticeMs > 0 && waitedMs - lastNoticeMs < schedule.everyMs) return undefined
+  return waitedMs < 60_000 ? `${Math.floor(waitedMs / 1000)}s` : `${Math.floor(waitedMs / 60_000)}m`
+}
+
+/** Inverse of runTimestamp. Anchored at the start, so the -2 collision suffix is tolerated. */
+export function runStartedAt(name: string): number | undefined {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(\d{3})Z/.exec(name)
+  if (m === null) return undefined
+  const at = Date.parse(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}.${m[7]}Z`)
+  return Number.isNaN(at) ? undefined : at
+}
+
+/** linkCurrent keeps `current` pointed at the newest run, so the run dir is never guessed. */
+export function currentLog(instanceDir: string): string {
+  return join(instanceDir, 'logs', 'current', STDOUT_LOG)
+}
+
+/**
+ * tail -f never ends on its own, so a live run gets --pid and tail leaves when the holder
+ * does. With no live holder nothing will write again, so -f is dropped or it hangs forever.
+ */
+export function tailArgv(file: string, fromStart: boolean, livePid?: number): string[] {
+  const argv = ['tail']
+  if (fromStart) argv.push('-n', '+1')
+  if (livePid !== undefined) argv.push('-f', '--pid', String(livePid))
+  argv.push(file)
+  return argv
 }
 
 function linkCurrent(logsDir: string, target: string): void {

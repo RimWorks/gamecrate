@@ -10,7 +10,7 @@ import { requireGame } from './cli/game'
 import { list } from './cli/list'
 import { profileOf } from './cli/profile'
 import { renderCompletion, renderHelp } from './cli/help'
-import { openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, warn } from './cli/output'
+import { currentLog, openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, tailArgv, warn } from './cli/output'
 import {
   findGlobalConfig,
   globalConfigDir,
@@ -22,7 +22,7 @@ import {
 } from './config/load'
 import { resolveIdentity } from './docker/identity'
 import { preflight } from './docker/preflight'
-import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, waitForMarker } from './docker/run'
+import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
 import { buildRunSpec, containerName, windowTitle } from './docker/spec'
 import { adoptNewWindow } from './docker/window'
 import { generateModsConfig, mergePrefs } from './launch/generate'
@@ -32,13 +32,17 @@ import {
   captureScreenshot,
   ensureRuntimeLayer,
   heldLock,
+  isRunning,
+  readLock,
   replacePrevious,
+  stopRun,
   takeLock,
   writeLaunchRecord,
 } from './launch/prepare'
-import { forkSupervisor, notify, recordExit, writeExit } from './launch/supervisor'
+import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
 import { resolvePlan } from './launch/resolve'
+import { listRuns } from './run/registry'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
 import { buildIndex } from './mods/modindex'
 import { requirePlugin } from './plugin'
@@ -62,7 +66,6 @@ import type {
 // Stamped by `bun build --define` from package.json, which semantic-release sets at publish time.
 declare const __VERSION__: string | undefined
 const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : '0.0.0-dev'
-const STOP_TIMEOUT_SECONDS = 10
 
 async function main(argv: string[]): Promise<number> {
   // read off argv, so the recovery below sits above parseArgs and loadConfig too.
@@ -73,17 +76,6 @@ async function main(argv: string[]): Promise<number> {
     if (supervised === undefined) throw error
     return await supervisorFailed(supervised, reportFatal(error))
   }
-}
-
-/**
- * The supervisor has no terminal and its stdio is discarded, so anything thrown out here is
- * invisible. Notify first: it is the only channel the user has, and a write can still fail.
- */
-async function supervisorFailed(dir: string, code: number): Promise<number> {
-  await notify(`gamecrate ${basename(dir)}: the supervisor failed (${code})`, true)
-  await rm(join(dir, '.gamecrate', 'lock'), { force: true }).catch(() => {})
-  await writeExit(dir, { at: new Date().toISOString(), code, reason: 'failed' }).catch(() => {})
-  return code
 }
 
 async function command(argv: string[], supervised: string | undefined): Promise<number> {
@@ -145,6 +137,14 @@ async function dispatch(
       return verify(args, config, plugins, defaults)
     case 'build':
       return build(args, config)
+    case 'ps':
+      return ps(args, config)
+    case 'stop':
+      return stop(args, config, defaults)
+    case 'attach':
+      return attach(args, config, defaults)
+    case 'wait':
+      return waitFor(args, config, defaults)
     case 'shell':
       return run(argv, args, config, plugins, defaults, true)
     case 'config':
@@ -507,7 +507,9 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
 async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
-  const runs = join(instanceDir(args, config, game, profile), 'logs', 'runs')
+  const dir = instanceDir(args, config, game, profile)
+  if (args.follow) return await follow(dir, false, `${game} ${profile}`)
+  const runs = join(dir, 'logs', 'runs')
 
   const latest = (await readdir(runs, { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory())
@@ -518,20 +520,20 @@ async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefau
     throw new GamecrateError(`no runs recorded for ${game} ${profile}`, Exit.Usage, runs)
   }
 
-  const dir = join(runs, latest)
-  const files = (await readdir(dir, { withFileTypes: true }))
+  const runDir = join(runs, latest)
+  const files = (await readdir(runDir, { withFileTypes: true }))
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
     .sort()
 
   if (args.json) {
-    process.stdout.write(`${JSON.stringify({ run: latest, dir, files }, null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify({ run: latest, dir: runDir, files }, null, 2)}\n`)
     return Exit.Ok
   }
 
-  status(dir)
+  status(runDir)
   for (const name of files) {
-    const text = await readFile(join(dir, name), 'utf8').catch(() => '')
+    const text = await readFile(join(runDir, name), 'utf8').catch(() => '')
     for (const line of text.split('\n')) {
       if (line.length > 0) process.stdout.write(`${name}: ${line}\n`)
     }
@@ -773,6 +775,112 @@ async function clone(args: ParsedArgs, config: RootConfig): Promise<number> {
   if (code !== 0) throw new GamecrateError(`cp failed with exit ${code}`, Exit.Environment)
   status(`cloned ${from} -> ${to}`)
   return Exit.Ok
+}
+
+async function ps(args: ParsedArgs, config: RootConfig): Promise<number> {
+  const runs = await listRuns(config.dataRoot)
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(runs, null, 2)}\n`)
+    return Exit.Ok
+  }
+  if (runs.length === 0) {
+    status('nothing running')
+    return Exit.Ok
+  }
+  const rows = runs.map((entry) => [
+    entry.game,
+    entry.instance === undefined ? entry.profile : `${entry.profile}/${entry.instance}`,
+    entry.mode ?? '',
+    entry.pid === undefined ? '' : String(entry.pid),
+    entry.container,
+    entry.uptime ?? entry.status,
+  ])
+  const widths = rows[0]!.map((_, i) => Math.max(...rows.map((row) => row[i]!.length)))
+  for (const row of rows) {
+    process.stdout.write(`${row.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd()}\n`)
+  }
+  if (runs.some((entry) => entry.status === 'orphaned')) {
+    warn('some locks have no container; run gamecrate stop to clear them')
+  }
+  return Exit.Ok
+}
+
+async function stop(
+  args: ParsedArgs,
+  config: RootConfig,
+  defaults: ProjectDefaults,
+): Promise<number> {
+  const game = requireGame(args, config)
+  const profile = profileOf(args, defaults)
+  const file = join(instanceDir(args, config, game, profile), '.gamecrate', 'lock')
+
+  const record = await readLock(file)
+  if (record === undefined) {
+    status(`${game} ${profile} is not running`)
+    return Exit.Ok
+  }
+
+  const outcome = await stopRun(record, file)
+  if (outcome === 'held') {
+    warn(`pid ${record.pid} still holds ${file}; ${record.container} did not stop in time`)
+    return Exit.Refused
+  }
+  // the orphan path stopped a container nobody was supervising, which is not the same as
+  // ending a live run and should not read like one
+  status(outcome === 'signalled' ? `stopped ${record.container}` : `cleared the stale lock for ${record.container}`)
+  return Exit.Ok
+}
+
+async function attach(
+  args: ParsedArgs,
+  config: RootConfig,
+  defaults: ProjectDefaults,
+): Promise<number> {
+  const game = requireGame(args, config)
+  const profile = profileOf(args, defaults)
+  return await follow(instanceDir(args, config, game, profile), true, `${game} ${profile}`)
+}
+
+/**
+ * One follower for attach and logs -f; they differ only in where they start reading. A live
+ * holder is waited on first, because `current` lags the lock by however long staging takes.
+ */
+async function follow(dir: string, fromStart: boolean, what: string): Promise<number> {
+  const lock = await readLock(join(dir, '.gamecrate', 'lock'))
+  const held = lock !== undefined && isRunning(lock.pid, lock.startedAt)
+  const live = held && (await awaitRunLog(dir, lock))
+
+  const file = currentLog(dir)
+  if (!existsSync(file)) {
+    throw new GamecrateError(`no captured output for ${what}`, Exit.Usage, file)
+  }
+  return await spawnStatus(tailArgv(file, fromStart, live ? lock.pid : undefined), true)
+}
+
+async function waitFor(
+  args: ParsedArgs,
+  config: RootConfig,
+  defaults: ProjectDefaults,
+): Promise<number> {
+  const game = requireGame(args, config)
+  const profile = profileOf(args, defaults)
+  const dir = instanceDir(args, config, game, profile)
+
+  const record = await awaitExit(dir)
+  if (record === 'orphaned') {
+    throw new GamecrateError(
+      `${game} ${profile}: the lock holder is gone and recorded no exit`,
+      Exit.Refused,
+      `run: gamecrate stop ${game} ${profile}`,
+    )
+  }
+  if (record === 'absent') {
+    throw new GamecrateError(`no run recorded for ${game} ${profile}`, Exit.Usage, dir)
+  }
+
+  if (args.json) process.stdout.write(`${JSON.stringify(record)}\n`)
+  else status(`${game} ${profile}: ${record.reason} (${record.code})`)
+  return record.code
 }
 
 async function build(args: ParsedArgs, config: RootConfig): Promise<number> {

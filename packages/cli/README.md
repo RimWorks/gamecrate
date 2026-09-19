@@ -22,30 +22,42 @@ The build needs [bun](https://bun.sh) and Node 22 or newer.
 
 ## Configuration
 
-Your config lives at `~/.config/gamecrate/profiles.json`. If you set `XDG_CONFIG_HOME`, the
-path moves with it. The file accepts JSONC, so comments and trailing commas are fine.
+Your config lives in `~/.config/gamecrate/`. If you set `XDG_CONFIG_HOME`, the directory moves
+with it. The file is named `profiles`, and gamecrate reads four suffixes:
+
+| Suffix | Format |
+| --- | --- |
+| `.yml` | YAML |
+| `.yaml` | YAML |
+| `.json` | JSON with comments and trailing commas |
+| `.jsonc` | JSON with comments and trailing commas |
+
+Keep one. Two config files in the same directory is an error, because silent precedence is how
+you edit the wrong file for twenty minutes.
 
 A minimal config for RimWorld:
 
-```jsonc
-{
-  "plugins": ["@gamecrate/rimworld"],
-  "games": {
-    "rimworld": {
-      // The plugin already says source: "mount" and container: "/game".
-      "gameFiles": { "host": "~/games/RimWorld" },
-      "image": { "ref": "ghcr.io/your-org/rimworld:1.6", "acquire": "pull" },
-      "workshopRoot": "~/.steam/steam/steamapps/workshop/content/294100",
-      "scanRoots": [{ "path": "~/projects/mods", "maxDepth": 2 }],
-      "profiles": {
-        "dev": { "mods": ["brrainz.harmony", "yourname.yourmod"] }
-      }
-    }
-  }
-}
+```yaml
+plugins: ['@gamecrate/rimworld']
+games:
+  rimworld:
+    # The plugin already says source: mount and container: /game.
+    gameFiles:
+      host: ~/games/RimWorld
+    image:
+      ref: ghcr.io/your-org/rimworld:1.6
+      acquire: pull
+    workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
+    scanRoots:
+      - path: ~/projects/mods
+        maxDepth: 2
+    profiles:
+      dev:
+        mods: [brrainz.harmony, yourname.yourmod]
 ```
 
-Run `gamecrate config edit` to open the file in `$EDITOR` and validate it on save.
+Run `gamecrate config edit` to open the file in `$VISUAL`, or `$EDITOR` when `$VISUAL` is
+unset, and validate it on save. With nothing on disk yet, it creates `profiles.yml`.
 
 ### How plugins resolve
 
@@ -81,7 +93,8 @@ full list and append to it.
 
 The settings ladder is the one exception. `settings` merges through five layers: the top-level
 `defaults`, then `games.<game>`, then the profile, then the instance, then the command line.
-Arrays inside `settings`, which means `gameArgs` and `dockerArgs`, concatenate at every layer.
+Arrays inside `settings`, which means `gameArgs` and `dockerArgs`, concatenate at every layer,
+unlike the `dlc`, `modes` and `scanRoots` lists in the preceding section, which replace.
 
 When a config error points at a key you never wrote, the message says which plugin's defaults
 supplied it.
@@ -93,22 +106,75 @@ A profile names a mod set. `extends` inherits a parent profile's mods and append
 share the parent's data directory. `instances` splits one profile into named sub-runs, each
 with its own saves, logs, lock, and container.
 
+`description` is one line saying what the profile is for. `gamecrate list` prints it on its own
+line under the profile, and `gamecrate list --json` carries it as a `description` field on that
+profile. It changes nothing about the launch.
+
+```yaml
+profiles:
+  dev:
+    description: harmony plus the mod I am working on
+    mods: [brrainz.harmony, yourname.yourmod]
+```
+
+```
+rimworld  (headed, headless, screenshot)
+  modless  built-in: core + official DLC
+  dev      2 entries
+           harmony plus the mod I am working on
+```
+
+A profile can also carry a default for three flags, so you stop typing them:
+
+| Key | Stands in for |
+| --- | --- |
+| `detach` | `--detach`. `--no-detach` overrides it. |
+| `replace` | `--replace`. `--no-replace` overrides it. |
+| `build` | `--build` and `--no-build`. Takes `auto`, `always`, or `never`. |
+
 gamecrate ships one profile of its own, `modless`. It resolves to the core game plus its
 official DLC, and you cannot redefine it.
 
 ### Per-directory defaults
 
-gamecrate looks for a `.gamecrate.yml` file in the current directory and every parent. Keys in
-it stand in for flags you would otherwise type, so a mod repo can pin its own game, profile,
-and extra Docker arguments:
+gamecrate looks for a `.gamecrate` file in the current directory and every parent. It takes the
+same four suffixes as the global config. `.gamecrate.yml`, `.gamecrate.yaml`,
+`.gamecrate.json`, and `.gamecrate.jsonc` all work, and two of them in one directory is the same
+error. Most keys stand in for a flag of the same name, camel-cased. A mod repo can pin its own
+game, profile, and extra Docker arguments:
 
 ```yaml
 game: rimworld
-profile: dev
+defaultProfile: dev
 mode: headed
+detach: true
+dockerArgs: ['--cpus', '4']
 ```
 
 A flag on the command line beats the file.
+
+Four keys are not flags:
+
+| Key | What it does |
+| --- | --- |
+| `game` | The game the rest of the file talks about. `profiles` and `settings` both need it. |
+| `defaultProfile` | The profile to use when you name none. Without it, the first key in `profiles` wins, and with neither, `modless` does. |
+| `profiles` | Profiles for `game`, written exactly like the ones in the global config. |
+| `settings` | A settings block assigned over `games.<game>.settings` at load time. |
+
+**A repo `settings:` block is assigned over `games.<game>.settings` when the config loads**,
+before anything resolves. It is not a sixth layer: by the time the ladder runs, there is one game
+block holding whatever the repo supplied.
+
+**A repo profile replaces a global profile of the same name outright.** It does not merge, so
+the global profile's `instances` and `aliases` are gone for that run. This is deliberate: a
+merge would leave the global profile's `mods` showing through the repo's shorter list. Give the
+repo profile a name of its own when you want both.
+
+The file is untrusted input. It ships inside any repo you clone, and `mods`, `use`, `worktree`,
+and now `profiles` can all name directories anywhere on your disk to bind-mount into the
+container.
+Read a stranger's `.gamecrate.yml` before you run gamecrate in their repo.
 
 ## Subcommands
 
@@ -121,13 +187,17 @@ The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
 | `list [game]` | Games, profiles, and where each profile came from |
 | `mods <game> [profile]` | The resolved mod set: source kind plus absolute path |
 | `doctor` | Preflight: Docker, CDI, registry auth, game dirs, scan roots, permissions |
-| `clean <game> <profile>` | Tiered wipe of a profile |
+| `clean <game> [profile]` | Tiered wipe of a profile |
 | `clone <game> <src> <dst>` | Reflink-copy a profile's precious tier |
-| `logs <game> <profile>` | Print the last run's captured logs |
+| `logs <game> [profile]` | Print the last run's captured logs. `-f` follows the live run instead |
+| `attach <game> [profile]` | Stream a detached run's output from the start. Ctrl-C leaves the game running |
+| `wait <game> [profile]` | Block until a detached run ends, then exit with its code |
+| `ps` | Every live run: game, profile/instance, mode, pid, container, then uptime or status |
+| `stop <game> [profile]` | Stop a detached run and release its lock |
 | `build <game>` | Build or pull the runtime image, no launch |
 | `shell <game> [profile]` | Same mounts, bash instead of the game |
 | `verify <game> [profile]` | What the running container bound, and whether it looks current |
-| `config edit` | Open `profiles.json` in `$EDITOR`, validate on save |
+| `config edit` | Open the global config in `$VISUAL` or `$EDITOR`, validate on save |
 | `fix-perms <game> [profile]` | Chown foreign-owned files back to the caller |
 | `help [topic]` | Help for a subcommand or a game |
 | `version` | Print the version |
@@ -151,7 +221,9 @@ Worktrees and instances:
 
 - `--worktree <path>` promotes mods from a linked git worktree, in its own instance. Repeatable,
   and earlier flags outrank later ones.
-- `--no-worktree` ignores the current directory and `$GAMECRATE_WORKTREE`.
+- `--no-worktree` turns worktree promotion off completely. It ignores the current directory,
+  `$GAMECRATE_WORKTREE`, any `--worktree` flag you also typed, and an instance's configured
+  `worktree`.
 - `--instance <name>` runs under a named sub-profile with its own saves, logs, and container.
 
 Display and lifetime:
@@ -159,7 +231,9 @@ Display and lifetime:
 - `--mode <headed|headless|screenshot>` chooses how the game displays.
 - `--resolution <width>x<height>` overrides the game resolution.
 - `--marker <str>` exits 0 as soon as that string appears in the log.
-- `--timeout <seconds>` kills the container after that long.
+- `--timeout <seconds>` bounds a run with a `--marker`, in any mode, and a `--mode headless`
+  run without one. A `--mode screenshot` run with no marker is bounded by `--render-wait`
+  instead, and a headed run by its window, so neither of those reads this.
 - `--render-wait <seconds>` sets the settle time before a screenshot.
 
 Container and build:
@@ -173,6 +247,8 @@ Container and build:
 - `--root` runs as root instead of mapping your uid.
 - `--replace` stops whatever holds this profile and instance, then launches. `--no-replace`
   refuses instead.
+- `--detach` launches in the background. `--no-detach` stays in the foreground, whatever the
+  profile or the repo config asks for.
 
 Output and dry runs:
 
@@ -180,9 +256,100 @@ Output and dry runs:
 - `--print-plan` prints the resolved launch plan instead of launching.
 - `--log <path>` routes launch output to one file.
 - `--json` switches to machine-readable output.
+- `-f`, `--follow` keeps printing as the run writes. `logs` takes it.
 
 `clean` adds three tier flags: `--staging` (the default), `--logs`, and `--all`. `--all` deletes
 saves, so it needs `--yes`.
+
+## Detached runs
+
+`--detach` re-executes gamecrate as a background supervisor. It writes the lock with that
+supervisor's pid, prints the container name, and gives you the prompt back. The
+supervisor owns the run from there. It pulls or builds the image, stages the mods, starts the
+container, and records the exit.
+
+Three things refuse a `--detach` you typed, and each says so:
+
+- `shell` needs the terminal that `--detach` gives up.
+- `--dry-run` has no run to supervise.
+- `--print-plan` has no run to supervise.
+
+The refusal is for the flag, not for detaching. A `detach: true` in a profile or a repo config
+is a default, so `shell`, `--dry-run` and `--print-plan` ignore it and run in the foreground
+without a word.
+
+A profile or a repo config can set `detach: true`. `--no-detach` is the way past that.
+
+### Read the result with `wait`
+
+A detached launch returns `0` to your shell as soon as gamecrate writes the lock. That says
+the supervisor started, and nothing about how the game ended. **`wait` is how a script gets the
+real exit code.** It blocks until the run ends, then exits with that code:
+
+```sh
+gamecrate rimworld dev --detach
+gamecrate wait rimworld dev
+echo $?
+```
+
+gamecrate sends no desktop notification when a detached run fails. Nothing pops up and nothing
+writes to your terminal, so `wait`, `ps`, and the `last-exit.json` file are the only ways to
+learn about it. That file sits at `.gamecrate/last-exit.json` inside the instance directory,
+whose name depends on how gamecrate hashes the worktree path, so a script cannot compute it.
+Use `wait`.
+
+`wait` exits `2` when no run was ever recorded, and `7` when the lock holder died without
+recording an exit. `7` means the lock is stale: `gamecrate stop <game> <profile>` clears it.
+
+### Watch a run that is already going
+
+```sh
+gamecrate ps
+```
+
+```
+rimworld  mpf/simulator-test  headless  1474870  gamecrate-rimworld-mpf-simulator-test  Up 7 minutes
+```
+
+The columns are game, profile with its instance, mode, supervisor pid, container, and
+uptime. A run that holds a lock but has no container yet reads `starting`, because staging and
+the image come before `docker run`. A lock with no live supervisor reads `orphaned`, and
+`ps` tells you to run `stop`.
+
+`gamecrate attach <game> <profile>` streams that run's captured output from the beginning of
+the log. Ctrl-C stops the stream and leaves the game running. `gamecrate logs <game> <profile>
+-f` follows the same log from the end instead.
+
+`gamecrate stop <game> <profile>` signals the supervisor and waits for the lock to be released.
+It clears the lock itself only when the holder died first; a live supervisor releases its own.
+It exits `7` when the lock still names a live process after the wait, and it does not look at
+the container to decide that.
+
+A run whose supervisor is already dead takes a different path: `stop` stops the container
+itself, clears the stale lock, and exits `0`.
+
+## Headed runs on X11
+
+A headed run retitles its own window and fixes what the window manager knows about it. That
+needs two programs on the host.
+
+**`xprop` is load-bearing.** gamecrate writes its own pid onto the window it adopts, then reads
+that pid back. That is how it tells its window apart from another run's. Without `xprop` it can
+do neither, so two concurrent headed runs adopt the same window. Destroying that one window
+tears down both containers, and the second run loses an unsaved game.
+
+The titlebar X is the one close route that stays harmless without `xprop`. RimWorld claims
+`WM_DELETE_WINDOW` and then ignores it, so that button does nothing until gamecrate strips the
+claim. Stripping it takes `xprop`. Every other route to destroying the window, such as a window
+manager shortcut or `xkill`, fires both teardowns.
+
+With `xprop` installed, the strip is what makes the titlebar X end the run. The window manager
+destroys the window, gamecrate sees it go, and stops that run's container.
+
+A missing `wmctrl` costs more than the title. gamecrate warns and then skips the whole window
+step, because the snapshot it needs comes from `wmctrl`. So the `WM_DELETE_WINDOW` strip never
+runs even with `xprop` installed, the titlebar X goes back to doing nothing, and closing the
+window no longer stops the container.
 
 ## Environment variables
 
@@ -206,6 +373,12 @@ Each variable stands in for one flag, and only when you leave that flag off:
 - `7` refused, because this profile and instance already run
 - `8` `verify` found a stale mod
 - `130` interrupted
+
+`wait` exits with whatever code the detached run recorded, which is any code in this list
+except `8`, since only `verify` returns that and `verify` is never supervised.
+A supervisor that fails before Docker records `3`, `4`, `5` or `7`.
+`wait` hands that code back unchanged.
+So a script must handle the whole list, not only the four codes a finished game uses.
 
 ## Write a plugin
 
@@ -248,10 +421,8 @@ The members:
 
 Load your plugin by path while you develop it:
 
-```jsonc
-{
-  "plugins": ["~/projects/gamecrate-mygame/dist/index.js"]
-}
+```yaml
+plugins: [~/projects/gamecrate-mygame/dist/index.js]
 ```
 
 [`@gamecrate/rimworld`](../rimworld) is a complete example in about fifty lines.

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { forwardOutput, status } from '../cli/output'
-import { capture, exited, spawnArgv, stopContainer } from '../docker/run'
+import { capture, exited, spawnArgv, stopContainer, STOP_TIMEOUT_SECONDS } from '../docker/run'
 import { containerName, CONTAINER_LOG_DIR } from '../docker/spec'
 import { GamecrateError, Exit } from '../types'
 import type { BuildPolicy, GameConfig, LaunchPlan, PullPolicy } from '../types'
@@ -231,12 +231,23 @@ export async function clearLock(plan: LaunchPlan): Promise<void> {
   if (existsSync(path)) await unlink(path).catch(() => {})
 }
 
-/** The supervisor's lock was written by the parent that forked it; it only has to drop it. */
+/** Unlinks only while the lock still names the holder we expect. */
+// residual: read and unlink are two syscalls, so a lock taken between them is still lost
+async function unlinkHeld(path: string, pid: number, startedAt?: string): Promise<void> {
+  const held = await readLock(path)
+  if (held === undefined) return
+  if (held.pid !== pid) return
+  if (startedAt !== undefined && held.startedAt !== startedAt) return
+  await unlink(path).catch(() => {})
+}
+
+/** The parent wrote this lock with the child's pid, so the child only has to drop it. */
+// carries unlinkHeld's residual, and nothing avoids it: this has to ask whose lock it is
 export function heldLock(plan: LaunchPlan): ProfileLock {
   const path = lockPath(plan)
   return {
     release: async () => {
-      await unlink(path).catch(() => {})
+      await unlinkHeld(path, process.pid)
     },
   }
 }
@@ -296,35 +307,84 @@ export async function writeLock(
   await handle.close()
 }
 
-/** How long to let the holder notice its container died and drop the lock on its own. */
-const RELEASE_WAIT_MS = 10_000
 const RELEASE_POLL_MS = 100
-const REPLACE_STOP_TIMEOUT_SECONDS = 10
+/** After its own docker stop the holder still has to write an exit record and unlink. */
+const DRAIN_ALLOWANCE_MS = 10_000
 
 /**
- * `--replace`: stops the container for this profile and instance only, so a parallel worktree
- * run is untouched. Waits for the holder to release before forcing, because its own release
- * would otherwise unlink the lock we are about to take.
+ * A signalled supervisor cannot finish before its own `docker stop --timeout` does, so the
+ * budget is derived from that rather than guessed alongside it.
+ */
+export const STOP_RELEASE_WAIT_MS = STOP_TIMEOUT_SECONDS * 1000 + DRAIN_ALLOWANCE_MS
+
+/**
+ * What stopRun did, because "the supervisor took the signal" and "the lock was stale anyway"
+ * are not the same answer and the caller has to say which one it is.
+ */
+export type StopOutcome = 'signalled' | 'orphaned' | 'held'
+
+/**
+ * Signals the supervisor, not the container. runContainer turns SIGTERM into a docker stop and
+ * returns 130, so the run records itself as stopped rather than crashed. Only a run whose
+ * supervisor is already gone gets the container stopped out from under it.
+ */
+export async function stopRun(record: LockRecord, lockFile: string): Promise<StopOutcome> {
+  let signalled = false
+  if (isRunning(record.pid, record.startedAt)) {
+    try {
+      process.kill(record.pid, 'SIGTERM')
+      signalled = true
+    } catch {
+      // it exited between the liveness check and the signal
+    }
+  }
+
+  if (!signalled) await stopContainer(record.container, STOP_TIMEOUT_SECONDS)
+
+  const deadline = Date.now() + STOP_RELEASE_WAIT_MS
+  while (existsSync(lockFile)) {
+    const held = await readLock(lockFile)
+    if (held === undefined) break
+    // an orphan, and only ours to clear: another dead record is some other run's orphan
+    if (!isRunning(held.pid, held.startedAt)) {
+      await unlinkHeld(lockFile, record.pid, record.startedAt)
+      break
+    }
+    // Out of budget with the holder still alive. Unlinking here deletes a lock it is about to
+    // release, and then its own release deletes whatever the next launcher took in between.
+    if (Date.now() >= deadline) return 'held'
+    await sleep(RELEASE_POLL_MS)
+  }
+  // no unlink: every path out either released its own lock or already cleared what was ours,
+  // and one here deleted whatever a new launcher took in the gap
+  return signalled ? 'signalled' : 'orphaned'
+}
+
+/**
+ * `--replace`: ends the run for this profile and instance only, so a parallel worktree run is
+ * untouched. Goes through stopRun so the replaced run reports `stopped`; a raw docker stop
+ * would land as 137 instead.
  */
 export async function replacePrevious(plan: LaunchPlan): Promise<void> {
   const name = containerName(plan)
   const path = lockPath(plan)
   const up = await capture(['docker', 'ps', '--quiet', '--filter', `name=^${name}$`])
   const running = up.stdout.trim().length > 0
-  if (!running && !existsSync(path)) return
+  const held = await readLock(path)
+  if (!running && held === undefined && !existsSync(path)) return
 
+  if (held !== undefined) {
+    // the lock names what stopRun will act on; `name` is only what this launch would have called it
+    status(`stopping ${held.container}`)
+    await stopRun(held, path)
+    return
+  }
+
+  // a container with no lock: nothing to signal, so the container itself is all there is
   if (running) {
     status(`stopping ${name}`)
-    await stopContainer(name, REPLACE_STOP_TIMEOUT_SECONDS)
+    await stopContainer(name, STOP_TIMEOUT_SECONDS)
   }
-
-  const deadline = Date.now() + RELEASE_WAIT_MS
-  while (existsSync(path) && Date.now() < deadline) {
-    const held = await readLock(path)
-    if (held === undefined || !isRunning(held.pid, held.startedAt)) break
-    await sleep(RELEASE_POLL_MS)
-  }
-  await unlink(path).catch(() => {})
 }
 
 // ponytail: node does not expose sysconf(_SC_CLK_TCK) and it is 100 on every mainstream

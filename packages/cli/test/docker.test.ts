@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'vitest'
-import { appendFileSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
 import { buildRunSpec, toDockerArgs, windowTitle } from '../src/docker/spec'
 import { resolveIdentity } from '../src/docker/identity'
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { capture, waitForMarker } from '../src/docker/run'
 import { runtimeLayerRef } from '../src/launch/prepare'
-import { parseAtoms } from '../src/docker/window'
+import { isPeerClaim, newMatches, parseAtoms, parseWindowPid } from '../src/docker/window'
 import { fixturePlugin } from './fixture-plugin'
+import { deadPid } from './pids'
 import type { GameConfig, Identity, LaunchPlan, ModeName, Settings } from '../src/types'
 import { GamecrateError, Exit } from '../src/types'
 
@@ -690,3 +693,91 @@ describe('runtimeLayerRef', () => {
     }
   })
 })
+
+describe('window claims', () => {
+  test('xprop output becomes a pid', () => {
+    expect(parseWindowPid('_NET_WM_PID(CARDINAL) = 12345\n')).toBe(12345)
+  })
+
+  test('a window with no pid property is unclaimed', () => {
+    expect(parseWindowPid('_NET_WM_PID:  not found.\n')).toBeUndefined()
+    expect(parseWindowPid('')).toBeUndefined()
+  })
+
+  // Deliberately a spawned gamecrate rather than process.pid: the vitest worker only has
+  // 'gamecrate' in its cmdline because this checkout sits under a directory of that name, so
+  // this test would quietly lose its teeth from a checkout named anything else. The precondition
+  // is asserted because everything after it reads false when the child is not a gamecrate, so a
+  // construction that failed would pass rather than go red.
+  test('a pid does not count as a peer claim against itself', async () => {
+    const child = fakeSupervisor()
+    try {
+      await waitFor(() => readCmdline(child.pid!).includes('gamecrate'))
+      expect(readCmdline(child.pid!)).toContain('gamecrate')
+      expect(isPeerClaim(child.pid!, child.pid!)).toBe(false)
+    } finally {
+      child.kill('SIGKILL')
+    }
+  })
+
+  test('a live process we can signal but is not a gamecrate is not a peer claim', () => {
+    const child = spawn('sleep', ['30'], { stdio: 'ignore' })
+    try {
+      expect(isPeerClaim(child.pid!, process.pid)).toBe(false)
+    } finally {
+      child.kill('SIGKILL')
+    }
+  })
+
+  test('a live gamecrate supervisor that is not us is a peer claim', async () => {
+    const child = fakeSupervisor()
+    try {
+      await waitFor(() => readCmdline(child.pid!).includes('gamecrate'))
+      expect(isPeerClaim(child.pid!, process.pid)).toBe(true)
+    } finally {
+      child.kill('SIGKILL')
+    }
+  })
+
+  test('a dead pid is not a peer claim', () => {
+    expect(isPeerClaim(deadPid(), process.pid)).toBe(false)
+  })
+})
+
+describe('window candidates', () => {
+  const seen = new Set(['0x01'])
+  const windows = [
+    { id: '0x01', wmClass: 'rimworldlinux.RimWorldLinux' },
+    { id: '0x02', wmClass: 'rimworldlinux.RimWorldLinux' },
+    { id: '0x03', wmClass: 'firefox.firefox' },
+    { id: '0x04', wmClass: 'rimworldlinux.RimWorldLinux' },
+  ]
+
+  test('every new window of this game is a candidate, in order', () => {
+    const got = newMatches(windows, seen, '/game/RimWorldLinux')
+    expect(got.map((w) => w.id)).toEqual(['0x02', '0x04'])
+  })
+
+  test('a window that was already up is not a candidate', () => {
+    const all = new Set(['0x01', '0x02', '0x04'])
+    expect(newMatches(windows, all, '/game/RimWorldLinux')).toEqual([])
+  })
+})
+
+/** argv0 rather than `exec -a`: dash has no such builtin, and /bin/sh is dash on debian. */
+function fakeSupervisor(): ChildProcess {
+  return spawn('sleep', ['30'], { stdio: 'ignore', argv0: 'gamecrate --supervised' })
+}
+
+function readCmdline(pid: number): string {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8')
+  } catch {
+    return ''
+  }
+}
+
+async function waitFor(ok: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2000
+  while (!ok() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
+}

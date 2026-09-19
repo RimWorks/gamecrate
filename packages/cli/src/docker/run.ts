@@ -97,6 +97,9 @@ export async function runContainer(spec: DockerRunSpec, opts: RunOptions): Promi
   }
 }
 
+/** Grace docker gives the game before SIGKILL, and the budget every teardown is measured against. */
+export const STOP_TIMEOUT_SECONDS = 10
+
 export async function stopContainer(name: string, timeoutSeconds: number): Promise<void> {
   const proc = spawnArgv(['docker', 'stop', '--timeout', String(timeoutSeconds), name], 'ignore')
   await exited(proc).catch(() => {})

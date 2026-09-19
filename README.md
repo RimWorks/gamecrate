@@ -31,7 +31,8 @@ and `packages/cli/dist/gamecrate` as a standalone binary.
 
 ## Quick start
 
-Put your games and profiles in `~/.config/gamecrate/profiles.json`, then launch one:
+Put your games and profiles in `~/.config/gamecrate/profiles.yml`, or in `profiles.json` if you
+prefer JSON, then launch one:
 
 ```sh
 gamecrate rimworld dev

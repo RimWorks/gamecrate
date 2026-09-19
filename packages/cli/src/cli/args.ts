@@ -85,7 +85,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'clean',
     summary: 'tiered wipe of a profile',
-    usage: '<game> <profile>',
+    usage: '<game> [profile]',
     positionals: ['game', 'profile'],
     flags: ['--staging', '--logs', '--all', '--yes', '--instance', '--worktree', '--no-worktree'],
   },
@@ -99,7 +99,35 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'logs',
     summary: "tail or open the last run's captured logs",
-    usage: '<game> <profile>',
+    usage: '<game> [profile]',
+    positionals: ['game', 'profile'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--follow'],
+  },
+  {
+    name: 'attach',
+    summary: "stream a detached run's output; ctrl-c leaves the game running",
+    usage: '<game> [profile]',
+    positionals: ['game', 'profile'],
+    flags: ['--instance', '--worktree', '--no-worktree'],
+  },
+  {
+    name: 'wait',
+    summary: 'block until a detached run ends, then exit with its code',
+    usage: '<game> [profile]',
+    positionals: ['game', 'profile'],
+    flags: ['--instance', '--worktree', '--no-worktree'],
+  },
+  {
+    name: 'ps',
+    summary: 'every live run: game, profile/instance, mode, pid, container, uptime or status',
+    usage: '',
+    positionals: [],
+    flags: [],
+  },
+  {
+    name: 'stop',
+    summary: 'stop a detached run and release its lock',
+    usage: '<game> [profile]',
     positionals: ['game', 'profile'],
     flags: ['--instance', '--worktree', '--no-worktree'],
   },
@@ -129,7 +157,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   },
   {
     name: 'config',
-    summary: 'open the global config in $EDITOR, validate on save',
+    summary: 'open the global config in $VISUAL or $EDITOR, validate on save',
     usage: 'edit',
     positionals: ['rest'],
     flags: [],
@@ -227,7 +255,7 @@ export function buildProgram(): Command {
     .option('--instance <name>', 'run under a named sub-profile with its own saves, logs and container')
     .addOption(enumOption(`--mode <${MODES.join('|')}>`, 'how the game is displayed', MODES))
     .option('--marker <str>', 'exit 0 as soon as this string appears in the log')
-    .option('--timeout <seconds>', 'kill the container after this long', (v) => seconds('--timeout', v))
+    .option('--timeout <seconds>', 'bound a marker run, or a headless run with no marker', (v) => seconds('--timeout', v))
     .option('--render-wait <seconds>', 'settle time before a screenshot is taken', (v) =>
       seconds('--render-wait', v))
     .option('--resolution <width>x<height>', 'override the game resolution', parseResolution)
@@ -260,6 +288,7 @@ export function buildProgram(): Command {
     .option('--staging', 'clean: wipe .stage only (the default)')
     .option('--logs', 'clean: wipe the captured run logs')
     .option('--all', 'clean: wipe the whole profile, saves included (needs --yes)')
+    .option('-f, --follow', 'keep printing as the run writes')
     .option('-y, --yes', 'skip destructive-action confirmation')
     .option('-h, --help', 'this help')
 
@@ -373,6 +402,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     root: values['root'] === true,
     yes: values['yes'] === true,
     help: values['help'] === true,
+    follow: values['follow'] === true,
     worktree,
     noWorktree: seen.has('--no-worktree'),
     noStaleCheck: seen.has('--no-stale-check'),

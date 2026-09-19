@@ -432,13 +432,16 @@ export interface ParsedArgs {
   noReplace: boolean
   /** Set on the forked supervisor only. Never a config key, never in help. */
   supervised: boolean
+  /** `-f`: keep printing as the run writes, instead of dumping what is there. */
+  follow: boolean
   rest: string[]
 }
 
 export type ProjectDefaults = Partial<
   Omit<
     ParsedArgs,
-    'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised' | 'noDetach' | 'noReplace'
+    | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
+    | 'noDetach' | 'noReplace' | 'follow'
   >
 > & {
   /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
@@ -448,12 +451,15 @@ export type ProjectDefaults = Partial<
   settings?: Record<string, unknown>
   /** Profile keys in source order. Object.keys sorts integer-like names to the front. */
   profileOrder?: string[]
+  /** The file these came from. Four suffixes are legal, so output must not guess the name. */
+  configPath?: string
 }
 
 /** Names that can never be a game or profile key. Enforced at config load. */
 export const RESERVED_NAMES: readonly string[] = [
   'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
+  'ps', 'stop', 'attach', 'wait',
 ]
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

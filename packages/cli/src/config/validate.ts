@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { suggest } from '../cli/args'
+import { profileKey, resolveProfile } from './load'
 import { NAME_PATTERN, RESERVED_NAMES, own } from '../types'
-import type { Problem, RootConfig } from '../types'
+import type { GameConfig, Problem, RootConfig } from '../types'
 
 type Bag = Record<string, unknown>
 
@@ -285,6 +286,8 @@ function valueAt(root_: unknown, path: readonly PropertyKey[]): unknown {
 }
 
 function crossReference(p: Problem[], games: Bag): void {
+  // one map across every game: container names carry the game, so two games can collide too
+  const containers = new Map<string, string>()
   for (const [gameName, game_] of Object.entries(games)) {
     const where = `/games/${esc(gameName)}`
     checkName(p, where, gameName, 'game')
@@ -299,7 +302,7 @@ function crossReference(p: Problem[], games: Bag): void {
       if (!isObj(prof)) continue
 
       const parent = prof['extends']
-      if (typeof parent === 'string' && !Object.hasOwn(profiles, parent)) {
+      if (typeof parent === 'string' && !resolves(profiles, parent)) {
         const prob: Problem = { where: `${w}/extends`, message: `extends unknown profile "${parent}"` }
         const hint = suggest(parent, names)
         if (hint) prob.suggestion = `did you mean "${hint}"?`
@@ -307,13 +310,13 @@ function crossReference(p: Problem[], games: Bag): void {
       }
 
       const alias = prof['alias']
-      if (typeof alias === 'string' && alias !== 'modless' && !Object.hasOwn(profiles, alias)) {
+      if (typeof alias === 'string' && !resolves(profiles, alias)) {
         const prob: Problem = { where: `${w}/alias`, message: `alias of unknown profile "${alias}"` }
         const hint = suggest(alias, [...names, 'modless'])
         if (hint) prob.suggestion = `did you mean "${hint}"?`
         p.push(prob)
       }
-      if (typeof alias === 'string' && alias === name) {
+      if (typeof alias === 'string' && alias.toLowerCase() === name.toLowerCase()) {
         p.push({ where: `${w}/alias`, message: 'a profile cannot alias itself' })
       }
 
@@ -339,11 +342,129 @@ function crossReference(p: Problem[], games: Bag): void {
         }
       }
     }
+
+    checkCollisions(p, where, gameName, profiles, containers)
+  }
+}
+
+/**
+ * The same name a user types at runtime. `profileKey` lowercases and falls through to every
+ * profile's `aliases`, and `resolveNamed` answers "modless" before it looks at all, so anything
+ * stricter here rejects configs the launcher runs happily.
+ */
+function resolves(profiles: Bag, name: string): boolean {
+  if (name.toLowerCase() === 'modless') return true
+  return profileKey({ profiles } as unknown as GameConfig, name) !== undefined
+}
+
+/**
+ * checkName sees one name at a time, so it cannot catch two names that fight. This walks a
+ * game's whole name space and reports the second occurrence, which is the key to delete.
+ *
+ * The container check is here rather than in `containerName` because there is no separator to
+ * switch to: NAME_PATTERN and docker allow the same `-._` set, so `dev--wt` is a legal profile
+ * too. Refusing the config needs no migration and leaves existing container names valid.
+ *
+ * `containers` is keyed on the whole docker name and shared across games, because the game is
+ * part of that name: `rim` + `world-dev` and `rim-world` + `dev` both make
+ * `gamecrate-rim-world-dev`, which is two runs on one container, not a refusal.
+ *
+ * One gap stays: `derive()` in launch/instance.ts builds `<slug>-<hash6>` from a worktree path,
+ * which no config can know, so a profile named exactly that still collides at runtime. Not
+ * worth defending against.
+ */
+function checkCollisions(
+  p: Problem[],
+  where: string,
+  gameName: string,
+  profiles: Bag,
+  containers: Map<string, string>,
+): void {
+  const names = new Map<string, string>()
+  const aliasOwners = new Map<string, string>()
+  const prefix = `${gameName.toLowerCase()}-`
+
+  for (const [name, prof] of Object.entries(profiles)) {
+    const w = `${where}/profiles/${esc(name)}`
+    const lower = name.toLowerCase()
+
+    const twin = names.get(lower)
+    if (twin !== undefined) {
+      p.push({
+        where: w,
+        message: `profile "${name}" differs from "${twin}" only in case, so both share one data directory`,
+      })
+      continue
+    }
+    names.set(lower, name)
+
+    const clash = containers.get(prefix + lower)
+    if (clash !== undefined) {
+      p.push({ where: w, message: `container name collides with ${clash}` })
+      continue
+    }
+    containers.set(prefix + lower, w)
+
+    if (!isObj(prof)) continue
+
+    const aliases = prof['aliases']
+    if (Array.isArray(aliases)) {
+      for (const [i, entry] of aliases.entries()) {
+        if (typeof entry !== 'string') continue
+        const owner = aliasOwners.get(entry.toLowerCase())
+        if (owner !== undefined) {
+          p.push({
+            where: `${w}/aliases/${i}`,
+            message: `alias "${entry}" is already declared by profile "${owner}"`,
+          })
+          continue
+        }
+        aliasOwners.set(entry.toLowerCase(), name)
+      }
+    }
+
+    const declared = prof['instances']
+    for (const instance of instanceNames(profiles, name, prof)) {
+      const container = `${prefix}${lower}-${instance.toLowerCase()}`
+      // An inherited instance has no key of its own to point at, so blame the profile.
+      const at = isObj(declared) && Object.hasOwn(declared, instance)
+        ? `${w}/instances/${esc(instance)}`
+        : w
+      const first = containers.get(container)
+      if (first !== undefined) {
+        p.push({
+          where: at,
+          message: `instance "${instance}" makes a container name that collides with ${first}`,
+        })
+        continue
+      }
+      containers.set(container, at)
+    }
+  }
+}
+
+/**
+ * A child inherits its parent's `instances`, so the declared block is not the set of containers
+ * the profile can run. `resolveProfile` is the same walk the launcher does, which is the point:
+ * a second rule that walked the chain its own way is what put the hole here to begin with. It
+ * throws on an unknown parent or an extends cycle, and both already fail elsewhere, so a throw
+ * means fall back to what this profile declares.
+ */
+function instanceNames(profiles: Bag, name: string, prof: Bag): string[] {
+  try {
+    const resolved = resolveProfile({ profiles } as unknown as GameConfig, name).instances
+    return isObj(resolved) ? Object.keys(resolved) : []
+  } catch {
+    const declared = prof['instances']
+    return isObj(declared) ? Object.keys(declared) : []
   }
 }
 
 function checkName(p: Problem[], where: string, name: string, kind: string): void {
-  if (RESERVED_NAMES.includes(name)) {
+  // Case-insensitive: `canonicalProfile` lowercases, so `MODLESS` is just as reserved as `modless`.
+  // NAME_PATTERN below still matches case-sensitively. Harmless, it accepts both cases, but the
+  // two rules disagree about what a name is, and that disagreement is this bug class.
+  if (RESERVED_NAMES.includes(name.toLowerCase())) {
     p.push({ where, message: `"${name}" is a reserved name and cannot be used as a ${kind} name` })
     return
   }

@@ -165,6 +165,7 @@ export async function loadProjectDefaults(start = process.cwd()): Promise<Projec
     }
     defaults.profileOrder = order
   }
+  defaults.configPath = file
   return defaults
 }
 
@@ -406,14 +407,14 @@ export async function profileDirs(root: RootConfig, game: string, profile?: stri
   return (await readdir(dir).catch(() => [] as string[])).map((name) => join(dir, name))
 }
 
-function profileKey(game: GameConfig, name: string): string | undefined {
+export function profileKey(game: GameConfig, name: string): string | undefined {
   if (Object.hasOwn(game.profiles, name)) return name
   const lower = name.toLowerCase()
   const direct = Object.keys(game.profiles).find((k) => k.toLowerCase() === lower)
   if (direct !== undefined) return direct
   // A profile's own `aliases` are extra names for it, so one entry answers to several.
   return Object.keys(game.profiles).find((k) =>
-    (own(game.profiles, k)?.aliases ?? []).some((a) => a.toLowerCase() === lower),
+    (own(game.profiles, k)?.aliases ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === lower),
   )
 }
 

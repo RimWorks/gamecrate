@@ -393,6 +393,185 @@ describe('validateConfig', () => {
   })
 })
 
+describe('validateConfig name space', () => {
+  test('extends and alias accept any spelling the launcher accepts', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: {
+            Kitted: { mods: ['A'], aliases: ['kt'] },
+            byCase: { extends: 'kitted' },
+            byAlias: { extends: 'KT' },
+            asAlias: { alias: 'kitted' },
+            bare: { extends: 'MODLESS' },
+          },
+        },
+      },
+    })
+    expect(problems).toEqual([])
+  })
+
+  test('a target nothing resolves is still reported at its own pointer', () => {
+    const { problems } = merged({
+      games: { atlas: { profiles: { kitted: { mods: [] }, a: { extends: 'kited' } } } },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/a/extends')
+    expect(problems[0]?.message).toBe('extends unknown profile "kited"')
+  })
+
+  test('two profile keys differing only in case are refused, at the second one', () => {
+    const { problems } = merged({
+      games: { atlas: { profiles: { Dev: { mods: ['A'] }, dev: { mods: ['B'] } } } },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/dev')
+    expect(problems[0]?.message).toContain('only in case')
+  })
+
+  test('one alias cannot be declared by two profiles, whatever the casing', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: { one: { mods: ['A'], aliases: ['shared'] }, two: { mods: ['B'], aliases: ['SHARED'] } },
+        },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/two/aliases/0')
+    expect(problems[0]?.message).toBe('alias "SHARED" is already declared by profile "one"')
+  })
+
+  test('a reserved word cannot be an alias in any casing', () => {
+    const { problems } = merged({
+      games: { atlas: { profiles: { a: { mods: [], aliases: ['MODLESS'] } } } },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/a/aliases/0')
+    expect(problems[0]?.message).toContain('reserved name')
+  })
+
+  test('a self alias is caught even when the casing differs', () => {
+    const { problems } = merged({
+      games: { atlas: { profiles: { Dev: { alias: 'dev' } } } },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/Dev/alias')
+    expect(problems[0]?.message).toBe('a profile cannot alias itself')
+  })
+
+  test('a profile named like another profile instance container is refused', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: { dev: { mods: ['A'], instances: { wt: {} } }, 'dev-wt': { mods: ['B'] } },
+        },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/dev-wt')
+    expect(problems[0]?.message).toBe(
+      'container name collides with /games/atlas/profiles/dev/instances/wt',
+    )
+  })
+
+  test('the container collision is caught from the other side too', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: { 'dev-wt': { mods: ['B'] }, dev: { mods: ['A'], instances: { wt: {} } } },
+        },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/dev/instances/wt')
+    expect(problems[0]?.message).toBe(
+      'instance "wt" makes a container name that collides with /games/atlas/profiles/dev-wt',
+    )
+  })
+
+  test('an instance inherited through extends is in the container name space too', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: {
+            base: { mods: ['A'], instances: { wt: {} } },
+            child: { extends: 'base' },
+            'child-wt': { mods: ['B'] },
+          },
+        },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/child-wt')
+    expect(problems[0]?.message).toBe('container name collides with /games/atlas/profiles/child')
+  })
+
+  test('an inherited instance is blamed on the profile, which has no key to point at', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: {
+            'child-wt': { mods: ['B'] },
+            base: { mods: ['A'], instances: { wt: {} } },
+            child: { extends: 'base' },
+          },
+        },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas/profiles/child')
+    expect(problems[0]?.message).toBe(
+      'instance "wt" makes a container name that collides with /games/atlas/profiles/child-wt',
+    )
+  })
+
+  test('an extends cycle does not take the collision pass down with it', () => {
+    const { problems } = merged({
+      games: { atlas: { profiles: { a: { extends: 'b' }, b: { extends: 'a', instances: { wt: {} } } } } },
+    })
+    expect(problems).toEqual([])
+  })
+
+  // the game is part of the container name, so the collision crosses games: this is the
+  // destructive direction, two runs sharing one docker name, not a refusal that annoys anyone
+  test('two games that build one container name are refused', () => {
+    const { problems } = merged({
+      games: {
+        atlas: { profiles: { 'x-dev': { mods: ['A'] } } },
+        'atlas-x': { ...structuredClone(ATLAS_DEFAULTS), profiles: { dev: { mods: ['B'] } } },
+      },
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]?.where).toBe('/games/atlas-x/profiles/dev')
+    expect(problems[0]?.message).toBe('container name collides with /games/atlas/profiles/x-dev')
+  })
+
+  test('the same profile name under two games is not a collision', () => {
+    const { problems } = merged({
+      games: {
+        atlas: { profiles: { dev: { mods: ['A'] } } },
+        other: { ...structuredClone(ATLAS_DEFAULTS), profiles: { dev: { mods: ['B'] } } },
+      },
+    })
+    expect(problems).toEqual([])
+  })
+
+  test('instances that cannot collide are left alone', () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: {
+            dev: { mods: ['A'], instances: { wt: {}, 'wt-2': {} } },
+            'dev-prod': { mods: ['B'], instances: { wt: {} } },
+          },
+        },
+      },
+    })
+    expect(problems).toEqual([])
+  })
+})
+
 describe('loadConfig', () => {
   test('a missing file means no games, not a crash', async () => {
     const { config, plugins } = await loadConfig(join(tmpdir(), 'gamecrate-absent', 'profiles.json'))
@@ -664,6 +843,7 @@ describe('loadProjectDefaults', () => {
       resolution: { width: 2560, height: 1440 },
       log: 'game.log',
       mods: ['Test.Mod'],
+      configPath: join(dir, '.gamecrate.yml'),
     })
   })
 
@@ -715,13 +895,22 @@ describe('loadProjectDefaults', () => {
       worktree: ['/w'], use: ['A=/x'],
       dryRun: true, printPlan: true, json: true, root: true,
       noWorktree: true, noStaleCheck: true, replace: true,
+      configPath: join(dir, '.gamecrate.yml'),
     })
   })
 
-  test('an empty file is no defaults', async () => {
+  test('an empty file is no defaults, but still says which file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
     await writeFile(join(dir, '.gamecrate.yml'), '')
-    expect(await loadProjectDefaults(dir)).toEqual({})
+    expect(await loadProjectDefaults(dir)).toEqual({ configPath: join(dir, '.gamecrate.yml') })
+  })
+
+  // list prints this name, and four suffixes are legal, so a hardcoded .yml is wrong three
+  // times out of four
+  test('the suffix that was actually found is the one reported', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+    await writeFile(join(dir, '.gamecrate.json'), '{"game": "atlas"}')
+    expect((await loadProjectDefaults(dir)).configPath).toBe(join(dir, '.gamecrate.json'))
   })
 
   test('each key reports its own wrong type', async () => {
@@ -1313,10 +1502,16 @@ describe('list provenance', () => {
         },
       },
     } as unknown as RootConfig
-    const defaults: ProjectDefaults = { game: 'rimworld', profiles: { dev: { mods: ['A'] } } }
+    // .json on purpose: the note used to name .gamecrate.yml whatever the repo actually had
+    const defaults: ProjectDefaults = {
+      game: 'rimworld',
+      profiles: { dev: { mods: ['A'] } },
+      configPath: '/repo/.gamecrate.json',
+    }
 
     const text = captureStdout(() => list({ } as ParsedArgs, config, defaults))
-    expect(text).toContain('from .gamecrate.yml')
+    expect(text).toContain('from .gamecrate.json')
+    expect(text).not.toContain('.gamecrate.yml')
     expect(text.split('\n').find((l) => l.includes('base'))).not.toContain('from .gamecrate')
 
     const json = JSON.parse(captureStdout(() => list({ json: true } as ParsedArgs, config, defaults)))

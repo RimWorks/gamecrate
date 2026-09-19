@@ -454,7 +454,7 @@ describe('help', () => {
 
   test('per-subcommand help shows only that subcommand', () => {
     const text = renderHelp('clean', config)
-    expect(text).toContain('usage: gamecrate clean <game> <profile>')
+    expect(text).toContain('usage: gamecrate clean <game> [profile]')
     expect(text).toContain('--yes')
     expect(text).not.toContain('--render-wait')
   })
@@ -851,5 +851,33 @@ describe('detach defaults from a project config', () => {
     const error = fails(['shell', 'rimworld', '--detach'], ['rimworld'])
     expect(error.message).toBe('shell cannot detach: a shell needs the terminal --detach gives up')
     expect(error.detail).toBeUndefined()
+  })
+})
+
+describe('follow and the detached verbs', () => {
+  test('-f and --follow are the same flag', () => {
+    expect(parseArgs(['logs', 'rimworld', '-f'], { env: {}, games: ['rimworld'] }).follow).toBe(true)
+    expect(parseArgs(['logs', 'rimworld', '--follow'], { env: {}, games: ['rimworld'] }).follow).toBe(true)
+    expect(parseArgs(['logs', 'rimworld'], { env: {}, games: ['rimworld'] }).follow).toBe(false)
+  })
+
+  test('attach and wait take a game and an optional profile', () => {
+    const attach = parseArgs(['attach', 'rimworld', 'dev'], { env: {}, games: ['rimworld'] })
+    expect(attach.subcommand).toBe('attach')
+    expect(attach.game).toBe('rimworld')
+    expect(attach.profile).toBe('dev')
+
+    const wait = parseArgs(['wait', 'rimworld'], { env: {}, games: ['rimworld'] })
+    expect(wait.subcommand).toBe('wait')
+    expect(wait.profile).toBeUndefined()
+  })
+
+  /** The flags list is what help and completion read; an option not listed is invisible. */
+  test('logs advertises --follow, and attach and wait do not', () => {
+    const flagsOf = (name: string) => SUBCOMMANDS.find((s) => s.name === name)!.flags
+    expect(flagsOf('logs')).toContain('--follow')
+    expect(flagsOf('attach')).not.toContain('--follow')
+    expect(flagsOf('wait')).not.toContain('--follow')
+    expect(renderHelp('logs')).toContain('--follow')
   })
 })

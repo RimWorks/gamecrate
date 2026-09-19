@@ -1,3 +1,5 @@
+import { basename } from 'node:path'
+
 import { requireGame } from './game'
 import { Exit, own } from '../types'
 import type { ParsedArgs, ProjectDefaults, RootConfig } from '../types'
@@ -30,6 +32,10 @@ export function list(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
     return Exit.Ok
   }
 
+  // four suffixes are legal, so naming one of them outright is wrong three times out of four
+  const source =
+    defaults.configPath === undefined ? 'the .gamecrate project config' : basename(defaults.configPath)
+
   const out: string[] = []
   for (const name of games) {
     const game = config.games[name]!
@@ -43,7 +49,7 @@ export function list(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
       const count = spec.mods?.length ?? 0
       if (!spec.alias) notes.push(count === 1 ? '1 entry' : `${count} entries`)
       if (spec.aliases?.length) notes.push(`aka ${spec.aliases.join(', ')}`)
-      if (fromProject(name, profile)) notes.push('from .gamecrate.yml')
+      if (fromProject(name, profile)) notes.push(`from ${source}`)
       out.push(`  ${profile.padEnd(width)}  ${notes.join(', ')}`)
       if (spec.description) out.push(`  ${' '.repeat(width)}  ${spec.description}`)
       const instances = Object.keys(spec.instances ?? {})
