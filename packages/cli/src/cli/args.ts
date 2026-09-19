@@ -589,3 +589,21 @@ function distance(a: string, b: string): number {
   }
   return prev[b.length]!
 }
+
+/**
+ * The argv that re-execs this same gamecrate as a supervisor. The compiled binary reports
+ * a virtual /$bunfs path as argv[1], which the child would read as a game name.
+ */
+export function supervisorArgv(
+  userArgs: string[],
+  self: string[] = process.argv,
+  execPath: string = process.execPath,
+): string[] {
+  const bin = self[1]?.startsWith('/$bunfs/') === true ? [execPath] : [execPath, self[1]!]
+  const sep = userArgs.indexOf('--')
+  const head = (sep === -1 ? userArgs : userArgs.slice(0, sep)).map((arg) =>
+    arg === '--detach' ? '--supervised' : arg,
+  )
+  const tail = sep === -1 ? [] : userArgs.slice(sep)
+  return [...bin, ...head, ...tail]
+}

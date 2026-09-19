@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SUBCOMMANDS, buildProgram, parseArgs, suggest } from '../src/cli/args'
+import { SUBCOMMANDS, buildProgram, parseArgs, suggest, supervisorArgv } from '../src/cli/args'
 import { renderCompletion, renderHelp } from '../src/cli/help'
 import {
   forwardOutput,
@@ -694,5 +694,45 @@ describe('run logs', () => {
       '20260734T000000000Z',
       '20260735T000000000Z',
     ])
+  })
+})
+
+describe('supervisorArgv', () => {
+  const NODE = ['/usr/bin/node', '/opt/gamecrate/dist/gamecrate.js']
+  const BUN = ['bun', '/$bunfs/root/gamecrate']
+
+  test('under node the script path is passed back', () => {
+    expect(supervisorArgv(['rimworld', 'dev', '--detach'], NODE, '/usr/bin/node')).toEqual([
+      '/usr/bin/node',
+      '/opt/gamecrate/dist/gamecrate.js',
+      'rimworld',
+      'dev',
+      '--supervised',
+    ])
+  })
+
+  // /$bunfs is a virtual path inside the compiled binary; the child would parse it as a game.
+  test('under the compiled binary only execPath is passed', () => {
+    expect(supervisorArgv(['rimworld', 'dev', '--detach'], BUN, '/usr/local/bin/gamecrate')).toEqual([
+      '/usr/local/bin/gamecrate',
+      'rimworld',
+      'dev',
+      '--supervised',
+    ])
+  })
+
+  test('a --detach after a bare -- is a game argument, not our flag', () => {
+    expect(supervisorArgv(['rimworld', '--detach', '--', '--detach'], NODE, '/usr/bin/node')).toEqual([
+      '/usr/bin/node',
+      '/opt/gamecrate/dist/gamecrate.js',
+      'rimworld',
+      '--supervised',
+      '--',
+      '--detach',
+    ])
+  })
+
+  test('argv with no --detach is passed through unchanged', () => {
+    expect(supervisorArgv(['rimworld'], NODE, '/usr/bin/node').slice(2)).toEqual(['rimworld'])
   })
 })
