@@ -24,7 +24,15 @@ export const Exit = {
 
 export type ExitCode = (typeof Exit)[keyof typeof Exit]
 
-export type ExitReason = 'exited' | 'marker' | 'marker-timeout' | 'stopped' | 'window-closed' | 'timeout'
+export type ExitReason =
+  | 'exited'
+  | 'marker'
+  | 'marker-timeout'
+  | 'stopped'
+  | 'window-closed'
+  | 'timeout'
+  /** The run never reached docker: staging, a pull or a build failed. */
+  | 'failed'
 
 export interface LaunchResult {
   code: number
@@ -417,11 +425,21 @@ export interface ParsedArgs {
   noStaleCheck: boolean
   /** Stops whatever holds this profile+instance, then launches. Never refuses. */
   replace: boolean
+  /** Runs in the background: this process forks a supervisor and returns the prompt. */
+  detach: boolean
+  /** One-run overrides. Only these turn the matching boolean back off. */
+  noDetach: boolean
+  noReplace: boolean
+  /** Set on the forked supervisor only. Never a config key, never in help. */
+  supervised: boolean
   rest: string[]
 }
 
 export type ProjectDefaults = Partial<
-  Omit<ParsedArgs, 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile'>
+  Omit<
+    ParsedArgs,
+    'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised' | 'noDetach' | 'noReplace'
+  >
 > & {
   /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
   defaultProfile?: string
@@ -430,8 +448,6 @@ export type ProjectDefaults = Partial<
   settings?: Record<string, unknown>
   /** Profile keys in source order. Object.keys sorts integer-like names to the front. */
   profileOrder?: string[]
-  /** Not a ParsedArgs flag yet; the detached-run task adds it there. */
-  detach?: boolean
 }
 
 /** Names that can never be a game or profile key. Enforced at config load. */

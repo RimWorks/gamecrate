@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { capture } from '../src/docker/run'
+import { notify, recordExit } from '../src/launch/supervisor'
 import { isRunning, lockPath, readLock, replacePrevious, takeLock, writeLock } from '../src/launch/prepare'
 import { GamecrateError, Exit } from '../src/types'
 import type { LaunchPlan } from '../src/types'
@@ -251,5 +252,20 @@ describe('isRunning', () => {
     } finally {
       procfs.broken = false
     }
+  })
+})
+
+describe('exit record', () => {
+  test('recordExit writes the reason beside the code', async () => {
+    const plan = await planFor()
+    await recordExit(plan, { code: 130, reason: 'stopped' })
+    const record = JSON.parse(await readFile(join(plan.instanceDir, '.gamecrate', 'last-exit.json'), 'utf8'))
+    expect(record.code).toBe(130)
+    expect(record.reason).toBe('stopped')
+    expect(Date.parse(record.at)).not.toBeNaN()
+  })
+
+  test('a missing notify-send is not an error', async () => {
+    await expect(notify('anything', false)).resolves.toBeUndefined()
   })
 })

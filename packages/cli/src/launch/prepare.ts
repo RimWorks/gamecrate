@@ -199,7 +199,11 @@ export interface ProfileLock {
   release: () => Promise<void>
 }
 
-export async function takeLock(plan: LaunchPlan): Promise<ProfileLock> {
+/**
+ * Refuses when this profile and instance are already up, and clears a lock whose holder is
+ * gone. Detach runs this before it forks, so a stale lock cannot strand the child.
+ */
+export async function clearLock(plan: LaunchPlan): Promise<void> {
   const path = lockPath(plan)
   const what = plan.instance === undefined ? plan.profile : `${plan.profile} (${plan.instance})`
 
@@ -225,22 +229,30 @@ export async function takeLock(plan: LaunchPlan): Promise<ProfileLock> {
     )
   }
   if (existsSync(path)) await unlink(path).catch(() => {})
+}
 
+/** The supervisor's lock was written by the parent that forked it; it only has to drop it. */
+export function heldLock(plan: LaunchPlan): ProfileLock {
+  const path = lockPath(plan)
+  return {
+    release: async () => {
+      await unlink(path).catch(() => {})
+    },
+  }
+}
+
+export async function takeLock(plan: LaunchPlan): Promise<ProfileLock> {
+  await clearLock(plan)
   await writeLock(plan, {
     pid: process.pid,
-    container: name,
+    container: containerName(plan),
     game: plan.game,
     profile: plan.profile,
     ...(plan.instance === undefined ? {} : { instance: plan.instance }),
     detached: false,
     mode: plan.mode,
   })
-
-  return {
-    release: async () => {
-      await unlink(path).catch(() => {})
-    },
-  }
+  return heldLock(plan)
 }
 
 /** Everything ps, stop, attach and wait need about a run, without reopening the container. */

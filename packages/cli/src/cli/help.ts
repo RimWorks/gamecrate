@@ -6,9 +6,9 @@ import type { SubcommandSpec } from './args'
 
 const NAME = 'gamecrate'
 
-/** Help and completion describe whatever the parser accepts, never a second list. */
+/** Help and completion describe whatever the parser accepts, minus the hidden internals. */
 function flags(): readonly Option[] {
-  return buildProgram().options
+  return buildProgram().options.filter((o) => !o.hidden)
 }
 
 /**

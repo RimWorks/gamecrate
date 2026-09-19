@@ -11,8 +11,8 @@ import { Exit } from '../types'
 import { toDockerArgs } from './spec'
 
 /** argv as one array, the way every caller here has it. */
-export function spawnArgv(argv: string[], stdio: StdioOptions): ChildProcess {
-  return spawn(argv[0]!, argv.slice(1), { stdio })
+export function spawnArgv(argv: string[], stdio: StdioOptions, detached = false): ChildProcess {
+  return spawn(argv[0]!, argv.slice(1), { stdio, detached })
 }
 
 /** Rejects when the spawn itself fails, so a missing binary lands where a bad exit code would. */

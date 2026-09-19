@@ -1,5 +1,13 @@
 import { Command, CommanderError, Option } from 'commander'
-import type { BuildPolicy, ModeName, NetworkPolicy, ParsedArgs, ProjectDefaults, PullPolicy } from '../types'
+import type {
+  BuildPolicy,
+  ModeName,
+  NetworkPolicy,
+  ParsedArgs,
+  ProfileConfig,
+  ProjectDefaults,
+  PullPolicy,
+} from '../types'
 import { GamecrateError, Exit, NAME_PATTERN } from '../types'
 
 export type PositionalSlot = 'game' | 'profile' | 'rest'
@@ -31,6 +39,8 @@ const RUN_FLAGS = [
   '--no-stale-check',
   '--replace',
   '--no-replace',
+  '--detach',
+  '--no-detach',
   '--sort',
   '--docker-arg',
   '--dry-run',
@@ -235,6 +245,10 @@ export function buildProgram(): Command {
     .option('--no-stale-check', "do not warn when a mod's sources are newer than its assemblies")
     .option('--replace', 'stop whatever is holding this profile and instance, then launch')
     .option('--no-replace', 'refuse when this profile and instance are already running')
+    .option('--detach', 'start the run in the background and return the prompt')
+    .option('--no-detach', 'stay in the foreground, whatever the profile or project config asks for')
+    // the re-exec entry point. hidden, so help and completion never offer it.
+    .addOption(new Option('--supervised').hideHelp())
     .addOption(
       enumOption(`--sort <${SORTS.join('|')}>`, 'load order: the profile order, or a topological sort', SORTS),
     )
@@ -337,6 +351,11 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   }
   if (seen.has('--build') && seen.has('--no-build')) throw usage('--build and --no-build contradict')
   if (seen.has('--replace') && seen.has('--no-replace')) throw usage('--replace and --no-replace contradict')
+  if (seen.has('--detach')) {
+    if (seen.has('--no-detach')) throw usage('--detach and --no-detach contradict')
+    if (seen.has('--dry-run')) throw usage('--detach and --dry-run contradict')
+    if (seen.has('--print-plan')) throw usage('--detach and --print-plan contradict')
+  }
 
   const values = program.opts() as Values
   const envBuild = applyEnv(program, seen, env, values)
@@ -358,6 +377,10 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     noWorktree: seen.has('--no-worktree'),
     noStaleCheck: seen.has('--no-stale-check'),
     replace: values['replace'] === true,
+    noReplace: seen.has('--no-replace'),
+    detach: values['detach'] === true,
+    noDetach: seen.has('--no-detach'),
+    supervised: values['supervised'] === true,
     use: values['use'] as string[],
     rest: [],
   }
@@ -378,6 +401,10 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
 
   applyPositionals(out, program.args, opts.games)
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
+  // the subcommand is only known once the positionals land.
+  if (out.detach && out.subcommand === 'shell') {
+    throw usage('shell cannot detach', 'a shell needs the terminal --detach gives up')
+  }
   return out
 }
 
@@ -529,6 +556,24 @@ function applyDefaults(
   }
   if (!seen.has('--no-stale-check')) out.noStaleCheck = defaults.noStaleCheck ?? out.noStaleCheck
   if (!seen.has('--replace') && !seen.has('--no-replace')) out.replace = defaults.replace ?? out.replace
+  if (!seen.has('--detach') && !seen.has('--no-detach')) out.detach = defaults.detach ?? out.detach
+}
+
+/**
+ * Any layer can ask for this; the --no-detach flag is the only refusal. The supervisor is
+ * already the fork, and a profile or project `detach: true` reaches it too: it never forks again.
+ */
+export function wantsDetach(args: ParsedArgs, profile: ProfileConfig): boolean {
+  return !args.supervised && !args.noDetach && (args.detach || profile.detach === true)
+}
+
+export function wantsReplace(args: ParsedArgs, profile: ProfileConfig): boolean {
+  return !args.noReplace && (args.replace || profile.replace === true)
+}
+
+/** Three-way, so first defined wins. --no-build already arrives as 'never'. */
+export function buildPolicy(args: ParsedArgs, profile: ProfileConfig): BuildPolicy {
+  return args.build ?? profile.build ?? 'auto'
 }
 
 function truthy(value: string): boolean {

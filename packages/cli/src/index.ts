@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { parseArgs } from './cli/args'
+import { buildPolicy, parseArgs, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
 import { list } from './cli/list'
 import { profileOf } from './cli/profile'
@@ -31,10 +31,12 @@ import {
   buildLocalMods,
   captureScreenshot,
   ensureRuntimeLayer,
+  heldLock,
   replacePrevious,
   takeLock,
   writeLaunchRecord,
 } from './launch/prepare'
+import { forkSupervisor, notify, recordExit, writeExit } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
 import { resolvePlan } from './launch/resolve'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
@@ -84,7 +86,7 @@ async function main(argv: string[]): Promise<number> {
       : undefined
 
   try {
-    return await dispatch(args, config, plugins, defaults)
+    return await dispatch(argv, args, config, plugins, defaults)
   } catch (error) {
     // Printed here, not at the top level: with --log the failure belongs in the log file,
     // and the top-level printer only runs once the redirect is already closed.
@@ -95,6 +97,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function dispatch(
+  argv: string[],
   args: ParsedArgs,
   config: RootConfig,
   plugins: Map<string, GamePlugin>,
@@ -120,13 +123,13 @@ async function dispatch(
     case 'build':
       return build(args, config)
     case 'shell':
-      return run(args, config, plugins, defaults, true)
+      return run(argv, args, config, plugins, defaults, true)
     case 'config':
       return configEdit(args)
     case 'fix-perms':
       return fixPerms(args, config)
     case 'run':
-      return run(args, config, plugins, defaults, false)
+      return run(argv, args, config, plugins, defaults, false)
     default:
       throw new GamecrateError(`no such subcommand ${args.subcommand}`, Exit.Usage)
   }
@@ -186,6 +189,7 @@ function reportEnvironment(problems: Problem[]): never {
  * `--dry-run` and `--print-plan` stop after validation, before the first write.
  */
 async function run(
+  argv: string[],
   args: ParsedArgs,
   config: RootConfig,
   plugins: Map<string, GamePlugin>,
@@ -194,7 +198,49 @@ async function run(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
+  const go = (): Promise<number> =>
+    launchRun(argv, args, config, plugins, defaults, asShell, game, profile)
+  if (!args.supervised) return await go()
+  try {
+    return await go()
+  } catch (error) {
+    return await supervisorFailed(args, config, game, profile, error)
+  }
+}
 
+/**
+ * The supervisor re-resolves, so it can still fail minutes after the parent handed it the lock,
+ * in a process with no terminal. Drop the lock, record why, and say so out of band.
+ */
+async function supervisorFailed(
+  args: ParsedArgs,
+  config: RootConfig,
+  game: string,
+  profile: string,
+  error: unknown,
+): Promise<number> {
+  const code = reportFatal(error)
+  try {
+    const dir = instanceDir(args, config, game, profile)
+    await rm(join(dir, '.gamecrate', 'lock'), { force: true })
+    await writeExit(dir, { at: new Date().toISOString(), code, reason: 'failed' })
+    await notify(`${game} ${profile}: ${describe(error)}`, true)
+  } catch (second) {
+    process.stderr.write(`gamecrate: could not record the supervisor failure: ${describe(second)}\n`)
+  }
+  return code
+}
+
+async function launchRun(
+  argv: string[],
+  args: ParsedArgs,
+  config: RootConfig,
+  plugins: Map<string, GamePlugin>,
+  defaults: ProjectDefaults,
+  asShell: boolean,
+  game: string,
+  profile: string,
+): Promise<number> {
   const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
   if (problems.length > 0) reportProblems(problems)
@@ -219,10 +265,15 @@ async function run(
   if (environment.length > 0) reportEnvironment(environment)
 
   await ensureProfileTree(plan)
-  if (args.replace) await replacePrevious(plan)
-  const lock = await takeLock(plan)
+  const profileSpec = resolveProfile(config.games[game]!, profile)
+  if (wantsReplace(args, profileSpec)) await replacePrevious(plan)
+  // a profile detach: true still reaches shell, where parseArgs never saw a flag to refuse.
+  if (!asShell && wantsDetach(args, profileSpec)) return await forkSupervisor(plan, argv)
+
+  const lock = args.supervised ? heldLock(plan) : await takeLock(plan)
   try {
-    const result = await launch(plan, args, config, identity, asShell)
+    const result = await launch(plan, args, config, identity, asShell, profileSpec)
+    if (args.supervised) await recordExit(plan, result)
     return result.code
   } finally {
     await lock.release()
@@ -235,6 +286,7 @@ async function launch(
   config: RootConfig,
   identity: Identity,
   asShell: boolean,
+  profileSpec: ProfileConfig,
 ): Promise<LaunchResult> {
   const game = plan.game
   const profile = plan.profile
@@ -249,8 +301,28 @@ async function launch(
 
   const runDir = openRunLog(plan.logsDirHost)
   plan.runDirHost = runDir
+  // the supervisor has no terminal. --log already redirected in main(), so never both.
+  const supervisorLog =
+    args.supervised && args.log === undefined ? redirectOutput(join(runDir, 'supervisor.log')) : undefined
 
-  await buildLocalMods(plan, args.build ?? 'auto')
+  try {
+    return await execute(plan, args, config, identity, asShell, profileSpec, runDir)
+  } finally {
+    supervisorLog?.close()
+  }
+}
+
+async function execute(
+  plan: LaunchPlan,
+  args: ParsedArgs,
+  config: RootConfig,
+  identity: Identity,
+  asShell: boolean,
+  profileSpec: ProfileConfig,
+  runDir: string,
+): Promise<LaunchResult> {
+  const game = plan.game
+  await buildLocalMods(plan, buildPolicy(args, profileSpec))
   await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
   // Offscreen modes need an X server the published images do not ship; add it once, on top.
   const runtimeImage =

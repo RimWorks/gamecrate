@@ -2,7 +2,16 @@ import { describe, expect, test } from 'vitest'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SUBCOMMANDS, buildProgram, parseArgs, suggest, supervisorArgv } from '../src/cli/args'
+import {
+  SUBCOMMANDS,
+  buildPolicy,
+  buildProgram,
+  parseArgs,
+  suggest,
+  supervisorArgv,
+  wantsDetach,
+  wantsReplace,
+} from '../src/cli/args'
 import { renderCompletion, renderHelp } from '../src/cli/help'
 import {
   forwardOutput,
@@ -467,9 +476,11 @@ describe('help', () => {
     }
   })
 
-  test('help is derived from the parser, so every flag it accepts is listed', () => {
+  test('help is derived from the parser, so every public flag it accepts is listed', () => {
     const text = renderHelp(undefined, config)
-    for (const option of buildProgram().options) expect(text).toContain(option.flags)
+    const options = buildProgram().options.filter((o) => !o.hidden)
+    expect(options.length).toBe(buildProgram().options.length - 1)
+    for (const option of options) expect(text).toContain(option.flags)
   })
 
   test('completions name every subcommand', () => {
@@ -734,5 +745,76 @@ describe('supervisorArgv', () => {
 
   test('argv with no --detach is passed through unchanged', () => {
     expect(supervisorArgv(['rimworld'], NODE, '/usr/bin/node').slice(2)).toEqual(['rimworld'])
+  })
+})
+
+describe('--detach', () => {
+  test('detach and supervised are separate booleans', () => {
+    expect(parseArgs(['rimworld', '--detach'], { env: {}, games: ['rimworld'] }).detach).toBe(true)
+    expect(parseArgs(['rimworld', '--supervised'], { env: {}, games: ['rimworld'] }).supervised).toBe(true)
+    expect(parseArgs(['rimworld'], { env: {}, games: ['rimworld'] }).detach).toBe(false)
+  })
+
+  test('--detach and --no-detach contradict', () => {
+    expect(fails(['rimworld', '--detach', '--no-detach'], ['rimworld']).code).toBe(Exit.Usage)
+  })
+
+  test('a project detach: true fills args.detach', () => {
+    const args = parseArgs(['rimworld'], { env: {}, games: ['rimworld'], defaults: { detach: true } })
+    expect(args.detach).toBe(true)
+  })
+
+  test('any layer turns a boolean on, only --no-* turns it off', () => {
+    const bare = parseArgs(['rimworld'], { env: {}, games: ['rimworld'] })
+    const onFlag = parseArgs(['rimworld', '--detach', '--replace'], { env: {}, games: ['rimworld'] })
+    const offFlag = parseArgs(['rimworld', '--no-detach', '--no-replace'], { env: {}, games: ['rimworld'] })
+
+    expect(wantsDetach(bare, {})).toBe(false)
+    expect(wantsDetach(bare, { detach: true })).toBe(true)
+    expect(wantsDetach(onFlag, {})).toBe(true)
+    expect(wantsDetach(offFlag, { detach: true })).toBe(false)
+
+    expect(wantsReplace(bare, { replace: true })).toBe(true)
+    expect(wantsReplace(onFlag, {})).toBe(true)
+    expect(wantsReplace(offFlag, { replace: true })).toBe(false)
+  })
+
+  test('build is first defined wins, and --no-build still means never', () => {
+    const bare = parseArgs(['rimworld'], { env: {}, games: ['rimworld'] })
+    const noBuild = parseArgs(['rimworld', '--no-build'], { env: {}, games: ['rimworld'] })
+    const always = parseArgs(['rimworld', '--build'], { env: {}, games: ['rimworld'] })
+
+    expect(buildPolicy(bare, {})).toBe('auto')
+    expect(buildPolicy(bare, { build: 'always' })).toBe('always')
+    expect(buildPolicy(always, { build: 'never' })).toBe('always')
+    expect(buildPolicy(noBuild, { build: 'always' })).toBe('never')
+  })
+
+  test('--supervised is hidden from help and completion', () => {
+    expect(renderHelp(undefined, { dataRoot: '/tmp', games: {} } as RootConfig)).not.toContain('--supervised')
+    expect(renderCompletion('bash')).not.toContain('--supervised')
+    expect(renderCompletion('zsh')).not.toContain('--supervised')
+    expect(renderHelp('run')).not.toContain('--supervised')
+  })
+
+  test('shell, dry-run and print-plan refuse to detach', () => {
+    expect(fails(['shell', 'rimworld', '--detach'], ['rimworld']).code).toBe(Exit.Usage)
+    expect(fails(['rimworld', '--detach', '--dry-run'], ['rimworld']).code).toBe(Exit.Usage)
+    expect(fails(['rimworld', '--detach', '--print-plan'], ['rimworld']).code).toBe(Exit.Usage)
+  })
+
+  test('the supervisor never forks again, whatever the profile asks for', () => {
+    const child = parseArgs(['rimworld', '--supervised'], { env: {}, games: ['rimworld'] })
+    expect(wantsDetach(child, { detach: true })).toBe(false)
+  })
+
+  test('a profile detach never reaches the shell refusal', () => {
+    const args = parseArgs(['shell', 'rimworld'], { env: {}, games: ['rimworld'] })
+    expect(wantsDetach(args, { detach: true })).toBe(true)
+  })
+
+  test('there is no env fallback for detach', () => {
+    const args = parseArgs(['rimworld'], { env: { GAMECRATE_DETACH: '1' }, games: ['rimworld'] })
+    expect(args.detach).toBe(false)
   })
 })
