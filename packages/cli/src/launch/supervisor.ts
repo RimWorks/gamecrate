@@ -17,7 +17,7 @@ export async function forkSupervisor(plan: LaunchPlan, argv: string[]): Promise<
   await clearLock(plan)
 
   const name = containerName(plan)
-  const self = supervisorArgv(argv)
+  const self = supervisorArgv(argv, plan.instanceDir)
   // the spawn is the trust boundary: one check covers undefined, '' and a path that is gone.
   const bin = self[0]
   if (bin === undefined || bin === '') {
@@ -57,7 +57,7 @@ export async function recordExit(plan: LaunchPlan, result: LaunchResult): Promis
 
 /** Only `exited` means the container ended by itself; every other reason is us stopping it. */
 function crashed(result: LaunchResult): boolean {
-  return result.code !== 0 && (result.reason === 'exited' || result.reason === 'failed')
+  return result.code !== 0 && result.reason === 'exited'
 }
 
 export async function writeExit(

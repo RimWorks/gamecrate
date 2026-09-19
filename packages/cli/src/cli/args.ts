@@ -248,7 +248,7 @@ export function buildProgram(): Command {
     .option('--detach', 'start the run in the background and return the prompt')
     .option('--no-detach', 'stay in the foreground, whatever the profile or project config asks for')
     // the re-exec entry point. hidden, so help and completion never offer it.
-    .addOption(new Option('--supervised').hideHelp())
+    .addOption(new Option('--supervised <instanceDir>').hideHelp())
     .addOption(
       enumOption(`--sort <${SORTS.join('|')}>`, 'load order: the profile order, or a topological sort', SORTS),
     )
@@ -380,7 +380,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     noReplace: seen.has('--no-replace'),
     detach: values['detach'] === true,
     noDetach: seen.has('--no-detach'),
-    supervised: values['supervised'] === true,
+    supervised: typeof values['supervised'] === 'string',
     use: values['use'] as string[],
     rest: [],
   }
@@ -401,9 +401,10 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
 
   applyPositionals(out, program.args, opts.games)
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
-  // the subcommand is only known once the positionals land.
-  if (out.detach && out.subcommand === 'shell') {
-    throw usage('shell cannot detach', 'a shell needs the terminal --detach gives up')
+  // the subcommand is only known once the positionals land. a config-level detach is not a
+  // typed flag, so it skips the fork in run() instead of failing here.
+  if (seen.has('--detach') && out.subcommand === 'shell') {
+    throw usage('shell cannot detach: a shell needs the terminal --detach gives up')
   }
   return out
 }
@@ -567,8 +568,9 @@ export function wantsDetach(args: ParsedArgs, profile: ProfileConfig): boolean {
   return !args.supervised && !args.noDetach && (args.detach || profile.detach === true)
 }
 
+/** The parent already replaced the previous run, and the only lock left is the child's own. */
 export function wantsReplace(args: ParsedArgs, profile: ProfileConfig): boolean {
-  return !args.noReplace && (args.replace || profile.replace === true)
+  return !args.supervised && !args.noReplace && (args.replace || profile.replace === true)
 }
 
 /** Three-way, so first defined wins. --no-build already arrives as 'never'. */
@@ -641,14 +643,27 @@ function distance(a: string, b: string): number {
  */
 export function supervisorArgv(
   userArgs: string[],
+  instanceDir: string,
   self: string[] = process.argv,
   execPath: string = process.execPath,
 ): string[] {
   const bin = self[1]?.startsWith('/$bunfs/') === true ? [execPath] : [execPath, self[1]!]
   const sep = userArgs.indexOf('--')
-  const head = (sep === -1 ? userArgs : userArgs.slice(0, sep)).map((arg) =>
-    arg === '--detach' ? '--supervised' : arg,
-  )
+  // appended, never swapped for --detach: a project or profile detach: true never types a flag,
+  // and a child that does not carry --supervised forks a supervisor of its own, forever.
+  const head = [
+    ...(sep === -1 ? userArgs : userArgs.slice(0, sep)).filter((arg) => arg !== '--detach'),
+    '--supervised',
+    instanceDir,
+  ]
   const tail = sep === -1 ? [] : userArgs.slice(sep)
   return [...bin, ...head, ...tail]
+}
+
+/** Read straight off argv: the recovery path runs before anything is parsed or loaded. */
+export function supervisedDir(argv: string[]): string | undefined {
+  const sep = argv.indexOf('--')
+  const head = sep === -1 ? argv : argv.slice(0, sep)
+  const at = head.indexOf('--supervised')
+  return at === -1 ? undefined : head[at + 1]
 }

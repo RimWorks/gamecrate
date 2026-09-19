@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { buildPolicy, parseArgs, wantsDetach, wantsReplace } from './cli/args'
+import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
 import { list } from './cli/list'
 import { profileOf } from './cli/profile'
@@ -65,6 +65,28 @@ const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : '0.0.0-dev'
 const STOP_TIMEOUT_SECONDS = 10
 
 async function main(argv: string[]): Promise<number> {
+  // read off argv, so the recovery below sits above parseArgs and loadConfig too.
+  const supervised = supervisedDir(argv)
+  try {
+    return await command(argv, supervised)
+  } catch (error) {
+    if (supervised === undefined) throw error
+    return await supervisorFailed(supervised, reportFatal(error))
+  }
+}
+
+/**
+ * The supervisor has no terminal and its stdio is discarded, so anything thrown out here is
+ * invisible. Notify first: it is the only channel the user has, and a write can still fail.
+ */
+async function supervisorFailed(dir: string, code: number): Promise<number> {
+  await notify(`gamecrate ${basename(dir)}: the supervisor failed (${code})`, true)
+  await rm(join(dir, '.gamecrate', 'lock'), { force: true }).catch(() => {})
+  await writeExit(dir, { at: new Date().toISOString(), code, reason: 'failed' }).catch(() => {})
+  return code
+}
+
+async function command(argv: string[], supervised: string | undefined): Promise<number> {
   const probe = parseArgs(argv)
   if (probe.subcommand === 'version') {
     process.stdout.write(`gamecrate ${VERSION}\n`)
@@ -82,7 +104,7 @@ async function main(argv: string[]): Promise<number> {
   }
   const redirect =
     args.log !== undefined && (args.subcommand === 'run' || args.subcommand === 'shell')
-      ? redirectOutput(args.log)
+      ? redirectOutput(args.log, args.supervised)
       : undefined
 
   try {
@@ -90,7 +112,8 @@ async function main(argv: string[]): Promise<number> {
   } catch (error) {
     // Printed here, not at the top level: with --log the failure belongs in the log file,
     // and the top-level printer only runs once the redirect is already closed.
-    return reportFatal(error)
+    const code = reportFatal(error)
+    return supervised === undefined ? code : await supervisorFailed(supervised, code)
   } finally {
     redirect?.close()
   }
@@ -198,49 +221,7 @@ async function run(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
-  const go = (): Promise<number> =>
-    launchRun(argv, args, config, plugins, defaults, asShell, game, profile)
-  if (!args.supervised) return await go()
-  try {
-    return await go()
-  } catch (error) {
-    return await supervisorFailed(args, config, game, profile, error)
-  }
-}
 
-/**
- * The supervisor re-resolves, so it can still fail minutes after the parent handed it the lock,
- * in a process with no terminal. Drop the lock, record why, and say so out of band.
- */
-async function supervisorFailed(
-  args: ParsedArgs,
-  config: RootConfig,
-  game: string,
-  profile: string,
-  error: unknown,
-): Promise<number> {
-  const code = reportFatal(error)
-  try {
-    const dir = instanceDir(args, config, game, profile)
-    await rm(join(dir, '.gamecrate', 'lock'), { force: true })
-    await writeExit(dir, { at: new Date().toISOString(), code, reason: 'failed' })
-    await notify(`${game} ${profile}: ${describe(error)}`, true)
-  } catch (second) {
-    process.stderr.write(`gamecrate: could not record the supervisor failure: ${describe(second)}\n`)
-  }
-  return code
-}
-
-async function launchRun(
-  argv: string[],
-  args: ParsedArgs,
-  config: RootConfig,
-  plugins: Map<string, GamePlugin>,
-  defaults: ProjectDefaults,
-  asShell: boolean,
-  game: string,
-  profile: string,
-): Promise<number> {
   const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
   if (problems.length > 0) reportProblems(problems)
@@ -267,7 +248,7 @@ async function launchRun(
   await ensureProfileTree(plan)
   const profileSpec = resolveProfile(config.games[game]!, profile)
   if (wantsReplace(args, profileSpec)) await replacePrevious(plan)
-  // a profile detach: true still reaches shell, where parseArgs never saw a flag to refuse.
+  // only a typed --detach refuses shell; a config-level one lands here and just skips the fork.
   if (!asShell && wantsDetach(args, profileSpec)) return await forkSupervisor(plan, argv)
 
   const lock = args.supervised ? heldLock(plan) : await takeLock(plan)

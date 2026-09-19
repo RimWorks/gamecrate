@@ -19,8 +19,8 @@ export interface OutputRedirect {
   close(): void
 }
 
-export function redirectOutput(path: string): OutputRedirect {
-  const fd = openSync(path, 'w')
+export function redirectOutput(path: string, keep = false): OutputRedirect {
+  const fd = openSync(path, keep ? 'a' : 'w')
   const stdout = process.stdout.write
   const stderr = process.stderr.write
   let open = true

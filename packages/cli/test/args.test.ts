@@ -8,6 +8,7 @@ import {
   buildProgram,
   parseArgs,
   suggest,
+  supervisedDir,
   supervisorArgv,
   wantsDetach,
   wantsReplace,
@@ -711,47 +712,64 @@ describe('run logs', () => {
 describe('supervisorArgv', () => {
   const NODE = ['/usr/bin/node', '/opt/gamecrate/dist/gamecrate.js']
   const BUN = ['bun', '/$bunfs/root/gamecrate']
+  const DIR = '/data/rimworld/dev'
 
   test('under node the script path is passed back', () => {
-    expect(supervisorArgv(['rimworld', 'dev', '--detach'], NODE, '/usr/bin/node')).toEqual([
+    expect(supervisorArgv(['rimworld', 'dev', '--detach'], DIR, NODE, '/usr/bin/node')).toEqual([
       '/usr/bin/node',
       '/opt/gamecrate/dist/gamecrate.js',
       'rimworld',
       'dev',
       '--supervised',
+      DIR,
     ])
   })
 
   // /$bunfs is a virtual path inside the compiled binary; the child would parse it as a game.
   test('under the compiled binary only execPath is passed', () => {
-    expect(supervisorArgv(['rimworld', 'dev', '--detach'], BUN, '/usr/local/bin/gamecrate')).toEqual([
+    expect(supervisorArgv(['rimworld', 'dev', '--detach'], DIR, BUN, '/usr/local/bin/gamecrate')).toEqual([
       '/usr/local/bin/gamecrate',
       'rimworld',
       'dev',
       '--supervised',
+      DIR,
     ])
   })
 
   test('a --detach after a bare -- is a game argument, not our flag', () => {
-    expect(supervisorArgv(['rimworld', '--detach', '--', '--detach'], NODE, '/usr/bin/node')).toEqual([
+    expect(supervisorArgv(['rimworld', '--detach', '--', '--detach'], DIR, NODE, '/usr/bin/node')).toEqual([
       '/usr/bin/node',
       '/opt/gamecrate/dist/gamecrate.js',
       'rimworld',
       '--supervised',
+      DIR,
       '--',
       '--detach',
     ])
   })
 
-  test('argv with no --detach is passed through unchanged', () => {
-    expect(supervisorArgv(['rimworld'], NODE, '/usr/bin/node').slice(2)).toEqual(['rimworld'])
+  // a project or profile detach: true never types a flag, so a swap would leave the child
+  // detaching all over again.
+  test('argv with no --detach still gets --supervised', () => {
+    expect(supervisorArgv(['rimworld'], DIR, NODE, '/usr/bin/node').slice(2)).toEqual([
+      'rimworld',
+      '--supervised',
+      DIR,
+    ])
+  })
+
+  test('supervisedDir reads the child argv back, and ignores game args', () => {
+    expect(supervisedDir(supervisorArgv(['rimworld'], DIR, NODE, '/usr/bin/node'))).toBe(DIR)
+    expect(supervisedDir(['rimworld'])).toBeUndefined()
+    expect(supervisedDir(['rimworld', '--', '--supervised', '/evil'])).toBeUndefined()
   })
 })
 
 describe('--detach', () => {
   test('detach and supervised are separate booleans', () => {
     expect(parseArgs(['rimworld', '--detach'], { env: {}, games: ['rimworld'] }).detach).toBe(true)
-    expect(parseArgs(['rimworld', '--supervised'], { env: {}, games: ['rimworld'] }).supervised).toBe(true)
+    expect(parseArgs(['rimworld', '--supervised', '/tmp/x'], { env: {}, games: ['rimworld'] }).supervised).toBe(true)
+    expect(parseArgs(['rimworld'], { env: {}, games: ['rimworld'] }).supervised).toBe(false)
     expect(parseArgs(['rimworld'], { env: {}, games: ['rimworld'] }).detach).toBe(false)
   })
 
@@ -804,8 +822,9 @@ describe('--detach', () => {
   })
 
   test('the supervisor never forks again, whatever the profile asks for', () => {
-    const child = parseArgs(['rimworld', '--supervised'], { env: {}, games: ['rimworld'] })
+    const child = parseArgs(['rimworld', '--supervised', '/tmp/x'], { env: {}, games: ['rimworld'] })
     expect(wantsDetach(child, { detach: true })).toBe(false)
+    expect(wantsReplace(child, { replace: true })).toBe(false)
   })
 
   test('a profile detach never reaches the shell refusal', () => {
@@ -816,5 +835,21 @@ describe('--detach', () => {
   test('there is no env fallback for detach', () => {
     const args = parseArgs(['rimworld'], { env: { GAMECRATE_DETACH: '1' }, games: ['rimworld'] })
     expect(args.detach).toBe(false)
+  })
+})
+
+describe('detach defaults from a project config', () => {
+  const project = { detach: true } as ProjectDefaults
+
+  test('a project detach never refuses shell, only a typed flag does', () => {
+    const args = parseArgs(['shell', 'rimworld'], { env: {}, games: ['rimworld'], defaults: project })
+    expect(args.detach).toBe(true)
+    expect(args.subcommand).toBe('shell')
+  })
+
+  test('the shell refusal reads as one sentence', () => {
+    const error = fails(['shell', 'rimworld', '--detach'], ['rimworld'])
+    expect(error.message).toBe('shell cannot detach: a shell needs the terminal --detach gives up')
+    expect(error.detail).toBeUndefined()
   })
 })
