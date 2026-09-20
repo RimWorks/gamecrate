@@ -134,6 +134,11 @@ export interface ScanRoot {
 export interface LibraryEntry {
   workshop?: number
   path?: string
+  git?: string
+  branch?: string
+  tag?: string
+  commit?: string
+  subdir?: string
 }
 
 /** Matches a family of mods by pattern instead of naming each one. */
@@ -256,6 +261,11 @@ export interface ModRecord {
   worktree?: { root: string; branch: string; source: WorktreeSource }
   /** Which scanRoot produced it, for the precedence ladder. */
   rootIndex: number
+  /**
+   * The clone directory's mtime. Source-cache records only, which is what keeps it from
+   * reordering a user's checkout against anything.
+   */
+  clonedAt?: number
 }
 
 export type WorktreeSource = 'flag' | 'env' | 'cwd' | 'ref'
@@ -434,6 +444,22 @@ export interface ParsedArgs {
   supervised: boolean
   /** `-f`: keep printing as the run writes, instead of dumping what is there. */
   follow: boolean
+  /** The write verb under `mods`. Unset means the read verb. */
+  subverb?: 'add' | 'rm' | 'sync'
+  /** Where `mods add` pulls the mod from. */
+  source?:
+    | { kind: 'path'; value: string }
+    | { kind: 'workshop'; value: number }
+    | {
+        kind: 'git'
+        url: string
+        ref?: { kind: 'branch' | 'tag' | 'commit'; value: string }
+        subdir?: string
+      }
+  /** Which config file a write lands in. */
+  target?: 'global' | 'project'
+  /** Overwrite an existing entry instead of refusing. */
+  force?: boolean
   rest: string[]
 }
 
@@ -441,7 +467,7 @@ export type ProjectDefaults = Partial<
   Omit<
     ParsedArgs,
     | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
-    | 'noDetach' | 'noReplace' | 'follow'
+    | 'noDetach' | 'noReplace' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
   >
 > & {
   /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
@@ -449,6 +475,8 @@ export type ProjectDefaults = Partial<
   /** Validated by validateConfig after the splice, not here. */
   profiles?: Record<string, unknown>
   settings?: Record<string, unknown>
+  /** Spliced per id over games.<game>.library, so a repo pin replaces a global one whole. */
+  library?: Record<string, unknown>
   /** Profile keys in source order. Object.keys sorts integer-like names to the front. */
   profileOrder?: string[]
   /** The file these came from. Four suffixes are legal, so output must not guess the name. */
@@ -459,7 +487,7 @@ export type ProjectDefaults = Partial<
 export const RESERVED_NAMES: readonly string[] = [
   'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
-  'ps', 'stop', 'attach', 'wait',
+  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync',
 ]
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

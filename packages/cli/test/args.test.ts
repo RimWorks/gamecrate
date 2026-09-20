@@ -881,3 +881,146 @@ describe('follow and the detached verbs', () => {
     expect(renderHelp('logs')).toContain('--follow')
   })
 })
+
+describe('mods subverbs', () => {
+  test('the read verb still takes game and profile', () => {
+    const args = parseArgs(['mods', 'rimworld', 'cosmere'], NO_ENV)
+    expect(args.subcommand).toBe('mods')
+    expect(args.subverb).toBeUndefined()
+    expect(args.game).toBe('rimworld')
+    expect(args.profile).toBe('cosmere')
+  })
+
+  test('add takes a path source and a target', () => {
+    const args = parseArgs(['mods', 'add', 'rimworld', '--path', '/a/b', '--global'], NO_ENV)
+    expect(args.subverb).toBe('add')
+    expect(args.game).toBe('rimworld')
+    expect(args.source).toEqual({ kind: 'path', value: '/a/b' })
+    expect(args.target).toBe('global')
+  })
+
+  test('a workshop id is a number', () => {
+    const args = parseArgs(['mods', 'add', 'rimworld', '--workshop', '2009463077', '--global'], NO_ENV)
+    expect(args.source).toEqual({ kind: 'workshop', value: 2009463077 })
+  })
+
+  test('a git source carries its ref and subdir', () => {
+    const args = parseArgs(
+      ['mods', 'add', 'rimworld', '--git', 'https://x/y.git', '--tag', 'v1', '--subdir', 'Core', '--project'],
+      NO_ENV,
+    )
+    expect(args.source).toEqual({
+      kind: 'git',
+      url: 'https://x/y.git',
+      ref: { kind: 'tag', value: 'v1' },
+      subdir: 'Core',
+    })
+    expect(args.target).toBe('project')
+  })
+
+  test('rm keeps every id in rest', () => {
+    const args = parseArgs(['mods', 'rm', 'rimworld', 'A.B', 'C.D', '--global'], NO_ENV)
+    expect(args.subverb).toBe('rm')
+    expect(args.game).toBe('rimworld')
+    expect(args.rest).toEqual(['A.B', 'C.D'])
+  })
+
+  test('sync takes no game at all', () => {
+    const args = parseArgs(['mods', 'sync'], NO_ENV)
+    expect(args.subverb).toBe('sync')
+    expect(args.game).toBeUndefined()
+    expect(args.target).toBeUndefined()
+  })
+
+  test('add needs exactly one source', () => {
+    expect(fails(['mods', 'add', 'rimworld', '--global']).code).toBe(Exit.Usage)
+    expect(fails(['mods', 'add', 'rimworld', '--global']).message).toContain('one of --path')
+    const two = fails(['mods', 'add', 'rimworld', '--path', '/a', '--git', 'https://x/y.git', '--global'])
+    expect(two.code).toBe(Exit.Usage)
+    expect(two.message).toContain('a source has one kind')
+  })
+
+  test('a workshop id has to be a positive integer', () => {
+    const text = fails(['mods', 'add', 'rimworld', '--workshop', 'abc', '--global'])
+    expect(text.code).toBe(Exit.Usage)
+    expect(text.message).toContain('positive workshop item id')
+    const zero = fails(['mods', 'add', 'rimworld', '--workshop', '0', '--global'])
+    expect(zero.message).toContain('positive workshop item id')
+    // -3 never reaches the parser: checkValueTokens reads it as a mistyped flag first.
+    expect(fails(['mods', 'add', 'rimworld', '--workshop', '-3', '--global']).message)
+      .toContain('--workshop needs a value, got the flag -3')
+  })
+
+  test('add and rm both need a game', () => {
+    const add = fails(['mods', 'add', '--path', '/a', '--global'])
+    expect(add.code).toBe(Exit.Usage)
+    expect(add.message).toBe('mods add needs a game')
+    const rm = fails(['mods', 'rm', '--global'])
+    expect(rm.code).toBe(Exit.Usage)
+    expect(rm.message).toBe('mods rm needs a game')
+  })
+
+  test('rm needs at least one mod id', () => {
+    const args = fails(['mods', 'rm', 'rimworld', '--global'])
+    expect(args.code).toBe(Exit.Usage)
+    expect(args.message).toBe('mods rm needs at least one mod id')
+  })
+
+  test.each([
+    ['mods --help', ['mods', '--help']],
+    ['mods add --help', ['mods', 'add', '--help']],
+    ['mods add rimworld --help', ['mods', 'add', 'rimworld', '--help']],
+    ['mods rm rimworld --global --help', ['mods', 'rm', 'rimworld', '--global', '--help']],
+    ['mods sync --help', ['mods', 'sync', '--help']],
+    ['mods add rimworld --git u --global --help', ['mods', 'add', 'rimworld', '--git', 'u', '--global', '--help']],
+  ])('--help reaches the caller on %s', (_name, argv) => {
+    expect(parseArgs(argv, NO_ENV).help).toBe(true)
+  })
+
+  test('--help is the only thing that skips the subverb checks', () => {
+    // the other side of the escape: drop --help and every one of these still fails the way it did
+    expect(fails(['mods', 'add', '--path', '/a', '--global']).message).toBe('mods add needs a game')
+    expect(fails(['mods', 'add', 'rimworld', '--global']).message).toContain('--path, --workshop or --git')
+    expect(fails(['mods', 'rm', 'rimworld', '--global']).message).toBe('mods rm needs at least one mod id')
+    expect(fails(['mods', 'add', 'rimworld', '--git', 'u']).message).toBe('mods add needs --global or --project')
+    // and --help does not invent a source or a target it was never given
+    const helped = parseArgs(['mods', 'add', 'rimworld', '--help'], NO_ENV)
+    expect(helped.source).toBeUndefined()
+    expect(helped.target).toBeUndefined()
+  })
+
+  test('sync keeps its game and ids optional', () => {
+    expect(parseArgs(['mods', 'sync'], NO_ENV).game).toBeUndefined()
+    const one = parseArgs(['mods', 'sync', 'rimworld'], NO_ENV)
+    expect(one.game).toBe('rimworld')
+    expect(one.rest).toEqual([])
+  })
+
+  test('the git-only flags need --git', () => {
+    const ref = fails(['mods', 'add', 'rimworld', '--path', '/a', '--tag', 'v1', '--global'])
+    expect(ref.message).toContain('--tag only applies to a --git source')
+    const sub = fails(['mods', 'add', 'rimworld', '--path', '/a', '--subdir', 'Core', '--global'])
+    expect(sub.message).toContain('--subdir only applies to a --git source')
+  })
+
+  test('a git source pins one ref', () => {
+    const both = fails(['mods', 'add', 'rimworld', '--git', 'https://x/y.git', '--tag', 'v1', '--branch', 'main', '--global'])
+    expect(both.code).toBe(Exit.Usage)
+    expect(both.message).toContain('a git source has one ref')
+  })
+
+  test('--subdir stays inside the repository', () => {
+    const abs = fails(['mods', 'add', 'rimworld', '--git', 'https://x/y.git', '--subdir', '/abs', '--global'])
+    expect(abs.message).toContain('path inside the repository')
+    const up = fails(['mods', 'add', 'rimworld', '--git', 'https://x/y.git', '--subdir', 'a/../../b', '--global'])
+    expect(up.message).toContain('cannot climb out of the repository')
+  })
+
+  test('a write names exactly one config', () => {
+    const none = fails(['mods', 'add', 'rimworld', '--path', '/a'])
+    expect(none.code).toBe(Exit.Usage)
+    expect(none.message).toContain('needs --global or --project')
+    const both = fails(['mods', 'rm', 'rimworld', 'A.B', '--global', '--project'])
+    expect(both.message).toContain('a write lands in one config')
+  })
+})

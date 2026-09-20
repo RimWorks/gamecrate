@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import { canonicalProfile, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
 import { buildIndex, resolveModRef, applyWorktreeRequests, applySourceOverrides } from '../mods/modindex'
+import { libraryPin, sourcesRoot } from '../mods/source'
 import { decideStale, scanBuildTimes, staleReport } from '../mods/staleness'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import { requirePlugin } from '../plugin'
@@ -32,6 +33,8 @@ export interface ResolveOptions {
   index?: ModIndex
   /** Overrides process.cwd() for ambient worktree detection; tests set it. */
   cwd?: string
+  /** Lowercased packageId to the clone directory prepared for its git pin. */
+  sources?: ReadonlyMap<string, string>
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 420
@@ -53,15 +56,56 @@ interface Slot {
   dlc?: boolean
 }
 
+function noWorkshopRoot(gameName: string, what: string): string {
+  return `${gameName} has no workshopRoot, so ${what} cannot resolve`
+}
+
+/**
+ * doctor resolves the modless profile, so no mod ref is ever resolved there. Read the config
+ * instead: library pins, plus every profile's mods in both the object and bare-string forms.
+ */
+export function workshopRootProblem(gameName: string, game: GameConfig): Problem | null {
+  if (game.workshopRoot !== null) return null
+  const ids = new Set<string>()
+  for (const entry of Object.values(game.library ?? {})) {
+    if (entry.workshop !== undefined) ids.add(String(entry.workshop))
+  }
+  for (const profile of Object.values(game.profiles)) {
+    for (const entry of profile.mods ?? []) {
+      if (typeof entry === 'string') {
+        if (entry.startsWith('workshop:')) ids.add(entry.slice(9))
+      } else if ('workshop' in entry && entry.workshop !== undefined) ids.add(String(entry.workshop))
+    }
+  }
+  if (ids.size === 0) return null
+  const shown = [...ids].slice(0, 3).join(', ')
+  const tail = `${ids.size} workshop reference(s)`
+  return {
+    where: `/games/${gameName}/workshopRoot`,
+    message: `${noWorkshopRoot(gameName, tail)}: ${shown}${ids.size > 3 ? ', ...' : ''}`,
+    suggestion: `set games.${gameName}.workshopRoot, or pin those mods with path: or git:`,
+  }
+}
+
 /** A ref the index understands, with library pins applied. */
-function refFor(entry: string | { id: string; workshop?: number; path?: string }, game: GameConfig): string {
+function refFor(
+  entry: string | { id: string; workshop?: number; path?: string },
+  game: GameConfig,
+  sources: ReadonlyMap<string, string>,
+): string {
   const object = typeof entry === 'string' ? { id: entry } : entry
   if (object.path !== undefined) return `path:${object.path}`
   if (object.workshop !== undefined) return `workshop:${object.workshop}`
   if (object.id.includes(':')) return object.id
-  const pin = own(game.library, object.id) ?? own(game.library, object.id.toLowerCase())
+  const pin = libraryPin(game, object.id)
   if (pin?.path !== undefined) return `path:${pin.path}`
   if (pin?.workshop !== undefined) return `workshop:${pin.workshop}`
+  // prepared before the index was built, so this is a directory lookup, never a network call.
+  // `verify` and `mods` prepare from the cache alone, and a failed fetch still leaves a map.
+  if (pin?.git !== undefined) {
+    const dir = sources.get(object.id.toLowerCase())
+    if (dir !== undefined) return `path:${pin.subdir === undefined ? dir : join(dir, pin.subdir)}`
+  }
   return object.id
 }
 
@@ -241,6 +285,7 @@ export async function resolvePlan(
 ): Promise<{ plan: LaunchPlan; problems: Problem[] }> {
   const { game: gameName, profile: requestedProfile, root } = options
   const args = options.args ?? {}
+  const sources = options.sources ?? new Map<string, string>()
   const problems: Problem[] = []
   const warnings: string[] = []
 
@@ -272,7 +317,7 @@ export async function resolvePlan(
   if (args.dockerArgs?.length) settings.dockerArgs = [...(settings.dockerArgs ?? []), ...args.dockerArgs]
 
   const plugin = requirePlugin(options.plugins, gameName)
-  const index = options.index ?? (await buildIndex(gameName, game, plugin))
+  const index = options.index ?? (await buildIndex(gameName, game, plugin, sourcesRoot(root.dataRoot)))
   await applyWorktreeRequests(index, instance.requests, game)
   problems.push(...(await applySourceOverrides(index, args.use ?? [], game)))
 
@@ -285,7 +330,7 @@ export async function resolvePlan(
     const entry = slot.entry
     const refs: { ref: string; optional: boolean }[] = isDynamic(entry)
       ? expandDynamic(entry, index, slot.where, problems).map((id) => ({ ref: id, optional: false }))
-      : [{ ref: refFor(entry, game), optional: typeof entry !== 'string' && entry.optional === true }]
+      : [{ ref: refFor(entry, game, sources), optional: typeof entry !== 'string' && entry.optional === true }]
 
     for (const { ref, optional } of refs) {
       const record = resolveModRef(index, ref, game)
@@ -293,7 +338,12 @@ export async function resolvePlan(
         // A declared DLC is what the game can have, not what this machine owns.
         if (slot.dlc === true) continue
         if (optional) warnings.push(`optional mod ${ref} is not installed; skipped`)
-        else problems.push({ where: slot.where, message: `no mod matches "${ref}"` })
+        else if (ref.startsWith('workshop:') && game.workshopRoot === null) {
+          problems.push({
+            where: slot.where,
+            message: noWorkshopRoot(gameName, ref),
+          })
+        } else problems.push({ where: slot.where, message: `no mod matches "${ref}"` })
         continue
       }
       const key = record.packageId.toLowerCase()

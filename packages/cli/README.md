@@ -176,6 +176,162 @@ and now `profiles` can all name directories anywhere on your disk to bind-mount 
 container.
 Read a stranger's `.gamecrate.yml` before you run gamecrate in their repo.
 
+## Mod sources
+
+A `library` block under a game says where one mod lives. Profiles then name that mod by its
+package id alone, and the library supplies the rest.
+
+```yaml
+games:
+  rimworld:
+    library:
+      brrainz.harmony:
+        workshop: 2009463077
+      yourname.yourmod:
+        path: ~/projects/yourmod
+      someone.theirmod:
+        git: https://github.com/someone/theirmod.git
+        tag: v1.4.2
+        subdir: Mod
+```
+
+Each entry carries exactly one of `path`, `workshop`, or `git`. Two of them is a config error
+that names both keys. An entry with none of the three fails the same way.
+
+`branch`, `tag`, and `commit` pin a git entry to one ref. An entry takes at most one of the
+three. `subdir` names the mod folder inside the repository, for a repo that holds the mod
+somewhere below its root. All four keys need a `git` URL beside them, so a `path` or `workshop`
+entry that carries one fails with `"tag" needs a "git" url`. A `subdir` starting with `/`, or
+holding a `..` segment, fails as well.
+
+A repo config declares its own `library` at the top level, without the `games` wrapper. A repo
+pin replaces a global pin of the same id outright.
+
+### `workshopRoot`
+
+`workshopRoot` is the directory Steam downloads workshop items into. The path is
+`<steam library>/steamapps/workshop/content/<appId>`, and RimWorld's `appId` is `294100`:
+
+```yaml
+workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
+```
+
+**A plugin leaves it `null`.** Where Steam put your library is a fact about your machine, not
+about the game, so no plugin guesses it. The key still has to appear in the merged config, and
+`null` is the value a plugin ships.
+
+With a null root, every workshop reference fails, and the message names the missing key rather
+than the missing mod:
+
+```
+rimworld has no workshopRoot, so workshop:2009463077 cannot resolve
+```
+
+`gamecrate doctor` reports the same problem without a launch. It reads the library and every
+profile, then lists up to three of the workshop ids it found. `gamecrate mods add --workshop`
+refuses ahead of its write, so a null root never leaves a half-written config behind.
+
+### Git sources
+
+gamecrate clones a git entry into a cache under the data root, one directory per repository and
+ref:
+
+```
+~/.local/share/gamecrate/sources/<repo>-<hash>/<kind>-<ref>-<hash>/
+```
+
+**That cache belongs to gamecrate.** A fetch runs `git reset --hard` inside it, which throws
+away whatever you changed there, with no prompt, no warning, and no copy. To work on a mod,
+clone it yourself and pin that checkout with `path:`.
+
+Only one gamecrate touches a clone at a time. A second one waits up to 30 seconds for the lock,
+then gives up and names the lock file it waited on.
+
+#### Moving pins and fixed pins
+
+An entry with no `branch`, `tag`, or `commit` follows the remote's default branch. Every launch
+asks the remote for that branch, fetches it, and resets the clone onto it. So an unpinned entry
+re-resolves on every run, and a push upstream reaches your next launch.
+
+A `tag` or `commit` pin clones once and then sits still. No launch fetches it again.
+`gamecrate mods sync` is the only thing that moves a fixed pin.
+
+A fetch that fails is a warning, not a failure. gamecrate keeps the clone already on disk and
+says how old it is:
+
+```
+warning: could not fetch https://example.com/mod.git, using 4f9c21e from 3 days ago
+```
+
+**A commit pin needs the server's cooperation.** gamecrate runs `git fetch origin <sha>`, which
+asks for one commit by name. That works over `file://` and against GitHub. Other hosts answer
+it only with `uploadpack.allowReachableSHA1InWant` turned on. A forge without that setting
+turns every sync of the pin into the preceding warning, even while the remote is healthy. Pin a
+`tag` instead when your forge refuses.
+
+`--dry-run` and `--print-plan` never fetch and never clone. They do still ask a remote for one
+thing: the default branch of an unpinned entry, through `git ls-remote`. A remote that cannot
+answer fails the command with `could not read the default branch of <url>` and exit `5`. Past
+that point, with no clone on disk, they stop with `no clone of <url> on disk`.
+`gamecrate mods` asks no remote at all. It resolves through the mod index, so a git pin with no
+clone yet reads as `no mod matches "<id>"`.
+
+#### A clone is source, not a release
+
+Most mod repositories keep their build output out of git. A clone of one carries `.cs` sources
+and no assembly, which is exactly what the stale check looks for. Under the default
+`--build auto`, the first launch runs `dotnet build` against the mod's `.csproj` or `.slnx`.
+A mod with no C# at all is never stale, so nothing builds.
+
+**So a git-pinned C# mod needs a working `dotnet` SDK on the host.** A failed build stops the
+launch and exits `5`. gamecrate never starts a game whose mod failed to compile.
+
+Two ways out when you have no compiler. Set `build: never` on the profile, or pass `--no-build`
+for one run. The mod then loads with whatever assemblies the repository ships, which may be
+none.
+
+### Writing the library with `mods`
+
+`mods add`, `mods rm`, and `mods sync` edit the library for you.
+
+```sh
+gamecrate mods add rimworld --path ~/projects/yourmod --project
+gamecrate mods add rimworld --workshop 2009463077 --global
+gamecrate mods add rimworld --git https://github.com/someone/theirmod --tag v1.4.2 --global
+gamecrate mods rm rimworld yourname.yourmod --project
+gamecrate mods sync rimworld
+```
+
+`add` and `rm` each need `--global` or `--project`, because one write lands in one file.
+`--project` means the nearest `.gamecrate` file, which needs a top-level `game:` matching the
+game you named.
+
+`add` reads the mod's own manifest for its package id, so you never type an id. A `--path`
+source lands in the config as an absolute path. A `--git` source clones the repo first, then
+walks it for manifests, and pins every mod it finds. The walk stops at the first manifest down
+each branch of the tree, so per-version `About` folders under one parent manifest stay one
+entry. Two separate directories that declare the same package id are a different case. `add`
+refuses the whole batch and names both directories, because nothing tells it which one you
+meant. Start the walk lower down with `--subdir` to pick one. `--force` does not apply here; it
+only overwrites a pin that is already in the target file.
+
+An id already in the target library stops the whole write, listing every clash. `--force`
+overwrites those entries instead.
+
+`rm` takes package ids and reports any it cannot find. Emptying a `library` map deletes the map
+too, and any parent the delete leaves empty. An empty YAML map re-emits as `{}`, which corrupts
+the next write into it.
+
+`sync` takes an optional game, then any number of package ids. The first word after `sync` is
+always the game name, so `gamecrate mods sync some.mod` reads `some.mod` as a game and fails
+with `unknown game some.mod`. With no game, it walks every game. An id you name that has no
+`git` entry stops the whole sync with exit `4`, listing every id it could not find. It fetches
+with force, so it moves tag and commit pins that a launch leaves alone.
+
+**A YAML write rewrites the whole file.** Comments, values, and quote style all survive, but the
+original indentation and blank lines do not. A JSON or JSONC write changes only the bytes it
+has to.
+
 ## Subcommands
 
 The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
@@ -186,6 +342,9 @@ The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
 | `run <game> [profile]` | Resolve, stage, and launch |
 | `list [game]` | Games, profiles, and where each profile came from |
 | `mods <game> [profile]` | The resolved mod set: source kind plus absolute path |
+| `mods add <game> <source>` | Pin a mod into a library from a path, a workshop id, or a git URL |
+| `mods rm <game> <id>...` | Drop library pins by package id |
+| `mods sync [game] [id]...` | Fetch every git-pinned clone, fixed pins too |
 | `doctor` | Preflight: Docker, CDI, registry auth, game dirs, scan roots, permissions |
 | `clean <game> [profile]` | Tiered wipe of a profile |
 | `clone <game> <src> <dst>` | Reflink-copy a profile's precious tier |
@@ -216,6 +375,17 @@ Mod set:
 - `--only <id>` restricts the resolved set to these mods. Repeatable.
 - `--use <packageId>=<path>` forces one mod to load from a directory. Repeatable.
 - `--sort <topo|none>` picks the profile order or a topological sort.
+
+Library writes. Only `--global` and `--project` reach `mods rm`; the rest are `mods add` only:
+
+- `--path <dir>`, `--workshop <id>`, and `--git <url>` are the three source kinds. `mods add`
+  takes exactly one.
+- `--branch <name>`, `--tag <name>`, and `--commit <sha>` pin a `--git` source. Pick one.
+- `--subdir <path>` starts the manifest walk below the repository root.
+- `--global` writes the global config, `--project` the nearest `.gamecrate` file. `add` and `rm`
+  need one of the two.
+- `--force` overwrites a pin that is already there. `mods rm` has no force: a missing id always
+  fails.
 
 Worktrees and instances:
 

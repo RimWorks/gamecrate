@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
 import { list } from './cli/list'
+import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
 import { profileOf } from './cli/profile'
 import { renderCompletion, renderHelp } from './cli/help'
 import { currentLog, openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, tailArgv, warn } from './cli/output'
@@ -41,10 +42,12 @@ import {
 } from './launch/prepare'
 import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
-import { resolvePlan } from './launch/resolve'
+import { resolvePlan, workshopRootProblem } from './launch/resolve'
 import { listRuns } from './run/registry'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
 import { buildIndex } from './mods/modindex'
+import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
+import type { PreparedSources } from './mods/source'
 import { requirePlugin } from './plugin'
 import type { GamePlugin } from './plugin'
 import { ago, decideStale, duration, scanBuildTimes, staleReport } from './mods/staleness'
@@ -123,8 +126,13 @@ async function dispatch(
       return help(args, config)
     case 'list':
       return list(args, config, defaults)
-    case 'mods':
+    case 'mods': {
+      const ctx = { config, plugins, defaults, cwd: process.cwd(), globalPath: await globalConfigPath() }
+      if (args.subverb === 'add') return modsAdd(args, ctx)
+      if (args.subverb === 'rm') return modsRm(args, ctx)
+      if (args.subverb === 'sync') return modsSync(args, ctx)
       return mods(args, config, plugins, defaults)
+    }
     case 'doctor':
       return doctor(config, plugins)
     case 'clean':
@@ -222,8 +230,35 @@ async function run(
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
 
-  const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
-  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
+  const gameConfig = config.games[game]!
+  // --dry-run and --print-plan resolve without side effects, and a clone is a side effect.
+  const allowFetch = !args.dryRun && !args.printPlan
+  const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
+  try {
+    return await resolved(argv, args, config, plugins, asShell, game, profile, sources)
+  } finally {
+    await sources.release()
+  }
+}
+
+async function resolved(
+  argv: string[],
+  args: ParsedArgs,
+  config: RootConfig,
+  plugins: Map<string, GamePlugin>,
+  asShell: boolean,
+  game: string,
+  profile: string,
+  sources: PreparedSources,
+): Promise<number> {
+  for (const warning of sources.warnings) warn(warning)
+  const index = await buildIndex(
+    game,
+    config.games[game]!,
+    requirePlugin(plugins, game),
+    sourcesRoot(config.dataRoot),
+  )
+  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources: sources.dirs })
   if (problems.length > 0) reportProblems(problems)
 
   const identity = resolveIdentity(args.root)
@@ -253,7 +288,7 @@ async function run(
 
   const lock = args.supervised ? heldLock(plan) : await takeLock(plan)
   try {
-    const result = await launch(plan, args, config, identity, asShell, profileSpec)
+    const result = await launch(plan, args, config, identity, asShell, profileSpec, sources.release)
     if (args.supervised) await recordExit(plan, result)
     return result.code
   } finally {
@@ -268,6 +303,7 @@ async function launch(
   identity: Identity,
   asShell: boolean,
   profileSpec: ProfileConfig,
+  releaseSources: () => Promise<void>,
 ): Promise<LaunchResult> {
   const game = plan.game
   const profile = plan.profile
@@ -287,7 +323,7 @@ async function launch(
     args.supervised && args.log === undefined ? redirectOutput(join(runDir, 'supervisor.log')) : undefined
 
   try {
-    return await execute(plan, args, config, identity, asShell, profileSpec, runDir)
+    return await execute(plan, args, config, identity, asShell, profileSpec, runDir, releaseSources)
   } finally {
     supervisorLog?.close()
   }
@@ -301,9 +337,16 @@ async function execute(
   asShell: boolean,
   profileSpec: ProfileConfig,
   runDir: string,
+  releaseSources: () => Promise<void>,
 ): Promise<LaunchResult> {
   const game = plan.game
   await buildLocalMods(plan, buildPolicy(args, profileSpec))
+  // the build writes into the clones, so their lock only comes off once it is done. it covers
+  // fetch and build, not the session: stageMods bind-mounts a clone subdir into the container,
+  // and nothing stops another launch resetting that tree while the game holds it.
+  // TODO(a session-long lock would serialize every launch): delete this when a clone is staged
+  // by copy, or by a read-lock a resetting writer has to wait on.
+  await releaseSources()
   await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
   // Offscreen modes need an X server the published images do not ship; add it once, on top.
   const runtimeImage =
@@ -478,8 +521,14 @@ async function mods(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
-  const index = await buildIndex(game, config.games[game]!, requirePlugin(plugins, game))
-  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index })
+  const index = await buildIndex(
+    game,
+    config.games[game]!,
+    requirePlugin(plugins, game),
+    sourcesRoot(config.dataRoot),
+  )
+  const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
+  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources })
   if (problems.length > 0) reportProblems(problems)
   printPlan(plan, args.json)
   return Exit.Ok
@@ -488,8 +537,12 @@ async function mods(
 async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {
   let failed = false
   for (const game of Object.keys(config.games)) {
-    const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins })
-    const all = [...problems, ...(await preflight(plan))]
+    // same map mods and verify get: without it doctor drops a pin's subdir and can name the
+    // wrong directory of a repinned clone.
+    const sources = cachedSources(config.games[game]!, 'modless', {}, config.dataRoot)
+    const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
+    const workshop = workshopRootProblem(game, config.games[game]!)
+    const all = [...problems, ...(await preflight(plan)), ...(workshop === null ? [] : [workshop])]
     if (all.length === 0) {
       status(`${game}: ok`)
       continue
@@ -605,7 +658,8 @@ async function verify(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
-  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args })
+  const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
+  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, sources })
   if (problems.length > 0) reportProblems(problems)
 
   const name = containerName(plan)

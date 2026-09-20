@@ -7,6 +7,7 @@ import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import type {
   BuildPolicy,
   GameConfig,
+  LibraryEntry,
   ModEntry,
   ProfileConfig,
   ProjectDefaults,
@@ -89,6 +90,7 @@ const PROJECT_OBJECT = z.strictObject(
     defaultProfile: projectName.optional(),
     profiles: z.record(z.string(), z.unknown()).optional(),
     settings: z.record(z.string(), z.unknown()).optional(),
+    library: z.record(z.string(), z.unknown()).optional(),
     detach: projectBool.optional(),
     mods: projectList.optional(),
     without: projectList.optional(),
@@ -124,11 +126,15 @@ const PROJECT_OBJECT = z.strictObject(
   { error: 'expected an object' },
 )
 
-// profiles and settings land under one game, and a repo config has no games map to name it.
+// profiles, settings and library land under one game, and a repo config has no games map to name it.
 const PROJECT_SCHEMA = PROJECT_OBJECT.check((ctx) => {
-  const { game, profiles, settings } = ctx.value
+  const { game, profiles, settings, library } = ctx.value
   if (game !== undefined) return
-  for (const [key, value] of [['profiles', profiles], ['settings', settings]] as const) {
+  for (const [key, value] of [
+    ['profiles', profiles],
+    ['settings', settings],
+    ['library', library],
+  ] as const) {
     if (value === undefined) continue
     ctx.issues.push({
       code: 'custom',
@@ -213,7 +219,9 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
       [...plugins].map(([name, plugin]) => [name, structuredClone(plugin.defaults) as GameConfig]),
     ),
   }
-  const merged = user === undefined ? base : deepMerge(base, user)
+  // an absent file and an empty one both mean no config. parseYaml('') is null, not undefined,
+  // and deepMerge(base, null) returns null, which validateConfig then refuses.
+  const merged = user === undefined || user === null ? base : deepMerge(base, user)
   const spliced = applyProject(merged, project)
   const { config, problems } = validateConfig(spliced)
   if (problems.length > 0) {
@@ -237,7 +245,9 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
   if (project === undefined) return config
   const game = project.game
   if (game === undefined) return config
-  if (project.profiles === undefined && project.settings === undefined) return config
+  if (project.profiles === undefined && project.settings === undefined && project.library === undefined) {
+    return config
+  }
 
   const existing = own(config.games, game)
   if (existing === undefined) {
@@ -254,6 +264,9 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
   const target: GameConfig = {
     ...existing,
     profiles: { ...existing.profiles, ...(project.profiles as Record<string, ProfileConfig> | undefined) },
+    ...(project.library === undefined
+      ? {}
+      : { library: spliceLibrary(existing.library, project.library as Record<string, LibraryEntry>) }),
   }
   config.games[game] = target
   if (project.settings !== undefined) {
@@ -261,6 +274,24 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
   }
   return config
 }
+
+/**
+ * Per id and case-blind, so a repo pin replaces a global one of the same id whole however
+ * either file spelled it. `existingKey` and `refFor` both match ids without regard to case, so
+ * leaving both spellings alive would hand two profiles two different pins for one mod.
+ * `fromEntries` and spread both define rather than assign, which a `__proto__` key needs.
+ */
+function spliceLibrary(
+  global: GameConfig['library'],
+  project: Record<string, LibraryEntry>,
+): Record<string, LibraryEntry> {
+  const replaced = new Set(Object.keys(project).map((id) => id.toLowerCase()))
+  const kept = Object.entries(global ?? {}).filter(([id]) => !replaced.has(id.toLowerCase()))
+  return { ...Object.fromEntries(kept), ...project }
+}
+
+/** The project keys that land under one game, whether by splice or by merge. */
+const GAME_SCOPED_KEYS = ['profiles', 'settings', 'library'] as const
 
 /**
  * Says where a problem's key actually came from. A pointer the user's file does not contain
@@ -280,12 +311,13 @@ function origin(
   // ahead of the user check: a repo profile replacing a global one of the same name still
   // resolves in the user tree, and that file holds the value they did not write.
   const repoGame = project?.game
+  const repoSection = GAME_SCOPED_KEYS.find((k) => k === sub)
   if (
     repoGame !== undefined &&
     section === 'games' &&
     name === repoGame &&
-    (sub === 'profiles' || sub === 'settings') &&
-    valueAt(sub === 'profiles' ? project?.profiles : project?.settings, rest) !== undefined
+    repoSection !== undefined &&
+    valueAt(project?.[repoSection], rest) !== undefined
   ) {
     return '  <- from the .gamecrate project config, not this file'
   }

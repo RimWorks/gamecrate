@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve as resolvePath } from 'node:path'
+import { dirname, join, relative, sep, resolve as resolvePath } from 'node:path'
 
 import picomatch from 'picomatch'
 
@@ -165,7 +165,7 @@ async function scanGameData(
 
 // --------------------------------------------------------------------- index
 
-const CACHE_VERSION = 2
+const CACHE_VERSION = 3
 
 interface CacheFile {
   version: number
@@ -241,7 +241,18 @@ function compareTiers(a: ModRecord, b: ModRecord): number {
 
 /** Selection, then non-workshop, then non-worktree, then scan-root order. */
 function rank(a: ModRecord, b: ModRecord): number {
-  return compareTiers(a, b) || (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0)
+  return compareTiers(a, b) || byClone(a, b) || (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0)
+}
+
+/**
+ * Two clones of one url tie on every element of `tier()`, and the directory-name fallback then
+ * prefers `tag-v1` over `tag-v2` forever, because nothing evicts the cache. Newest fetch wins
+ * instead. Only cache records carry `clonedAt`, so a clone tying with a local checkout still
+ * falls through to the rule the scan-root order relies on.
+ */
+function byClone(a: ModRecord, b: ModRecord): number {
+  if (a.clonedAt === undefined || b.clonedAt === undefined) return 0
+  return b.clonedAt - a.clonedAt
 }
 
 /**
@@ -384,10 +395,16 @@ function insert(index: ModIndex, record: ModRecord): void {
 }
 
 /**
- * Scans the game install, then every scan root in declaration order, then the workshop root.
- * Local roots rescan every launch; only the workshop scan is cached, against the acf stamp.
+ * Scans the game install, then every scan root in declaration order, then the source cache,
+ * then the workshop root. Local roots rescan every launch; only the workshop scan is cached,
+ * against the acf stamp.
  */
-export async function buildIndex(game: string, config: GameConfig, plugin: GamePlugin): Promise<ModIndex> {
+export async function buildIndex(
+  game: string,
+  config: GameConfig,
+  plugin: GamePlugin,
+  sourcesDir?: string,
+): Promise<ModIndex> {
   const index: ModIndex = {
     game,
     plugin,
@@ -402,7 +419,17 @@ export async function buildIndex(game: string, config: GameConfig, plugin: GameP
   for (const [i, root] of config.scanRoots.entries()) {
     await scanLocalRoot(root, i, config.manifest.file, local)
   }
-  for (const record of await parseAll(local, config, plugin, index.problems)) insert(index, record)
+  // after every user root, not before: lower rootIndex wins, and a clone must never quietly
+  // replace a checkout the user already has.
+  const cacheIndex = config.scanRoots.length
+  const parsed = await parseAll(local, config, plugin, index.problems)
+  if (sourcesDir !== undefined) {
+    const cache: Candidate[] = []
+    // <name-hash>/<ref>/<subdir>/<mod>
+    await scanLocalRoot({ path: sourcesDir, maxDepth: 4 }, cacheIndex, config.manifest.file, cache)
+    parsed.push(...oneModPerClone(await parseAll(cache, config, plugin, index.problems), sourcesDir))
+  }
+  for (const record of parsed) insert(index, record)
 
   if (config.workshopRoot !== null) {
     const stamp = workshopStamp(config)
@@ -411,7 +438,9 @@ export async function buildIndex(game: string, config: GameConfig, plugin: GameP
       for (const record of cached) insert(index, record)
     } else {
       const items: Candidate[] = []
-      await scanWorkshopRoot(config.workshopRoot, config.scanRoots.length, config.manifest.file, items)
+      // +1 keeps the numbering consistent, nothing more: `kind === 'workshop'` is tier index 2,
+      // ahead of rootIndex at 4, so this can never change a pick.
+      await scanWorkshopRoot(config.workshopRoot, cacheIndex + 1, config.manifest.file, items)
       const records = await parseAll(items, config, plugin, index.problems)
       for (const record of records) insert(index, record)
       if (stamp !== null) await writeWorkshopCache(game, stamp, records)
@@ -420,6 +449,33 @@ export async function buildIndex(game: string, config: GameConfig, plugin: GameP
 
   for (const bucket of index.byPackageId.values()) bucket.sort(rank)
   return index
+}
+
+/**
+ * One record per packageId per clone, which is what the library holds: `mods add` writes one
+ * entry for a repo that ships `V14/Mod` and `V15/Mod` under the same id. Keeping both here makes
+ * them tie on every rule in `rank`, and `pick` turns that tie into a fatal problem. A pin that
+ * names the dropped directory still resolves, because `byPath` parses a directory the index
+ * never kept.
+ */
+function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
+  const kept = new Map<string, ModRecord>()
+  const stamps = new Map<string, number>()
+  for (const record of [...records].sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0))) {
+    const clone = relative(sourcesDir, record.dir).split(sep).slice(0, 2).join(sep)
+    const at = join(sourcesDir, clone)
+    let stamp = stamps.get(at)
+    if (stamp === undefined) {
+      // a repin makes a new directory, so the mtime dates the ref rather than the last fetch.
+      // that is the tie this has to break.
+      stamp = statSync(at).mtimeMs
+      stamps.set(at, stamp)
+    }
+    record.clonedAt = stamp
+    const key = `${clone}\u0000${record.packageId.toLowerCase()}`
+    if (!kept.has(key)) kept.set(key, record)
+  }
+  return [...kept.values()]
 }
 
 async function parseAll(
@@ -501,8 +557,8 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
   if (!best) return null
   const runnerUp = bucket![1]
   if (runnerUp && compareTiers(best, runnerUp) === 0) {
-    // Two dirs inside one selected worktree is a user error. An unselected tie is a coin
-    // flip the plan already exposes via `shadowed`, so it warns rather than stopping a run.
+    // Two dirs inside one selected worktree names the tie in its own message. Everything else
+    // becomes a problem, and every caller on this branch treats a problem as fatal.
     if (best.selectedWorktree !== undefined || runnerUp.selectedWorktree !== undefined) {
       throw new GamecrateError(
         `"${ref}" is declared by ${bucket!.length} indistinguishable directories`,
@@ -510,6 +566,8 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
         bucket!.map((r) => r.dir).join('\n'),
       )
     }
+    // a cache tie the fetch clock already broke is a decision, not an ambiguity
+    if (byClone(best, runnerUp) !== 0) return best
     index.problems.push({
       where: ref,
       message: `resolved by directory name: ${bucket!.length} candidates tie on every rule`,

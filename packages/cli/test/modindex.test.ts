@@ -233,3 +233,39 @@ describe('resolveModRef addressing', () => {
     }
   })
 })
+
+describe('source cache scanning', () => {
+  test('a bare id resolves a mod that only exists in the cache', async () => {
+    const cache = await fixture()
+    try {
+      await mod(cache, 'beacon-abc123/branch-main-def456/Beacon', 'cached.beacon')
+
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin, cache)
+
+      expect(index.byPackageId.has('cached.beacon')).toBe(true)
+      expect(resolveModRef(index, 'cached.beacon', cfg)?.packageId).toBe('cached.beacon')
+    } finally {
+      await rm(cache, { recursive: true, force: true })
+    }
+  })
+
+  // Passes before the cache is ever scanned too. It guards against a future inversion of the
+  // scan order, not against today's behaviour.
+  test('a local checkout beats a cached clone for a bare id', async () => {
+    const root = await fixture()
+    const cache = await fixture()
+    try {
+      const local = await mod(root, 'Beacon', 'test.beacon')
+      await mod(cache, 'beacon-abc123/branch-main-def456/Beacon', 'test.beacon')
+
+      const cfg = withRoots(atlas, [scanRoot(root, 3)], null)
+      const index = await buildIndex('atlas', cfg, plugin, cache)
+
+      expect(resolveModRef(index, 'test.beacon', cfg)?.dir).toBe(local)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(cache, { recursive: true, force: true })
+    }
+  })
+})

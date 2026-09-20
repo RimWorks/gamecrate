@@ -275,6 +275,21 @@ describe('validateConfig', () => {
     expect(find(problems, 'reserved')?.message).toContain('doctor')
   })
 
+  test('a game named add is rejected as reserved', () => {
+    const { problems } = merged({ games: { add: { profiles: {} } } })
+    expect(find(problems, 'reserved')?.message).toContain('add')
+  })
+
+  test.each(['add', 'rm', 'sync'])('a profile named %s is rejected as reserved', (name) => {
+    const { problems } = merged({ games: { atlas: { profiles: { [name]: { mods: [] } } } } })
+    expect(find(problems, 'reserved')?.where).toBe(`/games/atlas/profiles/${name}`)
+  })
+
+  test('a game and profile that were always legal raise no reserved problem', () => {
+    const { problems } = merged({ games: { rimworld: { profiles: { cosmere: { mods: [] } } } } })
+    expect(find(problems, 'reserved')).toBeUndefined()
+  })
+
   test('a name outside NAME_PATTERN is rejected', () => {
     const { problems } = merged({ games: { atlas: { profiles: { '-bad name': {} } } } })
     expect(find(problems, 'must match')).toBeDefined()
@@ -390,6 +405,68 @@ describe('validateConfig', () => {
 
   test('a non-object config is one problem, not a crash', () => {
     expect(validateConfig('nope').problems).toHaveLength(1)
+  })
+})
+
+describe('library entry sources', () => {
+  function lib(entry: unknown): Problem[] {
+    return merged({ games: { atlas: { library: { 'gitlib.git': entry } } } }).problems
+  }
+
+  test('a git entry takes a branch and a subdir', () => {
+    expect(lib({ git: 'https://example.test/x.git', branch: 'dev', subdir: 'Source/Mod' })).toEqual([])
+  })
+
+  test('a git entry needs no ref at all', () => {
+    expect(lib({ git: 'https://example.test/x.git' })).toEqual([])
+  })
+
+  test('workshop and path cannot both be given', () => {
+    expect(find(lib({ workshop: 123, path: '~/mods/x' }), 'only one of')).toBeDefined()
+  })
+
+  test('a commit counts as a ref, and still needs a git url', () => {
+    const problems = lib({ commit: 'abc1234', branch: 'dev' })
+    expect(find(problems, 'only one of branch')?.message).toContain('branch, commit')
+    expect(find(problems, '/gitlib.git/commit')?.message).toBe('"commit" needs a "git" url')
+  })
+
+  test('git and path cannot both be given', () => {
+    expect(find(lib({ git: 'https://example.test/x.git', path: '~/mods/x' }), 'only one of')).toBeDefined()
+  })
+
+  test('git and workshop cannot both be given', () => {
+    expect(find(lib({ git: 'https://example.test/x.git', workshop: 123 }), 'only one of')).toBeDefined()
+  })
+
+  test('branch and tag cannot both be given', () => {
+    expect(
+      find(lib({ git: 'https://example.test/x.git', branch: 'dev', tag: 'v1' }), 'only one of branch'),
+    ).toBeDefined()
+  })
+
+  test('a ref without a git url is refused', () => {
+    const problem = find(lib({ path: '~/mods/x', branch: 'dev' }), 'needs a "git"')
+    expect(problem?.where).toBe('/games/atlas/library/gitlib.git/branch')
+  })
+
+  test('a subdir without a git url is refused', () => {
+    const problem = find(lib({ path: '~/mods/x', subdir: 'Source' }), 'needs a "git"')
+    expect(problem?.where).toBe('/games/atlas/library/gitlib.git/subdir')
+  })
+
+  test('an absolute subdir is refused', () => {
+    const problem = find(lib({ git: 'https://example.test/x.git', subdir: '/abs' }), 'relative')
+    expect(problem?.where).toBe('/games/atlas/library/gitlib.git/subdir')
+  })
+
+  test('a subdir that climbs out is refused', () => {
+    const problem = find(lib({ git: 'https://example.test/x.git', subdir: 'a/../../b' }), 'relative')
+    expect(problem?.where).toBe('/games/atlas/library/gitlib.git/subdir')
+  })
+
+  test('an entry with no source at all is refused', () => {
+    expect(find(lib({}), 'needs a "workshop" id, a "path", or a "git" url')).toBeDefined()
   })
 })
 
@@ -1252,6 +1329,14 @@ describe('project profiles', () => {
     expect(defaults.profiles).toBeUndefined()
   })
 
+  test('library in a repo config without a game is a config error that says why', async () => {
+    await write('library:\n  Some.Mod:\n    git: https://example.com/x.git\n')
+    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
+    await loadProjectDefaults(dir).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('top-level game:')
+    })
+  })
+
   test('detach is a project key like every other flag default', async () => {
     await write('game: rimworld\ndetach: true\n')
     expect((await loadProjectDefaults(dir)).detach).toBe(true)
@@ -1375,6 +1460,73 @@ describe('repo profile splice', () => {
     await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
     await loadConfig(path, project).catch((error: GamecrateError) => {
       expect(error.detail).not.toContain('.gamecrate')
+    })
+  })
+
+  test('library in a repo config replaces a global pin of the same id whole', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), library: { 'Some.Mod': { workshop: 7 }, 'Other.Mod': { workshop: 9 } } },
+    })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      library: { 'Some.Mod': { git: 'https://example.com/x.git', branch: 'main' } },
+    })
+    const library = config.games['rimworld']!.library!
+    expect(library['Some.Mod']).toEqual({ git: 'https://example.com/x.git', branch: 'main' })
+    expect(library['Other.Mod']).toEqual({ workshop: 9 })
+  })
+
+  test('a repo pin replaces a global one however either file spelled the id', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), library: { 'some.mod': { workshop: 7 }, 'Other.Mod': { workshop: 9 } } },
+    })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      library: { 'Some.Mod': { git: 'https://example.com/x.git', branch: 'main' } },
+    })
+    const library = config.games['rimworld']!.library!
+    // one key, the repo's spelling. both alive would hand two profiles two pins for one mod
+    expect(Object.keys(library).sort()).toEqual(['Other.Mod', 'Some.Mod'])
+    expect(library['Some.Mod']).toEqual({ git: 'https://example.com/x.git', branch: 'main' })
+
+    // and the other way round, so it is not the global spelling that happens to lose
+    const upper = await globalConfig({
+      rimworld: { ...fixtureGame(), library: { 'Some.Mod': { workshop: 7 } } },
+    })
+    const lowered = await loadConfig(upper, {
+      game: 'rimworld',
+      library: { 'some.mod': { git: 'https://example.com/y.git', branch: 'main' } },
+    })
+    expect(Object.keys(lowered.config.games['rimworld']!.library!)).toEqual(['some.mod'])
+  })
+
+  test('a repo pin of a different id leaves every global spelling alone', async () => {
+    const path = await globalConfig({
+      rimworld: { ...fixtureGame(), library: { 'some.mod': { workshop: 7 }, 'Some.Other': { workshop: 9 } } },
+    })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      library: { 'Third.Mod': { git: 'https://example.com/x.git', branch: 'main' } },
+    })
+    // the fold must only drop a key the repo actually replaces
+    expect(Object.keys(config.games['rimworld']!.library!).sort()).toEqual(['Some.Other', 'Third.Mod', 'some.mod'])
+  })
+
+  test('library in a repo config splices with no profiles or settings beside it', async () => {
+    const path = await globalConfig({ rimworld: fixtureGame() })
+    const { config } = await loadConfig(path, {
+      game: 'rimworld',
+      library: { 'Some.Mod': { git: 'https://example.com/x.git' } },
+    })
+    expect(config.games['rimworld']!.library!['Some.Mod']).toEqual({ git: 'https://example.com/x.git' })
+  })
+
+  test('a bad library in a repo config is blamed on the repo file', async () => {
+    const path = await globalConfig({ rimworld: fixtureGame() })
+    const project = { game: 'rimworld', library: { 'Some.Mod': { branch: 'main' } } }
+    await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
+    await loadConfig(path, project).catch((error: GamecrateError) => {
+      expect(error.detail).toContain('from the .gamecrate project config')
     })
   })
 

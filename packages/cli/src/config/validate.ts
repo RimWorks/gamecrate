@@ -148,6 +148,39 @@ const profile = obj({
   }
 })
 
+const libraryEntry = obj({
+  workshop: num.optional(),
+  path: str.optional(),
+  git: str.optional(),
+  branch: str.optional(),
+  tag: str.optional(),
+  commit: str.optional(),
+  subdir: str.optional(),
+}).check((ctx) => {
+  const v = ctx.value
+  const push = (message: string, path?: string[]): void => {
+    ctx.issues.push({ code: 'custom', message, input: v, ...(path === undefined ? {} : { path }) })
+  }
+
+  const sources = (['workshop', 'path', 'git'] as const).filter((k) => v[k] !== undefined)
+  if (sources.length === 0) push('library entry needs a "workshop" id, a "path", or a "git" url')
+  if (sources.length > 1) push(`library entry takes only one of ${sources.join(', ')}`)
+
+  const refs = (['branch', 'tag', 'commit'] as const).filter((k) => v[k] !== undefined)
+  if (refs.length > 1) push(`library entry takes only one of branch, tag or commit, got ${refs.join(', ')}`)
+
+  if (v['git'] === undefined) {
+    for (const key of [...refs, ...(v['subdir'] === undefined ? [] : ['subdir'])]) {
+      push(`"${key}" needs a "git" url`, [key])
+    }
+  }
+
+  const subdir = v['subdir']
+  if (typeof subdir === 'string' && (subdir.startsWith('/') || subdir.split('/').includes('..'))) {
+    push('"subdir" must be a relative path inside the repo, with no ".." segment', ['subdir'])
+  }
+})
+
 const game = obj({
   gameFiles: obj({ source: oneOf(['mount', 'image']), host: str.optional(), container: str }).check(
     requiredWhen('host', (v) => v['source'] === 'mount'),
@@ -186,15 +219,7 @@ const game = obj({
   library: z
     .record(
       z.string(),
-      obj({ workshop: num.optional(), path: str.optional() }).check((ctx) => {
-        if (ctx.value['workshop'] === undefined && ctx.value['path'] === undefined) {
-          ctx.issues.push({
-            code: 'custom',
-            message: 'library entry needs a "workshop" id or a "path"',
-            input: ctx.value,
-          })
-        }
-      }),
+      libraryEntry,
       { error: 'expected an object' },
     )
     .optional(),

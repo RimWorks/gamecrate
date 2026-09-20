@@ -5,19 +5,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { fixturePlugin } from './fixture-plugin'
+import { cloneDir } from '../src/mods/source'
 import { Exit, GamecrateError } from '../src/types'
 import type {
   GameConfig,
   LaunchPlan,
   ModIndex,
   ModRecord,
+  Problem,
   ProfileConfig,
   RootConfig,
 } from '../src/types'
 
 let index: ModIndex = emptyIndex()
 
-const { resolvePlan } = await import('../src/launch/resolve')
+const { resolvePlan, workshopRootProblem } = await import('../src/launch/resolve')
 const { globToRegExp } = await import('../src/config/load')
 const { planWarnings } = await import('../src/cli/output')
 const { stageMods, ensureProfileTree, detectForeignOwnership } = await import('../src/launch/stage')
@@ -1018,4 +1020,187 @@ describe('generated config files', () => {
     await ensureProfileTree(plan)
     return plan
   }
+})
+
+describe('git library pins', () => {
+  async function subdirWith(clone: string, subdir: string, id: string): Promise<string> {
+    const dir = join(clone, subdir)
+    await mkdir(join(dir, 'About'), { recursive: true })
+    await writeFile(join(dir, 'About', 'About.txt'), `packageId ${id}\nname ${id}\n`)
+    return dir
+  }
+
+  async function planFor(
+    library: GameConfig['library'],
+    sources: Map<string, string>,
+    mods: string[],
+  ): Promise<{ plan: LaunchPlan; problems: Problem[] }> {
+    const game = atlas({ dsd: { mods } })
+    game.dlc = []
+    game.base = []
+    game.library = library
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('rw-core'), kind: 'core' }])
+    return await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      sources,
+    })
+  }
+
+  test('a git pin with a subdir resolves to that directory', async () => {
+    const ref = { kind: 'tag' as const, value: 'v1.2.0' }
+    const clone = cloneDir(join(tmp, 'data'), 'https://example.com/acme/pack.git', ref)
+    const dir = await subdirWith(clone, 'Source/Mod', 'Acme.Pack')
+    const { plan, problems } = await planFor(
+      { 'acme.pack': { git: 'https://example.com/acme/pack', tag: 'v1.2.0', subdir: 'Source/Mod' } },
+      new Map([['acme.pack', clone]]),
+      ['Acme.Pack'],
+    )
+    expect(problems).toEqual([])
+    expect(plan.mods.map((mod) => mod.hostDir)).toContain(dir)
+  })
+
+  test('subdir picks between two subdirs declaring one packageId', async () => {
+    const ref = { kind: 'branch' as const, value: 'main' }
+    const clone = cloneDir(join(tmp, 'data'), 'https://example.com/acme/twins', ref)
+    await subdirWith(clone, 'Old', 'Acme.Twin')
+    const wanted = await subdirWith(clone, 'New', 'Acme.Twin')
+    const { plan, problems } = await planFor(
+      { 'acme.twin': { git: 'https://example.com/acme/twins', branch: 'main', subdir: 'New' } },
+      new Map([['acme.twin', clone]]),
+      ['Acme.Twin'],
+    )
+    expect(problems).toEqual([])
+    expect(plan.mods.map((mod) => mod.hostDir)).toContain(wanted)
+  })
+
+  test('a git pin missing from the sources map is a clean miss', async () => {
+    const { problems } = await planFor(
+      { 'acme.absent': { git: 'https://example.com/acme/absent', branch: 'main' } },
+      new Map(),
+      ['Acme.Absent'],
+    )
+    expect(problems.map((problem) => problem.message)).toEqual(['no mod matches "Acme.Absent"'])
+  })
+})
+
+describe('a null workshopRoot names itself as the cause', () => {
+  async function bareAtlas(profiles: Record<string, ProfileConfig>): Promise<GameConfig> {
+    const game = atlas(profiles)
+    game.dlc = []
+    game.base = []
+    return game
+  }
+
+  test('a required workshop ref blames workshopRoot, not the missing mod', async () => {
+    const game = await bareAtlas({ dsd: { mods: ['workshop:2009463077'] } })
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('workshopRoot')
+    expect(problems[0]!.message).toContain('workshop:2009463077')
+    expect(problems[0]!.message).not.toContain('no mod matches')
+  })
+
+  test('an optional workshop mod stays a warning, never a problem', async () => {
+    const game = await bareAtlas({
+      dsd: { mods: [{ id: 'Acme.Optional', workshop: 2009463077, optional: true }] },
+    })
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.warnings.filter((w) => w.includes('workshop:2009463077'))).toHaveLength(1)
+  })
+
+  test('a declared dlc pinned to workshop stays silent', async () => {
+    const game = await bareAtlas({ dsd: { mods: [] } })
+    game.dlc = ['Atlasco.Atlas.Royalty']
+    game.library = { 'atlasco.atlas.royalty': { workshop: 2009463077 } }
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.warnings.filter((w) => w.includes('2009463077'))).toEqual([])
+  })
+
+  test('a real workshopRoot keeps the plain no-mod-matches message', async () => {
+    const game = await bareAtlas({ dsd: { mods: ['workshop:2009463077'] } })
+    game.workshopRoot = join(tmp, 'workshop')
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems.map((p) => p.message)).toEqual(['no mod matches "workshop:2009463077"'])
+  })
+})
+
+describe('workshopRootProblem reads the config, since doctor resolves modless', () => {
+  test('a bare workshop:<id> string in a profile counts', () => {
+    const game = atlas({ dsd: { mods: ['workshop:123'] } })
+    const problem = workshopRootProblem('atlas', game)
+    expect(problem?.where).toBe('/games/atlas/workshopRoot')
+    expect(problem?.message).toContain('1 workshop reference(s)')
+    expect(problem?.message).toContain('123')
+  })
+
+  test('an object entry carrying workshop counts', () => {
+    const game = atlas({ dsd: { mods: [{ id: 'Acme.Pinned', workshop: 456 }] } })
+    expect(workshopRootProblem('atlas', game)?.message).toContain('456')
+  })
+
+  test('a library pin counts even when no profile names it', () => {
+    const game = atlas({ dsd: { mods: ['Acme.Local'] } })
+    game.library = { 'acme.pinned': { workshop: 999 } }
+    const problem = workshopRootProblem('atlas', game)
+    expect(problem?.message).toContain('1 workshop reference(s)')
+    expect(problem?.message).toContain('999')
+  })
+
+  test('a mod pinned in both library and a profile counts once', () => {
+    const game = atlas({ dsd: { mods: ['workshop:789'] } })
+    game.library = { 'acme.pinned': { workshop: 789 } }
+    const problem = workshopRootProblem('atlas', game)
+    expect(problem?.message).toContain('1 workshop reference(s)')
+  })
+
+  test('more than three ids are truncated but the count stays honest', () => {
+    const game = atlas({ dsd: { mods: ['workshop:1', 'workshop:2', 'workshop:3', 'workshop:4'] } })
+    const problem = workshopRootProblem('atlas', game)
+    expect(problem?.message).toContain('4 workshop reference(s)')
+    expect(problem?.message).toContain('1, 2, 3, ...')
+  })
+
+  test('a null root with no workshop reference anywhere is silent', () => {
+    expect(workshopRootProblem('atlas', atlas({ dsd: { mods: ['Acme.Local'] } }))).toBeNull()
+  })
+
+  test('a real workshopRoot is silent even with pins', () => {
+    const game = atlas({ dsd: { mods: ['workshop:123'] } })
+    game.workshopRoot = '/mnt/workshop'
+    expect(workshopRootProblem('atlas', game)).toBeNull()
+  })
 })

@@ -8,7 +8,7 @@ import type {
   ProjectDefaults,
   PullPolicy,
 } from '../types'
-import { GamecrateError, Exit, NAME_PATTERN } from '../types'
+import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 
 export type PositionalSlot = 'game' | 'profile' | 'rest'
 
@@ -20,6 +20,8 @@ export interface SubcommandSpec {
   positionals: PositionalSlot[]
   /** Flag names beyond the global set, in the order help should show them. */
   flags: readonly string[]
+  /** Slots to use instead of `positionals` when the next word is one of these. */
+  subverbs?: Readonly<Record<string, PositionalSlot[]>>
 }
 
 const RUN_FLAGS = [
@@ -70,10 +72,19 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   },
   {
     name: 'mods',
-    summary: 'resolved mod set with source kind and absolute path',
-    usage: '<game> [profile]',
+    summary: 'resolved mod set, or add, remove and sync library sources',
+    usage: '<game> [profile] | add <game> <source> | rm <game> <id>... | sync [game] [id]...',
     positionals: ['game', 'profile'],
-    flags: ['--mod', '--without', '--only', '--sort'],
+    subverbs: {
+      add: ['game'],
+      rm: ['game', 'rest'],
+      sync: ['game', 'rest'],
+    },
+    flags: [
+      '--mod', '--without', '--only', '--sort',
+      '--path', '--workshop', '--git', '--branch', '--tag', '--commit', '--subdir',
+      '--global', '--project', '--force',
+    ],
   },
   {
     name: 'doctor',
@@ -290,6 +301,16 @@ export function buildProgram(): Command {
     .option('--all', 'clean: wipe the whole profile, saves included (needs --yes)')
     .option('-f, --follow', 'keep printing as the run writes')
     .option('-y, --yes', 'skip destructive-action confirmation')
+    .option('--path <dir>', 'mods add: take the mod from this directory')
+    .option('--workshop <id>', 'mods add: take the mod from this steam workshop item', workshopId)
+    .option('--git <url>', 'mods add: clone the mod from this repository')
+    .option('--branch <name>', 'mods add: track this git branch')
+    .option('--tag <name>', 'mods add: pin this git tag')
+    .option('--commit <sha>', 'mods add: pin this git commit')
+    .option('--subdir <path>', 'mods add: the mod folder inside the repository')
+    .option('--global', 'write to the global config')
+    .option('--project', 'write to the project config')
+    .option('--force', 'overwrite an entry that is already there')
     .option('-h, --help', 'this help')
 
   return program
@@ -403,6 +424,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     yes: values['yes'] === true,
     help: values['help'] === true,
     follow: values['follow'] === true,
+    force: values['force'] === true,
     worktree,
     noWorktree: seen.has('--no-worktree'),
     noStaleCheck: seen.has('--no-stale-check'),
@@ -429,7 +451,13 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
 
   if (opts.defaults?.game !== undefined) out.game = opts.defaults.game
 
-  applyPositionals(out, program.args, opts.games)
+  // --help before completeness, everywhere: you cannot read the help for a verb you already
+  // know how to type.
+  applyPositionals(out, program.args, opts.games, out.help)
+  if (out.subverb !== undefined && !out.help) {
+    if (out.subverb === 'add') out.source = modSource(values)
+    if (out.subverb !== 'sync') out.target = modTarget(seen, out.subverb)
+  }
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
   // the subcommand is only known once the positionals land. a config-level detach is not a
   // typed flag, so it skips the fork in run() instead of failing here.
@@ -462,7 +490,7 @@ function translate(error: unknown, program: Command): unknown {
   return new GamecrateError(error.message.replace(/^error: /, ''), Exit.Usage)
 }
 
-function applyPositionals(out: ParsedArgs, positional: string[], games?: readonly string[]): void {
+function applyPositionals(out: ParsedArgs, positional: string[], games?: readonly string[], help = false): void {
   const first = positional[0]
   if (first === undefined) {
     if (out.game !== undefined) return
@@ -477,8 +505,16 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
 
   if (sub) {
     out.subcommand = sub.name
-    slots = [...sub.positionals]
     rest = positional.slice(1)
+    const head = rest[0]
+    const verbSlots = head === undefined || sub.subverbs === undefined ? undefined : own(sub.subverbs, head)
+    if (verbSlots === undefined) {
+      slots = [...sub.positionals]
+    } else {
+      out.subverb = head as NonNullable<ParsedArgs['subverb']>
+      rest.shift()
+      slots = [...verbSlots]
+    }
   } else {
     const known = !NAME_PATTERN.test(first) ? false : games === undefined || games.includes(first)
     if (!known) {
@@ -502,6 +538,12 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
     if (!NAME_PATTERN.test(value)) throw usage(`${value} is not a valid ${slot} name`)
     if (slot === 'game') out.game = value
     else out.profile = value
+  }
+
+  // sync is the only subverb whose game and ids are optional.
+  if (!help && (out.subverb === 'add' || out.subverb === 'rm')) {
+    if (out.game === undefined) throw usage(`mods ${out.subverb} needs a game`)
+    if (out.subverb === 'rm' && out.rest.length === 0) throw usage('mods rm needs at least one mod id')
   }
 
   if (rest.length > 0) {
@@ -632,6 +674,62 @@ export function parseResolution(value: string): { width: number; height: number 
     throw usage(`--resolution takes positive dimensions like 1920x1080, got ${value}`)
   }
   return { width, height }
+}
+
+function workshopId(value: string): number {
+  const n = Number(value)
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw usage(`--workshop takes a positive workshop item id, got ${value}`)
+  }
+  return n
+}
+
+const REF_FLAGS = ['branch', 'tag', 'commit'] as const
+
+/** `mods add` carries exactly one source, and the git-only flags only ride along with --git. */
+function modSource(values: Values): NonNullable<ParsedArgs['source']> {
+  const path = values['path'] as string | undefined
+  const workshop = values['workshop'] as number | undefined
+  const url = values['git'] as string | undefined
+  const subdir = values['subdir'] as string | undefined
+  const refs = REF_FLAGS.filter((name) => values[name] !== undefined)
+
+  const kinds = [
+    ['--path', path],
+    ['--workshop', workshop],
+    ['--git', url],
+  ].filter(([, value]) => value !== undefined).map(([flag]) => flag as string)
+  if (kinds.length === 0) throw usage('mods add needs one of --path, --workshop or --git')
+  if (kinds.length > 1) throw usage(`${kinds[0]} and ${kinds[1]} contradict: a source has one kind`)
+
+  if (url === undefined) {
+    const stray = refs[0] === undefined ? (subdir === undefined ? undefined : '--subdir') : `--${refs[0]}`
+    if (stray !== undefined) throw usage(`${stray} only applies to a --git source`)
+  }
+  if (refs.length > 1) throw usage(`--${refs[0]} and --${refs[1]} contradict: a git source has one ref`)
+  if (subdir !== undefined) checkSubdir(subdir)
+
+  if (path !== undefined) return { kind: 'path', value: path }
+  if (workshop !== undefined) return { kind: 'workshop', value: workshop }
+
+  const source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'git' }> = { kind: 'git', url: url! }
+  const ref = refs[0]
+  if (ref !== undefined) source.ref = { kind: ref, value: values[ref] as string }
+  if (subdir !== undefined) source.subdir = subdir
+  return source
+}
+
+function checkSubdir(subdir: string): void {
+  if (subdir.startsWith('/')) throw usage(`--subdir is a path inside the repository, got ${subdir}`)
+  if (subdir.split('/').includes('..')) throw usage(`--subdir cannot climb out of the repository, got ${subdir}`)
+}
+
+function modTarget(seen: Set<string>, verb: string): 'global' | 'project' {
+  const global = seen.has('--global')
+  const project = seen.has('--project')
+  if (global && project) throw usage('--global and --project contradict: a write lands in one config')
+  if (!global && !project) throw usage(`mods ${verb} needs --global or --project`)
+  return global ? 'global' : 'project'
 }
 
 function usage(message: string, suggestion?: string): GamecrateError {
