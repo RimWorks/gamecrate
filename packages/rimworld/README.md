@@ -1,8 +1,15 @@
 # @gamecrate/rimworld
 
-The RimWorld plugin for [`@gamecrate/cli`](../cli). It teaches gamecrate three RimWorld file
-formats plus a handful of engine facts. gamecrate then runs the game with the mods a profile
-lists.
+gamecrate launches a modded game inside a Docker container. You describe a profile once in one
+config file, then run it by name. Each profile gets its own save directory, its own logs, and
+only the mods it lists.
+
+The tool knows nothing about any one game. A plugin supplies the file formats and the engine
+facts, so the core stays the same for every title.
+
+This package is the RimWorld plugin for [`@gamecrate/cli`](../cli). It teaches gamecrate three
+RimWorld file formats plus a handful of engine facts. gamecrate then runs the game with the
+mods a profile lists.
 
 The package default-exports one `GamePlugin` object. It claims the game name `rimworld`, which
 is the word you type on the command line.

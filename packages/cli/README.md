@@ -1,10 +1,14 @@
 # @gamecrate/cli
 
-The `gamecrate` command. It resolves a profile to a mod set, stages that set, and launches the
-game in a Docker container.
+gamecrate launches a modded game inside a Docker container. You describe a profile once in one
+config file, then run it by name. Each profile gets its own save directory, its own logs, and
+only the mods it lists.
 
-The core knows nothing about any one game. A plugin supplies the file formats and the engine
-facts. Without at least one plugin, `gamecrate` has no games to run.
+The tool knows nothing about any one game. A plugin supplies the file formats and the engine
+facts, so the core stays the same for every title.
+
+This package is the `gamecrate` command itself. It resolves a profile to a mod set, stages that
+set, and launches the game. Without at least one plugin, it has no games to run.
 
 ## Install
 
