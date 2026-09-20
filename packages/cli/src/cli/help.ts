@@ -35,7 +35,7 @@ export function renderHelp(topic?: string, config?: RootConfig): string {
 
 function topLevel(config?: RootConfig): string {
   const lines = [
-    `${NAME} — run modded games in containers`,
+    `${NAME}: run modded games in containers`,
     '',
     'usage:',
     `  ${NAME} <game> [profile] [flags] [-- game args]`,

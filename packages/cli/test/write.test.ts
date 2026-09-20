@@ -86,6 +86,34 @@ describe('writeConfig yaml', () => {
     })
   })
 
+  test('a seeded empty map does not collapse the branch it grows', async () => {
+    // `config edit` seeds `games: {}`; without the un-flow, the first mods add writes
+    // `games: { rimworld: { library: { acme.mod: { path: /a/b } } } }` and every later write
+    // compounds it.
+    const file = await seed('gamecrate.yml', 'games: {}\n')
+
+    await writeConfig(file, [{ path: ['games', 'rimworld', 'library', 'acme.mod'], value: { path: '/a/b' } }])
+    let after = await readFile(file, 'utf8')
+    expect(after).not.toContain('{')
+
+    await writeConfig(file, [{ path: ['games', 'rimworld', 'library', 'other.mod'], value: { path: '/c/d' } }])
+    after = await readFile(file, 'utf8')
+    expect(after).not.toContain('{')
+    expect(parseYaml(after)).toEqual({
+      games: { rimworld: { library: { 'acme.mod': { path: '/a/b' }, 'other.mod': { path: '/c/d' } } } },
+    })
+  })
+
+  test('an inline map the edit never reaches keeps its style', async () => {
+    const file = await seed('gamecrate.yml', 'Baz: { a: "x",  b: \'y\' }\ngames: {}\n')
+
+    await writeConfig(file, [{ path: ['games', 'rimworld', 'core'], value: 'Ludeon.RimWorld' }])
+    const after = await readFile(file, 'utf8')
+
+    expect(after).toContain('Baz: { a: "x", b: \'y\' }')
+    expect(after).toMatch(/^games:$/m)
+  })
+
   test('undefined deletes the key', async () => {
     const file = await seed('gamecrate.yaml', 'game: rimworld\nprofile: dev\n')
 

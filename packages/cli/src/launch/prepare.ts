@@ -163,7 +163,7 @@ async function buildTarget(dir: string): Promise<string | null> {
 
 /**
  * Builds local mods before launch. `always` builds every local mod; `auto` builds only the
- * ones resolution flagged stale; `never` skips. A build failure stops the launch — shipping
+ * ones resolution flagged stale; `never` skips. A build failure stops the launch, shipping
  * the previous DLL after a failed compile is how you debug code that is not running.
  */
 export async function buildLocalMods(plan: LaunchPlan, policy: BuildPolicy): Promise<void> {

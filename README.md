@@ -38,8 +38,16 @@ prefer JSON, then launch one:
 gamecrate rimworld dev
 ```
 
-The [`@gamecrate/cli` README](packages/cli) has a config you can copy and the full subcommand
-list. It also spells out how the loader merges your file over a plugin's defaults.
+The [`@gamecrate/cli` README](packages/cli) has a config you can copy and links to the rest:
+
+| Topic | Where |
+| --- | --- |
+| Config file, plugins, profiles, per-repository defaults | [Configuration](packages/cli/docs/configuration.md) |
+| Library pins, git sources, which copy of a mod wins | [Mod sources](packages/cli/docs/mod-sources.md) |
+| `mods add`, `mods rm`, `mods sync` | [The `mods` commands](packages/cli/docs/mods-commands.md) |
+| Launching, detached runs, windows, cleanup | [Running](packages/cli/docs/running.md) |
+| Subcommands, flags, environment variables, exit codes | [Reference](packages/cli/docs/reference.md) |
+| Teaching gamecrate a new game | [Writing a plugin](packages/cli/docs/plugins.md) |
 
 ## Development
 
@@ -54,5 +62,5 @@ Prose goes through [Vale](https://vale.sh). Fetch the Google package once, then 
 
 ```sh
 vale sync
-vale README.md packages/cli/README.md packages/rimworld/README.md
+vale README.md packages/cli/README.md packages/cli/docs packages/rimworld/README.md
 ```

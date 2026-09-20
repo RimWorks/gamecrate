@@ -1,6 +1,7 @@
 import { chmod, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname, extname, join } from 'node:path'
 import { applyEdits, modify } from 'jsonc-parser'
+import type { Document } from 'yaml'
 import { isMap, parseDocument } from 'yaml'
 
 import { GamecrateError, Exit } from '../types'
@@ -68,6 +69,18 @@ function editJson(text: string, edits: ConfigEdit[]): string {
 }
 
 /**
+ * `{}` parses as a flow map and setIn keeps that style, so a child added under it collapses the
+ * whole branch onto one line. Only maps this edit passed through can have grown, so only those
+ * lose the style; a hand-written inline map elsewhere in the file is left alone.
+ */
+function unflowGrownMaps(doc: Document, path: (string | number)[]): void {
+  for (let i = 0; i <= path.length; i++) {
+    const node = i === 0 ? doc.contents : doc.getIn(path.slice(0, i))
+    if (isMap(node) && node.flow && node.items.length > 0) node.flow = false
+  }
+}
+
+/**
  * Document.toString re-emits the whole tree from its own options, so this keeps comments,
  * values and quote style while losing the original indentation. That trade is in the spec.
  */
@@ -79,6 +92,7 @@ function editYaml(text: string, edits: ConfigEdit[]): string {
       if (doc.hasIn(edit.path)) doc.deleteIn(edit.path)
     } else {
       doc.setIn(edit.path, edit.value)
+      unflowGrownMaps(doc, edit.path)
     }
   }
   // `{}` would make every later write flow-style, so an emptied root empties the file, which
