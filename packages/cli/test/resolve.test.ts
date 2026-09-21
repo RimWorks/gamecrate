@@ -19,7 +19,7 @@ import type {
 
 let index: ModIndex = emptyIndex()
 
-const { resolvePlan, workshopRootProblem } = await import('../src/launch/resolve')
+const { resolvePlan } = await import('../src/launch/resolve')
 const { globToRegExp } = await import('../src/config/load')
 const { planWarnings } = await import('../src/cli/output')
 const { stageMods, ensureProfileTree, detectForeignOwnership } = await import('../src/launch/stage')
@@ -464,7 +464,7 @@ describe('unfetched workshop items are labelled, not called missing', () => {
     expect(problems[0]!.message).not.toContain('no mod matches')
   })
 
-  test('an unfetched workshop ref beats the missing-workshopRoot message', async () => {
+  test('an unfetched workshop ref says a real launch would fetch it', async () => {
     const game = atlas({ dsd: { mods: ['workshop:2009463077'] } })
     game.dlc = []
     game.base = []
@@ -1213,29 +1213,13 @@ describe('git library pins', () => {
   })
 })
 
-describe('a null workshopRoot names itself as the cause', () => {
+describe('a null workshopRoot is not a cause of failure', () => {
   async function bareAtlas(profiles: Record<string, ProfileConfig>): Promise<GameConfig> {
     const game = atlas(profiles)
     game.dlc = []
     game.base = []
     return game
   }
-
-  test('a required workshop ref blames workshopRoot, not the missing mod', async () => {
-    const game = await bareAtlas({ dsd: { mods: ['workshop:2009463077'] } })
-    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
-    const { problems } = await resolvePlan({
-      game: 'atlas',
-      profile: 'dsd',
-      plugins: PLUGINS,
-      root: rootFor('atlas', game),
-      index,
-    })
-    expect(problems).toHaveLength(1)
-    expect(problems[0]!.message).toContain('workshopRoot')
-    expect(problems[0]!.message).toContain('workshop:2009463077')
-    expect(problems[0]!.message).not.toContain('no mod matches')
-  })
 
   test('an optional workshop mod stays a warning, never a problem', async () => {
     const game = await bareAtlas({
@@ -1269,6 +1253,20 @@ describe('a null workshopRoot names itself as the cause', () => {
     expect(plan.warnings.filter((w) => w.includes('2009463077'))).toEqual([])
   })
 
+  test('a null workshopRoot is not blamed when a real launch could not resolve the item', async () => {
+    const game = await bareAtlas({ dsd: { mods: ['workshop:2009463077'] } })
+    game.workshopRoot = null
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems.map((p) => p.message)).toEqual(['no mod matches "workshop:2009463077"'])
+  })
+
   test('a real workshopRoot keeps the plain no-mod-matches message', async () => {
     const game = await bareAtlas({ dsd: { mods: ['workshop:2009463077'] } })
     game.workshopRoot = join(tmp, 'workshop')
@@ -1284,49 +1282,3 @@ describe('a null workshopRoot names itself as the cause', () => {
   })
 })
 
-describe('workshopRootProblem reads the config, since doctor resolves modless', () => {
-  test('a bare workshop:<id> string in a profile counts', () => {
-    const game = atlas({ dsd: { mods: ['workshop:123'] } })
-    const problem = workshopRootProblem('atlas', game)
-    expect(problem?.where).toBe('/games/atlas/workshopRoot')
-    expect(problem?.message).toContain('1 workshop reference(s)')
-    expect(problem?.message).toContain('123')
-  })
-
-  test('an object entry carrying workshop counts', () => {
-    const game = atlas({ dsd: { mods: [{ id: 'Acme.Pinned', workshop: 456 }] } })
-    expect(workshopRootProblem('atlas', game)?.message).toContain('456')
-  })
-
-  test('a library pin counts even when no profile names it', () => {
-    const game = atlas({ dsd: { mods: ['Acme.Local'] } })
-    game.library = { 'acme.pinned': { workshop: 999 } }
-    const problem = workshopRootProblem('atlas', game)
-    expect(problem?.message).toContain('1 workshop reference(s)')
-    expect(problem?.message).toContain('999')
-  })
-
-  test('a mod pinned in both library and a profile counts once', () => {
-    const game = atlas({ dsd: { mods: ['workshop:789'] } })
-    game.library = { 'acme.pinned': { workshop: 789 } }
-    const problem = workshopRootProblem('atlas', game)
-    expect(problem?.message).toContain('1 workshop reference(s)')
-  })
-
-  test('more than three ids are truncated but the count stays honest', () => {
-    const game = atlas({ dsd: { mods: ['workshop:1', 'workshop:2', 'workshop:3', 'workshop:4'] } })
-    const problem = workshopRootProblem('atlas', game)
-    expect(problem?.message).toContain('4 workshop reference(s)')
-    expect(problem?.message).toContain('1, 2, 3, ...')
-  })
-
-  test('a null root with no workshop reference anywhere is silent', () => {
-    expect(workshopRootProblem('atlas', atlas({ dsd: { mods: ['Acme.Local'] } }))).toBeNull()
-  })
-
-  test('a real workshopRoot is silent even with pins', () => {
-    const game = atlas({ dsd: { mods: ['workshop:123'] } })
-    game.workshopRoot = '/mnt/workshop'
-    expect(workshopRootProblem('atlas', game)).toBeNull()
-  })
-})

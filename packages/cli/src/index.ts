@@ -42,7 +42,7 @@ import {
 } from './launch/prepare'
 import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
-import { notFetched, resolvePlan, workshopRootProblem } from './launch/resolve'
+import { notFetched, resolvePlan } from './launch/resolve'
 import { listRuns } from './run/registry'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
 import { buildIndex } from './mods/modindex'
@@ -566,8 +566,8 @@ async function mods(
 }
 
 /**
- * doctor resolves the modless profile, so no workshop ref reaches the plan. Read the config the
- * way workshopRootProblem does, so a config with no workshop mods never gets a steamcmd check.
+ * doctor resolves the modless profile, so no workshop ref reaches the plan. Read the config
+ * instead, so a config with no workshop mods never gets a steamcmd check.
  */
 function usesWorkshop(game: GameConfig): boolean {
   for (const entry of Object.values(game.library ?? {})) {
@@ -597,8 +597,6 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
     const gameConfig = config.games[game]!
     const sources = cachedSources(gameConfig, 'modless', {}, config.dataRoot)
     const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
-    const workshop = workshopRootProblem(game, gameConfig)
-    if (workshop !== null) status(workshop.message)
     const steamcmd: Problem[] = []
     if (usesWorkshop(gameConfig)) {
       try {

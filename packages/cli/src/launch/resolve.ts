@@ -63,37 +63,6 @@ export function notFetched(id: string): string {
   return `workshop item ${id} is not fetched, and fetching is off for this command; a real launch would fetch it`
 }
 
-function noWorkshopRoot(gameName: string, what: string): string {
-  return `${gameName} has no workshopRoot, so ${what} cannot resolve`
-}
-
-/**
- * doctor resolves the modless profile, so no mod ref is ever resolved there. Read the config
- * instead: library pins, plus every profile's mods in both the object and bare-string forms.
- */
-export function workshopRootProblem(gameName: string, game: GameConfig): Problem | null {
-  if (game.workshopRoot !== null) return null
-  const ids = new Set<string>()
-  for (const entry of Object.values(game.library ?? {})) {
-    if (entry.workshop !== undefined) ids.add(String(entry.workshop))
-  }
-  for (const profile of Object.values(game.profiles)) {
-    for (const entry of profile.mods ?? []) {
-      if (typeof entry === 'string') {
-        if (entry.startsWith('workshop:')) ids.add(entry.slice(9))
-      } else if ('workshop' in entry && entry.workshop !== undefined) ids.add(String(entry.workshop))
-    }
-  }
-  if (ids.size === 0) return null
-  const shown = [...ids].slice(0, 3).join(', ')
-  const tail = `${ids.size} workshop reference(s)`
-  return {
-    where: `/games/${gameName}/workshopRoot`,
-    message: `${noWorkshopRoot(gameName, tail)}: ${shown}${ids.size > 3 ? ', ...' : ''}`,
-    suggestion: `set games.${gameName}.workshopRoot, or pin those mods with path: or git:`,
-  }
-}
-
 /** A ref the index understands, with library pins applied. */
 function refFor(
   entry: string | { id: string; workshop?: number; path?: string },
@@ -348,11 +317,6 @@ export async function resolvePlan(
         if (optional) warnings.push(`optional mod ${ref} is not installed; skipped`)
         else if (ref.startsWith('workshop:') && unfetched.has(ref.slice(9))) {
           problems.push({ where: slot.where, message: notFetched(ref.slice(9)) })
-        } else if (ref.startsWith('workshop:') && game.workshopRoot === null) {
-          problems.push({
-            where: slot.where,
-            message: noWorkshopRoot(gameName, ref),
-          })
         } else problems.push({ where: slot.where, message: `no mod matches "${ref}"` })
         continue
       }

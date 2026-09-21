@@ -125,15 +125,18 @@ about the game, so no plugin guesses it. The key still has to appear in the merg
 `null` is the value a plugin ships.
 
 A null root costs you nothing but the Steam client's own copies, because gamecrate downloads
-its own. `gamecrate doctor` notes it when your config names workshop ids, and lists up to three
-of them. It is a status line, not a problem, so doctor still passes:
+its own. It is not a cause of failure, so nothing reports it. When a workshop item does not
+resolve, the message names the item, not this key:
 
 ```
-rimworld has no workshopRoot, so 2 workshop reference(s) cannot resolve: 2009463077, 818773962
+no mod matches "workshop:2009463077"
 ```
 
-For a game with workshop ids, `doctor` also prints which `steamcmd` it would run and both
-download roots, marking a root it has not created yet.
+Read the download warning printed with it for the reason. A failed download and a mod whose manifest
+does not parse both land here.
+
+For a game with workshop ids, `doctor` prints which `steamcmd` it would run and both download
+roots, marking a root it has not created yet.
 
 The workshop scan is cached under `$XDG_CACHE_HOME/gamecrate`, or `~/.cache/gamecrate`. The key
 covers the `appworkshop_<appId>.acf` file under every root: the contents of the download roots'
