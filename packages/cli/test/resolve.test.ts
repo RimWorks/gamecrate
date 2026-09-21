@@ -41,7 +41,7 @@ interface ModSpec {
   dir: string
   kind?: ModRecord['kind']
   workshopId?: number
-  dependencies?: string[]
+  dependencies?: (string | { packageId: string; steamWorkshopUrl: string })[]
   loadAfter?: string[]
   loadBefore?: string[]
   forceLoadAfter?: string[]
@@ -58,7 +58,7 @@ function makeIndex(specs: ModSpec[]): ModIndex {
       kind: spec.kind ?? 'local',
       manifest: {
         packageId: spec.id,
-        modDependencies: (spec.dependencies ?? []).map((packageId) => ({ packageId })),
+        modDependencies: (spec.dependencies ?? []).map((dep) => (typeof dep === 'string' ? { packageId: dep } : dep)),
         loadAfter: spec.loadAfter ?? [],
         loadBefore: spec.loadBefore ?? [],
         forceLoadAfter: spec.forceLoadAfter ?? [],
@@ -396,6 +396,132 @@ describe('autoDependencies', () => {
       index,
     })
     expect(plan.mods.map((m) => m.packageId)).not.toContain('Kitted.Core')
+  })
+})
+
+describe('unfetched workshop items are labelled, not called missing', () => {
+  const URL_FOR = (id: string): string => `https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`
+
+  async function sundial(dependencies: ModSpec['dependencies']): Promise<GameConfig> {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'], autoDependencies: true } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies },
+    ])
+    return game
+  }
+
+  test('a dependency whose workshop item was not fetched reads as unfetched', async () => {
+    const game = await sundial([{ packageId: 'Nobody.Missing', steamWorkshopUrl: URL_FOR('818773962') }])
+    const { problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      unfetched: ['818773962'],
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('818773962')
+    expect(problems[0]!.message).toContain('fetching is off')
+    expect(problems[0]!.message).not.toContain('not installed')
+  })
+
+  test('a dependency with no workshop url keeps the not-installed problem', async () => {
+    const game = await sundial(['Nobody.Missing'])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      unfetched: ['818773962'],
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('Nobody.Missing')
+    expect(problems[0]!.message).toContain('not installed')
+    expect(plan.warnings.filter((w) => w.includes('provisional'))).toHaveLength(1)
+  })
+
+  test('a workshop ref of an unfetched item is not a no-mod-matches', async () => {
+    const game = atlas({ dsd: { mods: ['workshop:2009463077'] } })
+    game.dlc = []
+    game.base = []
+    game.workshopRoot = join(tmp, 'workshop')
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-core'), kind: 'core' }])
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      unfetched: ['2009463077'],
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('a real launch would fetch it')
+    expect(problems[0]!.message).not.toContain('no mod matches')
+  })
+
+  test('an unfetched workshop ref beats the missing-workshopRoot message', async () => {
+    const game = atlas({ dsd: { mods: ['workshop:2009463077'] } })
+    game.dlc = []
+    game.base = []
+    game.workshopRoot = null
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('wsr-null-core'), kind: 'core' }])
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      unfetched: ['2009463077'],
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('a real launch would fetch it')
+    expect(problems[0]!.message).not.toContain('cannot resolve')
+  })
+
+  test('the provisional notice leads the warnings once, however many ids', async () => {
+    const game = await sundial([])
+    const { plan } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      unfetched: ['1', '2', '3'],
+    })
+    expect(plan.warnings.filter((w) => w.includes('provisional'))).toHaveLength(1)
+    expect(plan.warnings[0]).toContain('3 workshop item(s)')
+  })
+
+  test('no unfetched ids means no notice, and dependencies resolve as before', async () => {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'], autoDependencies: true } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Kitted.Core'] },
+      { id: 'Kitted.Core', dir: await modDir('KittedCore'), dependencies: ['Lib.Bridge.Beacon'] },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.warnings.filter((w) => w.includes('provisional'))).toEqual([])
+    expect(plan.mods.map((m) => m.packageId)).toEqual([
+      'Lib.Bridge.Beacon',
+      'Atlasco.Beacon',
+      'Example.ModManager',
+      'Kitted.Core',
+      'Example.Sundial',
+    ])
   })
 })
 

@@ -240,27 +240,43 @@ export interface PreparedSources {
   release: () => Promise<void>
 }
 
+/**
+ * Every entry a launch of this profile reaches, in collectSlots order, minus what `exclude` and
+ * `--without` drop by id. A `match:` glob has no id to drop by, so it survives to the index.
+ */
+export function reachedEntries(
+  game: GameConfig,
+  profile: ProfileConfig,
+  args: Partial<ParsedArgs>,
+): ModEntry[] {
+  // every slot collectSlots emits, not just base: a pin named from preCore, core or dlc is
+  // still a pin, and one that never clones fails the launch it was added for.
+  const out: ModEntry[] = [...(game.preCore ?? []), game.core, ...game.dlc]
+  if (profile.includeBase !== false) out.push(...(game.base ?? []))
+  const only = args.only ?? []
+  out.push(...(only.length > 0 ? only : (profile.mods ?? [])))
+  out.push(...(args.mods ?? []))
+  const dropped = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
+  return out.filter((entry) => {
+    if (typeof entry !== 'string' && 'match' in entry) return true
+    const id = typeof entry === 'string' ? entry : entry.id
+    return !dropped.some((pattern) => pattern.test(id))
+  })
+}
+
 // only ids a library pin could name: a `workshop:`/`path:` ref and an inline path or workshop id
 // already say where the mod lives, and a `match:` glob needs the index the clone has to precede.
 function pinnableIds(game: GameConfig, profile: ProfileConfig, args: Partial<ParsedArgs>): string[] {
   const out: string[] = []
-  const push = (entry: ModEntry): void => {
+  for (const entry of reachedEntries(game, profile, args)) {
     if (typeof entry === 'string') {
       if (!entry.includes(':')) out.push(entry)
-      return
+      continue
     }
-    if ('match' in entry) return
+    if ('match' in entry) continue
     if (entry.path === undefined && entry.workshop === undefined && !entry.id.includes(':')) out.push(entry.id)
   }
-  // every slot collectSlots emits, not just base: a pin named from preCore, core or dlc is
-  // still a pin, and one that never clones fails the launch it was added for.
-  for (const id of [...(game.preCore ?? []), game.core, ...game.dlc]) push(id)
-  if (profile.includeBase !== false) for (const id of game.base ?? []) push(id)
-  const only = args.only ?? []
-  for (const entry of only.length > 0 ? only : (profile.mods ?? [])) push(entry)
-  for (const id of args.mods ?? []) push(id)
-  const dropped = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
-  return out.filter((id) => !dropped.some((pattern) => pattern.test(id)))
+  return out
 }
 
 /**

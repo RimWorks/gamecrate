@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 
 import { parseArgs } from '../src/cli/args'
@@ -10,6 +11,7 @@ import { modsAdd, modsRm, modsSync } from '../src/cli/mods'
 import type { ModsContext } from '../src/cli/mods'
 import { loadConfig } from '../src/config/load'
 import { cloneDir } from '../src/mods/source'
+import { downloadRoots, steamHome } from '../src/mods/steamcmd'
 import { Exit, GamecrateError } from '../src/types'
 import type { GameConfig, ParsedArgs, RootConfig } from '../src/types'
 import { fixtureGame, pluginMap } from './fixture-plugin'
@@ -79,10 +81,76 @@ function plainRepo(): { url: string; dir: string } {
   return { url: `file://${dir}`, dir }
 }
 
+const FAKE_STEAMCMD = fileURLToPath(new URL('./fixtures/fake-steamcmd.sh', import.meta.url))
+
+/**
+ * The fake steamcmd, wrapped so the test can count its runs and so every item it writes carries
+ * a manifest the fixture plugin can read: the fake writes a real game's About.xml.
+ */
+function fakeSteamcmd(fail = ''): { path: string; runs: () => number } {
+  const dir = temp('gc-steamcmd-')
+  const log = join(dir, 'runs')
+  const path = join(dir, 'steamcmd')
+  writeFileSync(
+    path,
+    [
+      '#!/bin/sh',
+      `echo run >> ${log}`,
+      `FAKE_FAIL_IDS='${fail}' ${FAKE_STEAMCMD} "$@"`,
+      'code=$?',
+      'appid=""; ids=""',
+      'while [ $# -gt 0 ]; do',
+      '  if [ "$1" = "+workshop_download_item" ]; then appid="$2"; ids="$ids $3"; shift 3; else shift; fi',
+      'done',
+      'root="$HOME/.steam/SteamApps/workshop/content/$appid"',
+      'for id in $ids; do',
+      '  [ -d "$root/$id" ] || continue',
+      '  printf \'packageId a.item%s\\nname a.item%s\\n\' "$id" "$id" > "$root/$id/About/About.txt"',
+      'done',
+      'exit $code',
+      '',
+    ].join('\n'),
+  )
+  chmodSync(path, 0o755)
+  return {
+    path,
+    runs: () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter((l) => l !== '').length : 0),
+  }
+}
+
+/** Steam's answer for every id, so no test reaches the network. */
+function steamSays(details: { id: string; timeUpdated: number; result?: number }[]): typeof fetch {
+  const body = {
+    response: {
+      publishedfiledetails: details.map((one) => ({
+        publishedfileid: one.id,
+        result: one.result ?? 1,
+        time_updated: one.timeUpdated,
+      })),
+    },
+  }
+  return (async () => new Response(JSON.stringify(body))) as unknown as typeof fetch
+}
+
+/** The .acf steamcmd writes beside the host content root, listing what is installed. */
+function writeAcf(ctx: ModsContext, items: Record<string, number>): void {
+  const root = downloadRoots(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)[0] as string
+  const entries = Object.entries(items)
+    .map(([id, at]) => `\t\t"${id}"\n\t\t{\n\t\t\t"timeupdated"\t\t"${at}"\n\t\t\t"manifest"\t\t"102505266"\n\t\t}`)
+    .join('\n')
+  mkdirSync(root, { recursive: true })
+  writeFileSync(
+    join(steamHome(ctx.config.dataRoot), '.steam', 'SteamApps', 'workshop', 'appworkshop_294100.acf'),
+    `"AppWorkshop"\n{\n\t"WorkshopItemsInstalled"\n\t{\n${entries}\n\t}\n}\n`,
+  )
+}
+
 interface CtxOptions {
   globalText?: string
   cwd?: string
   game?: Partial<GameConfig>
+  steamcmd?: string
+  fetch?: typeof fetch
 }
 
 function context(options: CtxOptions = {}): ModsContext {
@@ -92,6 +160,7 @@ function context(options: CtxOptions = {}): ModsContext {
   const config: RootConfig = {
     dataRoot: temp('gc-data-'),
     games: { atlas: { ...fixtureGame(), ...options.game } },
+    ...(options.steamcmd === undefined ? {} : { steamcmd: { path: options.steamcmd } }),
   }
   return {
     config,
@@ -99,6 +168,7 @@ function context(options: CtxOptions = {}): ModsContext {
     defaults: {},
     cwd: options.cwd ?? home,
     globalPath,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   }
 }
 
@@ -285,24 +355,28 @@ describe('modsAdd', () => {
     expect(readFileSync(project, 'utf8')).toBe(before)
   })
 
-  test('--workshop with a null workshopRoot refuses before touching the filesystem', async () => {
-    const ctx = context()
+  test('--workshop downloads the item and pins it, with workshopRoot null', async () => {
+    const ctx = context({ steamcmd: fakeSteamcmd().path })
+
+    const code = await modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx)
+
+    expect(code).toBe(Exit.Ok)
+    expect(ctx.config.games['atlas']!.workshopRoot).toBe(null)
+    // the recorded entry is the same one a workshopRoot read used to write
+    expect(library(ctx.globalPath, 'atlas')['a.item12345']).toEqual({ workshop: 12345 })
+    const root = downloadRoots(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)[0] as string
+    expect(existsSync(join(root, '12345'))).toBe(true)
+  })
+
+  test('a download steam refuses fails the add, naming the item and the reason', async () => {
+    const ctx = context({ steamcmd: fakeSteamcmd('12345').path })
 
     const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx))
 
-    expect(error.code).toBe(Exit.Config)
-    expect(error.message).toContain('games.atlas.workshopRoot')
+    expect(error.code).toBe(Exit.Resolution)
+    expect(error.message).toContain('12345')
+    expect(error.message).toContain('Failure')
     expect(existsSync(ctx.globalPath)).toBe(false)
-  })
-
-  test('--workshop reads the item under a set workshopRoot', async () => {
-    const root = temp('gc-workshop-')
-    writeMod(join(root, '12345'), 'a.workshop')
-    const ctx = context({ game: { workshopRoot: root } })
-
-    await modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx)
-
-    expect(library(ctx.globalPath, 'atlas')['a.workshop']).toEqual({ workshop: 12345 })
   })
 
   test('--project with no .gamecrate above cwd refuses rather than creating one', async () => {
@@ -564,7 +638,56 @@ describe('modsSync', () => {
     expect(error.detail).toContain('a.nope')
   })
 
-  test('an id that is not git-pinned is a Resolution error', async () => {
+  test('several workshop pins refresh in one steamcmd run', async () => {
+    const fake = fakeSteamcmd()
+    const ctx = context({
+      steamcmd: fake.path,
+      fetch: steamSays([
+        { id: '11', timeUpdated: 20 },
+        { id: '22', timeUpdated: 20 },
+        { id: '33', timeUpdated: 20 },
+      ]),
+    })
+    ctx.config.games['atlas']!.library = {
+      'a.one': { workshop: 11 },
+      'a.two': { workshop: 22 },
+      'a.three': { workshop: 33 },
+    }
+
+    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+
+    const root = downloadRoots(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)[0] as string
+    for (const id of ['11', '22', '33']) expect(existsSync(join(root, id))).toBe(true)
+    expect(fake.runs()).toBe(1)
+  })
+
+  test('a workshop pin steam says is unchanged never runs steamcmd', async () => {
+    const fake = fakeSteamcmd()
+    const ctx = context({ steamcmd: fake.path, fetch: steamSays([{ id: '11', timeUpdated: 20 }]) })
+    ctx.config.games['atlas']!.library = { 'a.one': { workshop: 11 } }
+    writeAcf(ctx, { '11': 20 })
+    const root = downloadRoots(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)[0] as string
+    mkdirSync(join(root, '11'), { recursive: true })
+
+    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+
+    expect(fake.runs()).toBe(0)
+  })
+
+  test('a workshop pin steam says moved is downloaded again', async () => {
+    const fake = fakeSteamcmd()
+    const ctx = context({ steamcmd: fake.path, fetch: steamSays([{ id: '11', timeUpdated: 99 }]) })
+    ctx.config.games['atlas']!.library = { 'a.one': { workshop: 11 } }
+    writeAcf(ctx, { '11': 20 })
+    const root = downloadRoots(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)[0] as string
+    mkdirSync(join(root, '11'), { recursive: true })
+
+    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+
+    expect(fake.runs()).toBe(1)
+  })
+
+  test('an id that is neither git- nor workshop-pinned is a Resolution error', async () => {
     const ctx = context()
     ctx.config.games['atlas']!.library = { 'a.one': { path: '/one' } }
 

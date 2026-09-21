@@ -16,6 +16,8 @@ import {
   normalizeUrl,
 } from '../mods/source'
 import type { GitRef } from '../mods/source'
+import { downloadItems, downloadRoots } from '../mods/steamcmd'
+import { checkDrift } from '../mods/workshopapi'
 import { requirePlugin } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { Exit, GamecrateError } from '../types'
@@ -31,6 +33,8 @@ export interface ModsContext {
   cwd: string
   /** The resolved global config path, or where to create one. Injectable for the same reason. */
   globalPath: string
+  /** What `checkDrift` asks steam with. Injectable so tests never reach the network. */
+  fetch?: typeof fetch
 }
 
 /** The same fallback loadConfig uses, so an error names the file `config edit` would open. */
@@ -59,15 +63,6 @@ export async function modsAdd(args: ParsedArgs, ctx: ModsContext): Promise<numbe
   if (source === undefined) {
     throw new GamecrateError('mods add needs one of --path, --workshop or --git', Exit.Usage)
   }
-  // ahead of the target, which creates the global file: a refusal must not leave one behind.
-  if (source.kind === 'workshop' && gameConfig.workshopRoot === null) {
-    throw new GamecrateError(
-      `games.${game}.workshopRoot is null, so workshop item ${source.value} cannot resolve`,
-      Exit.Config,
-      `set games.${game}.workshopRoot to the workshop directory for app ${gameConfig.steamAppId}`,
-    )
-  }
-
   const target = await resolveTarget(args, ctx, game)
   const pins = await discover(source, gameConfig, requirePlugin(ctx.plugins, game), ctx)
   if (pins.length === 0) {
@@ -148,22 +143,26 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
   const games = args.game === undefined ? Object.keys(ctx.config.games) : [requireGame(args, ctx.config)]
 
   const wanted: { id: string; git: string; entry: LibraryEntry }[] = []
+  const subscribed: { game: string; pins: { id: string; item: string }[] }[] = []
   for (const name of games) {
+    const pins: { id: string; item: string }[] = []
     for (const [id, entry] of Object.entries(ctx.config.games[name]?.library ?? {})) {
-      if (entry.git === undefined) continue
       if (only.length > 0 && !only.includes(id.toLowerCase())) continue
-      wanted.push({ id, git: entry.git, entry })
+      if (entry.git !== undefined) wanted.push({ id, git: entry.git, entry })
+      else if (entry.workshop !== undefined) pins.push({ id, item: String(entry.workshop) })
     }
+    if (pins.length > 0) subscribed.push({ game: name, pins })
   }
-  const missing = only.filter((id) => !wanted.some((pin) => pin.id.toLowerCase() === id))
+  const named = [...wanted.map((pin) => pin.id), ...subscribed.flatMap((one) => one.pins.map((pin) => pin.id))]
+  const missing = only.filter((id) => !named.some((pinned) => pinned.toLowerCase() === id))
   if (missing.length > 0) {
     throw new GamecrateError(
-      `${missing.length} mod id(s) are not git-pinned in the library`,
+      `${missing.length} mod id(s) are not git- or workshop-pinned in the library`,
       Exit.Resolution,
       missing.map((id) => `  ${id}`).join('\n'),
     )
   }
-  if (wanted.length === 0) {
+  if (wanted.length === 0 && subscribed.length === 0) {
     status('nothing to sync')
     return Exit.Ok
   }
@@ -193,7 +192,36 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
     }
     status(`synced ${pin.id} at ${ref.kind} ${ref.value}`)
   }
+  for (const one of subscribed) await syncWorkshop(ctx, one.game, one.pins)
   return Exit.Ok
+}
+
+/**
+ * One drift check and at most one steamcmd run per game: connect dominates a download, so a run
+ * per pin costs 3.4s each for nothing.
+ */
+async function syncWorkshop(
+  ctx: ModsContext,
+  name: string,
+  pins: { id: string; item: string }[],
+): Promise<void> {
+  const game = ctx.config.games[name] as GameConfig
+  const drift = await checkDrift(
+    pins.map((pin) => pin.item),
+    downloadRoots(ctx.config.dataRoot, game),
+    ctx.fetch,
+  )
+  for (const line of drift.warnings) warn(line)
+  const report =
+    drift.needed.length === 0
+      ? undefined
+      : await downloadItems(ctx.config, game, ctx.config.dataRoot, drift.needed)
+  for (const line of report?.warnings ?? []) warn(line)
+  for (const pin of pins) {
+    const outcome = report?.items.get(pin.item)
+    if (outcome === undefined) status(`${pin.id} is up to date at workshop item ${pin.item}`)
+    else if (outcome.ok) status(`synced ${pin.id} at workshop item ${pin.item}`)
+  }
 }
 
 function gitPin(url: string, entry: LibraryEntry): { url: string; subdir?: string } {
@@ -294,8 +322,19 @@ async function discover(
     return id === undefined ? [] : [{ id, entry: { path: dir } }]
   }
   if (source.kind === 'workshop') {
-    const dir = join(game.workshopRoot as string, String(source.value))
-    const id = await readId(dir, game.manifest.file, plugin)
+    // steamcmd, never game.workshopRoot: the steam client's copy is the user's, and a pin has to
+    // work on a machine that never subscribed to the item.
+    const item = String(source.value)
+    const report = await downloadItems(ctx.config, game, ctx.config.dataRoot, [item])
+    const outcome = report.items.get(item)
+    if (outcome?.ok !== true) {
+      throw new GamecrateError(
+        `could not download workshop item ${item}: ${outcome?.reason ?? 'steamcmd reported nothing for it'}`,
+        Exit.Resolution,
+        `check that ${item} is still published and public at https://steamcommunity.com/sharedfiles/filedetails/?id=${item}`,
+      )
+    }
+    const id = await readId(outcome.dir, game.manifest.file, plugin)
     return id === undefined ? [] : [{ id, entry: { workshop: source.value } }]
   }
 

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { canonicalProfile, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
 import { buildIndex, resolveModRef, applyWorktreeRequests, applySourceOverrides } from '../mods/modindex'
 import { libraryPin, sourcesRoot } from '../mods/source'
+import { workshopUrlId } from '../mods/steamcmd'
 import { decideStale, scanBuildTimes, staleReport } from '../mods/staleness'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import { requirePlugin } from '../plugin'
@@ -35,6 +36,8 @@ export interface ResolveOptions {
   cwd?: string
   /** Lowercased packageId to the clone directory prepared for its git pin. */
   sources?: ReadonlyMap<string, string>
+  /** Workshop ids a real launch would fetch, which this command did not. */
+  unfetched?: string[]
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 420
@@ -54,6 +57,10 @@ interface Slot {
   where: string
   /** Declared DLC: known to the game, not necessarily owned here. A miss is normal. */
   dlc?: boolean
+}
+
+function notFetched(id: string): string {
+  return `workshop item ${id} is not fetched, and fetching is off for this command; a real launch would fetch it`
 }
 
 function noWorkshopRoot(gameName: string, what: string): string {
@@ -286,6 +293,7 @@ export async function resolvePlan(
   const { game: gameName, profile: requestedProfile, root } = options
   const args = options.args ?? {}
   const sources = options.sources ?? new Map<string, string>()
+  const unfetched = new Set(options.unfetched ?? [])
   const problems: Problem[] = []
   const warnings: string[] = []
 
@@ -338,7 +346,9 @@ export async function resolvePlan(
         // A declared DLC is what the game can have, not what this machine owns.
         if (slot.dlc === true) continue
         if (optional) warnings.push(`optional mod ${ref} is not installed; skipped`)
-        else if (ref.startsWith('workshop:') && game.workshopRoot === null) {
+        else if (ref.startsWith('workshop:') && unfetched.has(ref.slice(9))) {
+          problems.push({ where: slot.where, message: notFetched(ref.slice(9)) })
+        } else if (ref.startsWith('workshop:') && game.workshopRoot === null) {
           problems.push({
             where: slot.where,
             message: noWorkshopRoot(gameName, ref),
@@ -354,6 +364,13 @@ export async function resolvePlan(
   }
 
   if (profile.autoDependencies === true) insertDependencies(staged, present, index, game, problems)
+  // insertDependencies stays network-free, so relabel its misses here instead of teaching it.
+  if (unfetched.size > 0) {
+    for (const problem of problems) {
+      const id = workshopUrlId(problem.suggestion)
+      if (id !== undefined && unfetched.has(id)) problem.message = notFetched(id)
+    }
+  }
 
   const ordered = args.sort === 'none' ? staged : topoSort(staged, problems, game.core)
   warnings.push(...incompatibilityWarnings(ordered))
@@ -404,6 +421,12 @@ export async function resolvePlan(
   const mode: ModeName = args.mode ?? 'headed'
   if (!game.modes.includes(mode)) {
     problems.push({ where: 'flag --mode', message: `${gameName} does not support mode "${mode}"` })
+  }
+
+  if (unfetched.size > 0) {
+    warnings.unshift(
+      `this plan is provisional: ${unfetched.size} workshop item(s) are not fetched, and a real launch would fetch them first`,
+    )
   }
 
   const plan: LaunchPlan = {
