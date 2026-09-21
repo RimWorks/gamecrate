@@ -151,7 +151,7 @@ describe('resolveSteamcmd', () => {
       '-e', `HOME=${home}`,
       STEAMCMD_IMAGE,
     ])
-    expect(existsSync(home)).toBe(true)
+    expect(existsSync(home)).toBe(false)
   })
 
   test('names all three places when none resolve', async () => {

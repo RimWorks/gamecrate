@@ -59,7 +59,7 @@ interface Slot {
   dlc?: boolean
 }
 
-function notFetched(id: string): string {
+export function notFetched(id: string): string {
   return `workshop item ${id} is not fetched, and fetching is off for this command; a real launch would fetch it`
 }
 

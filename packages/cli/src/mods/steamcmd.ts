@@ -62,8 +62,6 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
   const found = onPath('steamcmd')
   if (found !== undefined) return { kind: 'host', argv: [found], env: { HOME: home } }
   if (onPath('docker') !== undefined) {
-    // docker creates a missing bind source as root, and then the --user process cannot write its own HOME
-    mkdirSync(home, { recursive: true })
     return {
       kind: 'docker',
       argv: [
@@ -154,6 +152,8 @@ export async function downloadItems(
   if (ids.length === 0) return { items, warnings }
 
   const runner = resolveSteamcmd(config)
+  // docker creates a missing bind source as root, and then the --user process cannot write its own HOME
+  mkdirSync(steamHome(dataRoot), { recursive: true })
   const reasons = new Map<string, string>()
   // the whole steam HOME, not one content root: which of the two trees steamcmd writes is not
   // known until it has run, and a lock under a name that moves locks nothing

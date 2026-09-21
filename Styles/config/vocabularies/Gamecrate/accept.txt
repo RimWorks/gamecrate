@@ -39,3 +39,4 @@ READMEs
 [Rr]etitle
 [Rr]etitles
 [Uu]ntrusted
+steamcmd

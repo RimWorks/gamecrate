@@ -30,6 +30,9 @@ Write `~/.config/gamecrate/profiles.yml`. This is the smallest RimWorld config t
 
 ```yaml
 plugins: ['@gamecrate/rimworld']
+# Optional. Without it, gamecrate uses steamcmd from PATH, then a Docker image.
+steamcmd:
+  path: ~/.local/bin/steamcmd
 games:
   rimworld:
     # The plugin already says source: mount and container: /game.
@@ -38,6 +41,7 @@ games:
     image:
       ref: ghcr.io/your-org/rimworld:1.6
       acquire: pull
+    # Optional. Only for workshop items a Steam install already downloaded.
     workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
     scanRoots:
       - path: ~/projects/mods
@@ -49,7 +53,9 @@ games:
 
 The bare name `@gamecrate/rimworld` only resolves once the package is installed next to the
 config. [Configuration](docs/configuration.md#how-plugins-resolve) shows both ways to point at
-a plugin. Then:
+a plugin. A workshop item reaches a profile two ways: gamecrate downloads it with steamcmd, or
+it reads an existing Steam install under `workshopRoot`. Both keys are optional, and
+[Mod sources](docs/mod-sources.md) covers the choice. Then:
 
 ```sh
 gamecrate doctor
@@ -57,7 +63,9 @@ gamecrate rimworld dev
 ```
 
 `doctor` checks Docker, the image, the game directory, and the workshop root before anything
-launches. The second line resolves the `dev` profile, stages its two mods, and starts the game.
+launches. When a config uses workshop items, it also reports which steamcmd it found and the
+directories downloaded items land in. The second line resolves the `dev` profile, stages its
+two mods, and starts the game.
 `gamecrate rimworld dev --print-plan` shows what it would do without launching.
 
 ## Documentation
@@ -65,7 +73,7 @@ launches. The second line resolves the `dev` profile, stages its two mods, and s
 | Read this | When you want to |
 | --- | --- |
 | [Configuration](docs/configuration.md) | Write the config file, load a plugin, define profiles, or set per-repository defaults |
-| [Mod sources](docs/mod-sources.md) | Pin a mod to a directory, a workshop item, or a git repository, and learn which copy of a mod wins |
+| [Mod sources](docs/mod-sources.md) | Pin a mod to a directory, a git repository, or a workshop item gamecrate downloads, and learn which copy wins |
 | [The `mods` commands](docs/mods-commands.md) | Add, remove, and sync library pins from the command line |
 | [Running](docs/running.md) | Launch, run in the background, read the result, close a window, and clean up |
 | [Reference](docs/reference.md) | Every subcommand, flag, environment variable, and exit code |

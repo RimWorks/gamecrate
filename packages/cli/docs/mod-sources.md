@@ -16,7 +16,8 @@ The scan visits, in this order:
 2. Every `scanRoots` entry, in the order you wrote them. A root walks down to its `maxDepth`,
    never descends into a mod once it finds one, and skips any `exclude` glob you gave it.
 3. The git clone cache under `<dataRoot>/sources`, described below.
-4. `workshopRoot`, one level deep, numeric directories only.
+4. The workshop download roots under `<dataRoot>/steam`, then `workshopRoot`. Each one goes one
+   level deep, numeric directories only.
 
 A bare id resolves as an exact package id first, then through the game's `aliases` map, then as
 the last dot-segment of an id. A short name that fits more than one mod fails with `"<name>" is
@@ -75,9 +76,44 @@ unpinned ids and `match:` globs. `--use` is the one thing that beats a pin.
 A repo config declares its own `library` at the top level, without the `games` wrapper. A repo
 pin replaces a global pin of the same id outright, and the match ignores case.
 
-## `workshopRoot`
+## Workshop items
 
-`workshopRoot` is the directory Steam downloads workshop items into. The path is
+gamecrate fetches workshop items itself. It runs `steamcmd` with an anonymous login, so you
+need no Steam account, no Steam client running, and no subscription to the item. See
+[Configuration](configuration.md#the-steamcmd-binary) for which `steamcmd` it runs.
+
+A launch fetches every workshop item the profile reaches, then reads each downloaded manifest
+for workshop dependencies and fetches those too. That repeats for up to five rounds, so a
+dependency of a dependency still arrives. A chain still unresolved after five rounds is a
+launch problem that names the ids left over. Name them in the profile to get them in the first
+round.
+
+A download that fails is a warning, not a failure. The launch keeps going with whatever is
+already on disk. It then reports each item still missing against the profile entry that wanted
+it.
+
+`--dry-run` and `--print-plan` never fetch. An item that is not on disk yet reads as `workshop
+item <id> is not fetched, and fetching is off for this command; a real launch would fetch it`.
+That is a warning, not a failure. The plan still prints, with a note that it is provisional.
+
+### Where downloads land
+
+The path depends on which `steamcmd` runs, and neither layout is configurable:
+
+| Runner | Path |
+| --- | --- |
+| A host `steamcmd` binary | `<dataRoot>/steam/.steam/SteamApps/workshop/content/<appId>/<id>` |
+| The `steamcmd/steamcmd` image | `<dataRoot>/steam/.local/share/Steam/steamapps/workshop/content/<appId>/<id>` |
+
+gamecrate scans both, and `workshopRoot` after them. So for one item id, its own copy wins over
+the copy the Steam client downloaded.
+
+**`gamecrate clean` cannot reclaim `<dataRoot>/steam`.** No tier reaches it, because it belongs
+to no one profile. Delete the directory by hand when you need the space back.
+
+### `workshopRoot`
+
+`workshopRoot` is the directory the Steam client downloads workshop items into. The path is
 `<steam library>/steamapps/workshop/content/<appId>`, and RimWorld's `appId` is `294100`:
 
 ```yaml
@@ -88,20 +124,21 @@ workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
 about the game, so no plugin guesses it. The key still has to appear in the merged config, and
 `null` is the value a plugin ships.
 
-With a null root, every workshop reference fails, and the message names the missing key rather
-than the missing mod:
+A null root costs you nothing but the Steam client's own copies, because gamecrate downloads
+its own. `gamecrate doctor` notes it when your config names workshop ids, and lists up to three
+of them. It is a status line, not a problem, so doctor still passes:
 
 ```
-rimworld has no workshopRoot, so workshop:2009463077 cannot resolve
+rimworld has no workshopRoot, so 2 workshop reference(s) cannot resolve: 2009463077, 818773962
 ```
 
-`gamecrate doctor` reports the same problem without a launch. It reads the library and every
-profile's `mods`, then lists up to three of the workshop ids it found. `gamecrate mods add
---workshop` refuses ahead of its write, so a null root never leaves a half-written config behind.
+For a game with workshop ids, `doctor` also prints which `steamcmd` it would run and both
+download roots, marking a root it has not created yet.
 
-The workshop scan is cached under `$XDG_CACHE_HOME/gamecrate`, or `~/.cache/gamecrate`, keyed
-on Steam's own `appworkshop_<appId>.acf` file. A new download changes that file and refreshes
-the scan. gamecrate scans local roots again on every launch.
+The workshop scan is cached under `$XDG_CACHE_HOME/gamecrate`, or `~/.cache/gamecrate`. The key
+covers the `appworkshop_<appId>.acf` file under every root: the contents of the download roots'
+files, and the size and modification time of the one under `workshopRoot`. A new download
+changes that key and refreshes the scan. gamecrate scans local roots again on every launch.
 
 ## Git sources
 

@@ -59,6 +59,25 @@ Each plugin claims one game name. Two plugins claiming the same name is a config
 `games` block whose name no plugin claims fails validation too, because nothing supplies the
 required keys that a plugin's defaults normally fill in.
 
+## The steamcmd binary
+
+gamecrate downloads [workshop items](mod-sources.md#workshop-items) with `steamcmd`. The
+optional top-level `steamcmd` key says which one to run:
+
+```yaml
+steamcmd:
+  path: /usr/bin/steamcmd
+```
+
+A `~` at the front expands to your home directory. A `path` that is not an executable file
+fails with `steamcmd.path is not an executable file: <path>` and exit `5`. That is an error,
+not a fallback, because a typo there would otherwise download through a tool you did not choose.
+
+With the key absent, gamecrate looks for `steamcmd` on your `PATH`. Failing that, it runs the
+`steamcmd/steamcmd` Docker image. That run binds the download directory in at the same path it
+has on the host, and maps your own user into the container. With no `steamcmd` and no `docker`, a
+download fails with `steamcmd is not available` and exit `5`.
+
 ## An array you write replaces the plugin's array
 
 A plugin ships defaults for its game. Your `games.<name>` block merges on top of those

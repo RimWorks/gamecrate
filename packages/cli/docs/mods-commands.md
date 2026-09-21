@@ -40,9 +40,13 @@ exactly one of `--path`, `--workshop`, or `--git`. Two of them is a usage error,
 `--branch`, `--tag`, `--commit`, or `--subdir` next to anything but `--git`.
 
 A `--path` source lands in the config as an absolute path, resolved against the directory you
-ran the command from. A `--workshop` source reads `<workshopRoot>/<id>` and writes the number.
-With `workshopRoot` still `null` it refuses before touching anything, with exit `3` and the app
-id you need to find the directory.
+ran the command from.
+
+A `--workshop` source downloads the item, reads the manifest out of that copy, and writes the
+number. You do not need `workshopRoot` set for this. **It downloads even when `workshopRoot`
+already holds that item.** The Steam client's copy is yours, and a pin has to work on a machine
+that never subscribed to the item. A download that fails stops the write with exit `4` and a
+link to the item's page. So a private or removed item never lands in your config as a pin.
 
 A `--git` source clones the repository first, into the same cache a launch uses, then walks it
 for manifests and pins every mod it finds. The walk stops at the first manifest down each
@@ -82,14 +86,30 @@ YAML map re-emits as `{}`, and the next write into it would come out as a one-li
 `sync` takes an optional game, then any number of package ids. The first word after `sync` is
 always the game name, so `gamecrate mods sync some.mod` reads `some.mod` as a game and fails
 with `unknown game some.mod`. With no game, it walks every game. With no ids, it fetches every
-git-pinned clone it finds. With nothing to do it prints `nothing to sync` and exits `0`.
+git- or workshop-pinned mod it finds. With nothing to do it prints `nothing to sync` and exits
+`0`.
 
-An id you name that has no `git` entry stops the whole sync with exit `4`, listing every id it
-could not find. It fetches with force, so it moves tag and commit pins that a launch leaves
-alone. It creates a clone that does not exist yet. One repository pinned by several ids is
-fetched once, and every id you named gets its own `synced <id> at <kind> <ref>` line.
+An id you name that has neither a `git` nor a `workshop` entry stops the whole sync with exit
+`4`, listing every id it could not find. It fetches with force, so it moves tag and commit pins
+that a launch leaves alone. It creates a clone that does not exist yet. One repository pinned by
+several ids is fetched once, and every id you named gets its own `synced <id> at <kind> <ref>`
+line. A fetch that fails prints the same warning a launch does and keeps the clone on disk.
 
-A fetch that fails prints the same warning a launch does and keeps the clone on disk.
+A workshop pin syncs the same way. `sync` asks Steam which of the items changed, downloads only
+those, and prints `synced <id> at workshop item <number>` for each. An item Steam reports as
+unchanged prints `<id> is up to date at workshop item <number>` and downloads nothing. All the
+items for one game go through a single `steamcmd` run, because connecting costs far more than
+the transfer does.
+
+## Workshop mods update themselves on a launch
+
+You do not have to run `sync` to get a new version of a workshop mod. Every launch asks Steam
+whether the profile's workshop items changed since the copies on disk, and downloads the ones
+that did. An item Steam cannot answer for, or one it reports as private or removed, is left
+alone with a warning.
+
+So a workshop mod can change version under an existing save between one launch and the next.
+To hold a mod still, pin it with `path:` or `git:` instead, and keep that checkout yourself.
 
 ## YAML writes and JSON writes
 

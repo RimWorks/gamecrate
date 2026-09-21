@@ -42,12 +42,16 @@ import {
 } from './launch/prepare'
 import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
-import { resolvePlan, workshopRootProblem } from './launch/resolve'
+import { notFetched, resolvePlan, workshopRootProblem } from './launch/resolve'
 import { listRuns } from './run/registry'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
 import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
+import { downloadRoots, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
+import type { SteamcmdRunner } from './mods/steamcmd'
+import { prepareWorkshop } from './mods/workshop'
+import type { PreparedWorkshop } from './mods/workshop'
 import { requirePlugin } from './plugin'
 import type { GamePlugin } from './plugin'
 import { ago, decideStale, duration, scanBuildTimes, staleReport } from './mods/staleness'
@@ -55,6 +59,7 @@ import { resolveWorktree } from './mods/worktree'
 import { GamecrateError, Exit, reasonFor } from './types'
 import type {
   DockerRunSpec,
+  GameConfig,
   Identity,
   LaunchPlan,
   LaunchResult,
@@ -235,10 +240,25 @@ async function run(
   const allowFetch = !args.dryRun && !args.printPlan
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
   try {
-    return await resolved(argv, args, config, plugins, asShell, game, profile, sources)
+    const workshop = await prepareWorkshop(gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game))
+    return await resolved(argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch)
   } finally {
     await sources.release()
   }
+}
+
+/**
+ * An item a real launch would fetch is a provisional plan, not a failure, so it warns and the
+ * plan still prints. Everything else stays fatal.
+ */
+function warnUnfetched(problems: Problem[], unfetched: string[]): Problem[] {
+  const provisional = new Set(unfetched.map(notFetched))
+  const fatal: Problem[] = []
+  for (const problem of problems) {
+    if (provisional.has(problem.message)) warn(`${problem.where}: ${problem.message}`)
+    else fatal.push(problem)
+  }
+  return fatal
 }
 
 async function resolved(
@@ -250,8 +270,10 @@ async function resolved(
   game: string,
   profile: string,
   sources: PreparedSources,
+  workshop: PreparedWorkshop,
+  allowFetch: boolean,
 ): Promise<number> {
-  for (const warning of sources.warnings) warn(warning)
+  for (const warning of [...sources.warnings, ...workshop.warnings]) warn(warning)
   const index = await buildIndex(
     game,
     config.games[game]!,
@@ -259,8 +281,11 @@ async function resolved(
     sourcesRoot(config.dataRoot),
     config.dataRoot,
   )
-  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources: sources.dirs })
-  if (problems.length > 0) reportProblems(problems)
+  // an id still missing after a real fetch is a download failure, already warned about, so it
+  // gets the plain missing-mod problem instead of the "a real launch would fetch it" wording.
+  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources: sources.dirs, unfetched: allowFetch ? undefined : workshop.unfetched })
+  const fatal = warnUnfetched([...workshop.problems, ...problems], allowFetch ? [] : workshop.unfetched)
+  if (fatal.length > 0) reportProblems(fatal)
 
   const identity = resolveIdentity(args.root)
 
@@ -522,6 +547,9 @@ async function mods(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
+  // listing never downloads, so an id a launch would fetch comes back as unfetched, not missing.
+  const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game))
+  for (const warning of workshop.warnings) warn(warning)
   const index = await buildIndex(
     game,
     config.games[game]!,
@@ -530,10 +558,35 @@ async function mods(
     config.dataRoot,
   )
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
-  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources })
-  if (problems.length > 0) reportProblems(problems)
+  const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources, unfetched: workshop.unfetched })
+  const fatal = warnUnfetched([...workshop.problems, ...problems], workshop.unfetched)
+  if (fatal.length > 0) reportProblems(fatal)
   printPlan(plan, args.json)
   return Exit.Ok
+}
+
+/**
+ * doctor resolves the modless profile, so no workshop ref reaches the plan. Read the config the
+ * way workshopRootProblem does, so a config with no workshop mods never gets a steamcmd check.
+ */
+function usesWorkshop(game: GameConfig): boolean {
+  for (const entry of Object.values(game.library ?? {})) {
+    if (entry.workshop !== undefined) return true
+  }
+  for (const profile of Object.values(game.profiles)) {
+    for (const entry of profile.mods ?? []) {
+      if (typeof entry === 'string') {
+        if (entry.startsWith('workshop:')) return true
+      } else if ('workshop' in entry && entry.workshop !== undefined) return true
+    }
+  }
+  return false
+}
+
+function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
+  if (runner.kind === 'docker') return `docker image ${STEAMCMD_IMAGE}`
+  const where = config.steamcmd?.path === undefined ? 'on PATH' : 'steamcmd.path'
+  return `${runner.argv[0]} (${where})`
 }
 
 async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {
@@ -541,10 +594,27 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
   for (const game of Object.keys(config.games)) {
     // same map mods and verify get: without it doctor drops a pin's subdir and can name the
     // wrong directory of a repinned clone.
-    const sources = cachedSources(config.games[game]!, 'modless', {}, config.dataRoot)
+    const gameConfig = config.games[game]!
+    const sources = cachedSources(gameConfig, 'modless', {}, config.dataRoot)
     const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
-    const workshop = workshopRootProblem(game, config.games[game]!)
-    const all = [...problems, ...(await preflight(plan)), ...(workshop === null ? [] : [workshop])]
+    const workshop = workshopRootProblem(game, gameConfig)
+    if (workshop !== null) status(workshop.message)
+    const steamcmd: Problem[] = []
+    if (usesWorkshop(gameConfig)) {
+      try {
+        status(`${game}: steamcmd ${steamcmdSource(resolveSteamcmd(config), config)}`)
+      } catch (error) {
+        steamcmd.push({
+          where: 'steamcmd',
+          message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
+        })
+      }
+      for (const root of downloadRoots(config.dataRoot, gameConfig)) {
+        status(`${game}: workshop downloads ${root}${existsSync(root) ? '' : ' (not created yet)'}`)
+      }
+    }
+    const all = [...problems, ...(await preflight(plan)), ...steamcmd]
     if (all.length === 0) {
       status(`${game}: ok`)
       continue
