@@ -48,7 +48,7 @@ import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/s
 import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
-import { downloadRoots, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
+import { downloadRoot, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
 import type { SteamcmdRunner } from './mods/steamcmd'
 import { prepareWorkshop } from './mods/workshop'
 import type { PreparedWorkshop } from './mods/workshop'
@@ -613,9 +613,8 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
           ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
         })
       }
-      for (const root of downloadRoots(config.dataRoot, gameConfig)) {
-        status(`${game}: workshop downloads ${root}${existsSync(root) ? '' : ' (not created yet)'}`)
-      }
+      const root = downloadRoot(config.dataRoot, gameConfig)
+      status(`${game}: workshop downloads ${root}${existsSync(root) ? '' : ' (not created yet)'}`)
     }
     const all = [...problems, ...(await preflight(plan)), ...steamcmd]
     if (all.length === 0) {

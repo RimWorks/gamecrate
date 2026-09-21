@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { fixtureGame, fixturePlugin } from './fixture-plugin'
-import { downloadRoots } from '../src/mods/steamcmd'
+import { downloadRoot } from '../src/mods/steamcmd'
 import { prepareWorkshop } from '../src/mods/workshop'
 import type { GamePlugin } from '../src/plugin'
 import type { GameConfig, ModEntry, ModManifest, ParsedArgs, ProfileConfig, RootConfig } from '../src/types'
@@ -113,9 +113,9 @@ async function setup(mods: ModEntry[], bodies: Record<string, string> = {}, prof
   }
 }
 
-/** Where the fake writes, which is the host layout, and what a pre-seeded item goes into. */
+/** Where the fake writes, the pinned layout, and what a pre-seeded item goes into. */
 function hostRoot(w: World): string {
-  return downloadRoots(w.config.dataRoot, w.game)[0] as string
+  return downloadRoot(w.config.dataRoot, w.game)
 }
 
 async function seed(w: World, id: string, text: string): Promise<void> {

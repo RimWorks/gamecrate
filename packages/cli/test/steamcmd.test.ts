@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import {
   STEAMCMD_IMAGE,
   downloadItems,
-  downloadRoots,
+  downloadRoot,
   resolveSteamcmd,
   steamHome,
   workshopUrlId,
@@ -44,35 +44,17 @@ function config(over: Partial<RootConfig> = {}): RootConfig {
   return { dataRoot: join(tmp, 'data'), games: {}, ...over }
 }
 
-describe('downloadRoots', () => {
+describe('downloadRoot', () => {
   const game = { steamAppId: 294100 } as GameConfig
 
-  /** Host layout first, then the one the docker image writes. */
-  function both(root: string): string[] {
-    return [
-      join(steamHome(root), '.steam/SteamApps/workshop/content/294100'),
-      join(steamHome(root), '.local/share/Steam/steamapps/workshop/content/294100'),
-    ]
-  }
-
-  test('returns both layouts, host first, with nothing on disk', () => {
-    expect(downloadRoots('/data', game)).toEqual([
-      '/data/steam/.steam/SteamApps/workshop/content/294100',
-      '/data/steam/.local/share/Steam/steamapps/workshop/content/294100',
-    ])
+  test('is the pinned layout under the steam home', () => {
+    expect(downloadRoot('/data', game)).toBe('/data/steam/steamapps/workshop/content/294100')
     expect(steamHome('/data')).toBe('/data/steam')
   })
 
-  test('returns the same two when only the docker tree exists', async () => {
-    const root = await mkdtemp(join(tmp, 'docker-layout-'))
-    await mkdir(both(root)[1] as string, { recursive: true })
-    expect(downloadRoots(root, game)).toEqual(both(root))
-  })
-
-  test('returns the same two when only the host tree exists', async () => {
-    const root = await mkdtemp(join(tmp, 'host-layout-'))
-    await mkdir(both(root)[0] as string, { recursive: true })
-    expect(downloadRoots(root, game)).toEqual(both(root))
+  test('does not consult the filesystem', async () => {
+    const root = await mkdtemp(join(tmp, 'layout-'))
+    expect(downloadRoot(root, game)).toBe(join(steamHome(root), 'steamapps/workshop/content/294100'))
   })
 })
 
@@ -203,7 +185,7 @@ describe('downloadItems', () => {
   const FAKE = fileURLToPath(new URL('./fixtures/fake-steamcmd.sh', import.meta.url))
   const game = { steamAppId: 294100 } as GameConfig
   /** Where the fake writes, which is the host layout. */
-  const hostRoot = (root: string): string => downloadRoots(root, game)[0] as string
+  const hostRoot = (root: string): string => downloadRoot(root, game)
   const fakeEnv = ['FAKE_FAIL_IDS', 'FAKE_SKIP_IDS', 'FAKE_FLAKY_IDS', 'FAKE_BYTES', 'FAKE_EXIT']
 
   afterEach(() => {
@@ -215,6 +197,15 @@ describe('downloadItems', () => {
     const root = await mkdtemp(join(tmp, 'dl-'))
     return { root, cfg: { dataRoot: root, games: {}, steamcmd: { path } } }
   }
+
+  test('pins the install dir, and does it before login', async () => {
+    const { root, cfg } = await fake()
+    await downloadItems(cfg, game, root, ['111'])
+    const argv = (await readFile(join(steamHome(root), 'argv.txt'), 'utf8')).trim().split(/\s+/)
+    expect(argv).toContain('+force_install_dir')
+    expect(argv[argv.indexOf('+force_install_dir') + 1]).toBe(steamHome(root))
+    expect(argv.indexOf('+force_install_dir')).toBeLessThan(argv.indexOf('+login'))
+  })
 
   test('parses items out of jammed, coloured output', async () => {
     const { root, cfg } = await fake()

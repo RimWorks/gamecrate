@@ -16,7 +16,7 @@ import {
   normalizeUrl,
 } from '../mods/source'
 import type { GitRef } from '../mods/source'
-import { downloadItems, downloadRoots } from '../mods/steamcmd'
+import { downloadItems, downloadRoot } from '../mods/steamcmd'
 import { checkDrift } from '../mods/workshopapi'
 import { requirePlugin } from '../plugin'
 import type { GamePlugin } from '../plugin'
@@ -208,7 +208,7 @@ async function syncWorkshop(
   const game = ctx.config.games[name] as GameConfig
   const drift = await checkDrift(
     pins.map((pin) => pin.item),
-    downloadRoots(ctx.config.dataRoot, game),
+    [downloadRoot(ctx.config.dataRoot, game)],
     ctx.fetch,
   )
   for (const line of drift.warnings) warn(line)

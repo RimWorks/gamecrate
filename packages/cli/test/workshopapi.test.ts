@@ -30,7 +30,7 @@ function acfText(items: Record<string, number>): string {
 
 /**
  * A workshop tree: the .acf steamcmd writes, plus a content directory per id in `onDisk`.
- * Returns the content root, one of the two `downloadRoots` hands `checkDrift`.
+ * Returns a content root, the shape `checkDrift` is handed.
  */
 async function tree(items: Record<string, number>, onDisk: string[]): Promise<string> {
   const dir = await mkdtemp(join(tmp, 'workshop-'))

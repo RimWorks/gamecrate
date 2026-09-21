@@ -16,7 +16,7 @@ The scan visits, in this order:
 2. Every `scanRoots` entry, in the order you wrote them. A root walks down to its `maxDepth`,
    never descends into a mod once it finds one, and skips any `exclude` glob you gave it.
 3. The git clone cache under `<dataRoot>/sources`, described below.
-4. The workshop download roots under `<dataRoot>/steam`, then `workshopRoot`. Each one goes one
+4. The workshop download root under `<dataRoot>/steam`, then `workshopRoot`. Each one goes one
    level deep, numeric directories only.
 
 A bare id resolves as an exact package id first, then through the game's `aliases` map, then as
@@ -102,15 +102,19 @@ That is a warning, not a failure. The plan still prints, with a note that it is 
 
 ### Where downloads land
 
-The path depends on which `steamcmd` runs, and neither layout is configurable:
+Every item lands in one place:
 
-| Runner | Path |
-| --- | --- |
-| A host `steamcmd` binary | `<dataRoot>/steam/.steam/SteamApps/workshop/content/<appId>/<id>` |
-| The `steamcmd/steamcmd` image | `<dataRoot>/steam/.local/share/Steam/steamapps/workshop/content/<appId>/<id>` |
+```
+<dataRoot>/steam/steamapps/workshop/content/<appId>/<id>
+```
 
-gamecrate scans both, and `workshopRoot` after them. So for one item id, its own copy wins over
-the copy the Steam client downloaded.
+gamecrate pins that with `+force_install_dir`, so the path does not change with the `steamcmd`
+you point it at. Left alone, each build picks its own: a host binary writes `.steam/SteamApps`,
+the `steamcmd/steamcmd` image writes `.local/share/Steam/steamapps`, and a Valve tarball writes
+`$HOME/Steam`.
+
+gamecrate scans that root, then `workshopRoot`. So for one item id, its own copy wins over the
+copy the Steam client downloaded.
 
 **`gamecrate clean` cannot reclaim `<dataRoot>/steam`.** No tier reaches it, because it belongs
 to no one profile. Delete the directory by hand when you need the space back.
@@ -139,12 +143,12 @@ no mod matches "workshop:2009463077"
 Read the download warning printed with it for the reason. A failed download and a mod whose manifest
 does not parse both land here.
 
-For a game with workshop ids, `doctor` prints which `steamcmd` it would run and both download
-roots, marking a root it has not created yet.
+For a game with workshop ids, `doctor` prints which `steamcmd` it would run and the download
+root, marking it when it does not exist yet.
 
 The workshop scan is cached under `$XDG_CACHE_HOME/gamecrate`, or `~/.cache/gamecrate`. The key
-covers the `appworkshop_<appId>.acf` file under every root: the contents of the download roots'
-files, and the size and modification time of the one under `workshopRoot`. A new download
+covers the `appworkshop_<appId>.acf` file under every root. For the download root it reads the
+file's contents. For `workshopRoot` it reads the size and modification time. A new download
 changes that key and refreshes the scan. gamecrate scans local roots again on every launch.
 
 ## Git sources

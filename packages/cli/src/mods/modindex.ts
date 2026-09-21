@@ -9,7 +9,7 @@ import picomatch from 'picomatch'
 import { expandHome } from '../config/load'
 import { GamecrateError, Exit, own } from '../types'
 import { installedItems, parseAcf } from './acf'
-import { downloadRoots } from './steamcmd'
+import { downloadRoot } from './steamcmd'
 import { contains } from './worktree'
 import type { GamePlugin } from '../plugin'
 import type {
@@ -209,7 +209,7 @@ function contentPairs(acf: string): string[] | null {
  */
 export function workshopStamp(game: GameConfig, dataRoot: string | undefined): string | null {
   const pairs: string[] = []
-  for (const root of dataRoot === undefined ? [] : downloadRoots(dataRoot, game)) {
+  for (const root of dataRoot === undefined ? [] : [downloadRoot(dataRoot, game)]) {
     const found = contentPairs(acfPath(root, game.steamAppId))
     if (found === null) return null
     pairs.push(...found)
@@ -472,11 +472,11 @@ export async function buildIndex(
   }
   for (const record of parsed) insert(index, record)
 
-  // The download roots go first, so their rootIndex is lower and they win an id steam also
+  // The download root goes first, so its rootIndex is lower and it wins an id steam also
   // holds. gamecrate refreshes its copy on a known cadence; steam's only moves when the client
-  // runs. A root that is not there scans as nothing, so both layouts go in unconditionally.
+  // runs. A root that is not there scans as nothing, so it goes in unconditionally.
   const workshopRoots: string[] = []
-  if (dataRoot !== undefined) workshopRoots.push(...downloadRoots(dataRoot, config))
+  if (dataRoot !== undefined) workshopRoots.push(downloadRoot(dataRoot, config))
   if (config.workshopRoot !== null) workshopRoots.push(config.workshopRoot)
 
   if (workshopRoots.length > 0) {

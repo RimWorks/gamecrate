@@ -4,7 +4,7 @@ import { join, resolve as resolvePath } from 'node:path'
 
 import { expandHome, resolveProfile } from '../config/load'
 import { libraryPin, reachedEntries } from './source'
-import { downloadItems, downloadRoots, workshopUrlId } from './steamcmd'
+import { downloadItems, downloadRoot, workshopUrlId } from './steamcmd'
 import { checkDrift } from './workshopapi'
 import type { GamePlugin } from '../plugin'
 import type {
@@ -91,12 +91,12 @@ export async function prepareWorkshop(
 }
 
 /**
- * The roots a launch actually mounts, in the order buildIndex scans them: both download
- * layouts first, then the steam client's own tree. A copy the user is subscribed to counts as
- * on disk, so it neither downloads again nor reports unfetched.
+ * The roots a launch actually mounts, in the order buildIndex scans them: the download root
+ * first, then the steam client's own tree. A copy the user is subscribed to counts as on
+ * disk, so it neither downloads again nor reports unfetched.
  */
 function mountedRoots(dataRoot: string, game: GameConfig): string[] {
-  return [...downloadRoots(dataRoot, game), ...(game.workshopRoot === null ? [] : [game.workshopRoot])]
+  return [downloadRoot(dataRoot, game), ...(game.workshopRoot === null ? [] : [game.workshopRoot])]
 }
 
 function itemDir(roots: string[], id: string): string | undefined {

@@ -7,17 +7,26 @@
 
 appid=""
 ids=""
+install=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "+workshop_download_item" ]; then
     appid="$2"
     ids="$ids $3"
     shift 3
+  elif [ "$1" = "+force_install_dir" ]; then
+    install="$2"
+    shift 2
   else
     shift
   fi
 done
 
-root="$HOME/.steam/SteamApps/workshop/content/$appid"
+if [ -z "$install" ]; then
+  printf 'FAKE: no +force_install_dir, refusing to guess a layout\n' >&2
+  exit 64
+fi
+
+root="$install/steamapps/workshop/content/$appid"
 printf 'Logging in user Anonymous to Steam Public...OK\n'
 for id in $ids; do
   case " $FAKE_FAIL_IDS " in

@@ -24,20 +24,13 @@ export function steamHome(dataRoot: string): string {
 }
 
 /**
- * Both content roots steamcmd writes under HOME, host layout first. Measured on 2026-09-21 by
- * running each: the host binary via the arch wrapper writes .steam/SteamApps, and
- * steamcmd/steamcmd with an identity bind and --user writes .local/share/Steam/steamapps.
- * Neither is configurable, and a machine can end up with both, so callers read both. The
- * filesystem is never consulted here: a tree that does not exist yet is still the right place
- * to look.
+ * Where downloads land. `run` pins it with `+force_install_dir`, so this is our layout rather
+ * than whichever one the steamcmd on this machine would have picked: measured 2026-09-21, the
+ * arch wrapper writes .steam/SteamApps, the docker image writes .local/share/Steam/steamapps,
+ * and a plain Valve tarball writes $HOME/Steam. Pinning makes all three land here.
  */
-export function downloadRoots(dataRoot: string, game: GameConfig): string[] {
-  const home = steamHome(dataRoot)
-  const appId = String(game.steamAppId)
-  return [
-    join(home, '.steam', 'SteamApps', 'workshop', 'content', appId),
-    join(home, '.local', 'share', 'Steam', 'steamapps', 'workshop', 'content', appId),
-  ]
+export function downloadRoot(dataRoot: string, game: GameConfig): string {
+  return join(steamHome(dataRoot), 'steamapps', 'workshop', 'content', String(game.steamAppId))
 }
 
 /**
@@ -165,7 +158,7 @@ export async function downloadItems(
   try {
     let pending = ids
     for (let attempt = 0; attempt < ATTEMPTS && pending.length > 0; attempt++) {
-      const output = run(runner, game, pending)
+      const output = run(runner, game, dataRoot, pending)
       for (const m of output.matchAll(SUCCESS)) {
         items.set(m[1] as string, { ok: true, dir: m[2] as string, bytes: Number(m[3]) })
       }
@@ -188,9 +181,11 @@ export async function downloadItems(
   return { items, warnings }
 }
 
-function run(runner: SteamcmdRunner, game: GameConfig, ids: string[]): string {
+function run(runner: SteamcmdRunner, game: GameConfig, dataRoot: string, ids: string[]): string {
   const argv = [
     ...runner.argv,
+    // before +login, or steamcmd applies it to nothing
+    '+force_install_dir', steamHome(dataRoot),
     '+login', 'anonymous',
     ...ids.flatMap((id) => ['+workshop_download_item', String(game.steamAppId), id]),
     '+quit',
