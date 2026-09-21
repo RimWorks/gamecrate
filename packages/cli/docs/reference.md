@@ -92,6 +92,8 @@ Container and build:
 - `--build` compiles local C# mods first. `--no-build` never compiles, even when an assembly
   looks stale.
 - `--no-stale-check` drops the warning about sources newer than assemblies. The check still runs.
+  A source must beat its assembly by more than a second to count. One build writes both within
+  microseconds of each other, and that is not a stale build.
 - `--docker-arg <arg>` adds one argv element to `docker run`. Repeatable, and the one flag whose
   value may start with a dash.
 - `--root` runs as root instead of mapping your uid.

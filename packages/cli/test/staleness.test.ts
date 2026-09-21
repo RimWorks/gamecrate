@@ -47,6 +47,22 @@ describe('isStale', () => {
     expect(await isStale(dir)).toBe(true)
   })
 
+  test('a source 7ms past the dll is one build, not a stale one', async () => {
+    // measured on a real mod: MSBuild wrote the dll and touched the source in the same instant
+    const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 0.007 })
+    expect(await isStale(dir)).toBe(false)
+  })
+
+  test('a source just inside the second is still one build', async () => {
+    const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 0.9 })
+    expect(await isStale(dir)).toBe(false)
+  })
+
+  test('a source two seconds past the dll is a forgotten rebuild', async () => {
+    const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 2 })
+    expect(await isStale(dir)).toBe(true)
+  })
+
   test('a rebuilt assembly is not stale', async () => {
     const dir = await modDir({ 'Source/Main.cs': 60, 'Assemblies/Mod.dll': 0 })
     expect(await isStale(dir)).toBe(false)
@@ -89,6 +105,11 @@ describe('staleReport', () => {
   })
 
   // Never blocks: an XML-only mod is a normal mod, not a broken build.
+  test('null for a same-build skew inside the second', async () => {
+    const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 0.007 })
+    expect(staleReport(await scanBuildTimes(dir))).toBeNull()
+  })
+
   test('null when there is no assembly to be stale against', async () => {
     expect(staleReport(await scanBuildTimes(await modDir({ 'Source/Main.cs': 0 })))).toBeNull()
   })

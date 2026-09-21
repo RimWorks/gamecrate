@@ -73,13 +73,24 @@ export async function scanBuildTimes(dir: string): Promise<BuildTimes> {
 }
 
 /**
+ * One build writes a dll and touches a source microseconds apart, so a bare `>` calls a clean
+ * build stale. Measured on two real mods: 0.054ms and 7ms. A forgotten rebuild is minutes old
+ * at least, so a second separates the two without hiding one.
+ */
+const SKEW_MS = 1000
+
+function newerThan(source: number, assembly: number): boolean {
+  return source - assembly > SKEW_MS
+}
+
+/**
  * Drives `--build auto`, so a mod that has never been compiled counts as stale. The warning
  * is the stricter one: see staleReport.
  */
 export function decideStale(times: BuildTimes): boolean {
   const { newestSource, newestAssembly } = times
   if (newestSource === undefined) return false
-  return newestAssembly === undefined || newestSource.mtimeMs > newestAssembly.mtimeMs
+  return newestAssembly === undefined || newerThan(newestSource.mtimeMs, newestAssembly.mtimeMs)
 }
 
 /**
@@ -89,13 +100,13 @@ export function decideStale(times: BuildTimes): boolean {
 export function staleReport(times: BuildTimes): StaleReport | null {
   const { newestSource, newestAssembly } = times
   if (newestSource === undefined || newestAssembly === undefined) return null
-  if (newestSource.mtimeMs <= newestAssembly.mtimeMs) return null
+  if (!newerThan(newestSource.mtimeMs, newestAssembly.mtimeMs)) return null
   return {
     newestSource: newestSource.path,
     newestSourceMs: newestSource.mtimeMs,
     assembly: newestAssembly.path,
     assemblyMs: newestAssembly.mtimeMs,
-    newerCount: times.sourceTimes.filter((t) => t > newestAssembly.mtimeMs).length,
+    newerCount: times.sourceTimes.filter((t) => newerThan(t, newestAssembly.mtimeMs)).length,
   }
 }
 
