@@ -676,6 +676,35 @@ describe('modsSync', () => {
     expect(fake.runs()).toBe(0)
   })
 
+  test('a pin steam refuses reads as unavailable, never as up to date', async () => {
+    const fake = fakeSteamcmd()
+    const ctx = context({
+      steamcmd: fake.path,
+      fetch: steamSays([{ id: '11', timeUpdated: 20, result: 9 }]),
+    })
+    ctx.config.games['atlas']!.library = { 'a.one': { workshop: 11 } }
+    writeAcf(ctx, { '11': 20 })
+    const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
+    mkdirSync(join(root, '11'), { recursive: true })
+
+    const real = process.stderr.write.bind(process.stderr)
+    const lines: string[] = []
+    process.stderr.write = ((chunk: string) => {
+      lines.push(String(chunk))
+      return true
+    }) as typeof process.stderr.write
+    try {
+      expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+    } finally {
+      process.stderr.write = real
+    }
+
+    const out = lines.join('')
+    expect(out).toContain('a.one is unavailable at workshop item 11')
+    expect(out).not.toContain('a.one is up to date')
+    expect(fake.runs()).toBe(0)
+  })
+
   test('a workshop pin steam says moved is downloaded again', async () => {
     const fake = fakeSteamcmd()
     const ctx = context({ steamcmd: fake.path, fetch: steamSays([{ id: '11', timeUpdated: 99 }]) })

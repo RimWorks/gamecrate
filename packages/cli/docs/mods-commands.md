@@ -97,9 +97,10 @@ line. A fetch that fails prints the same warning a launch does and keeps the clo
 
 A workshop pin syncs the same way. `sync` asks Steam which of the items changed, downloads only
 those, and prints `synced <id> at workshop item <number>` for each. An item Steam reports as
-unchanged prints `<id> is up to date at workshop item <number>` and downloads nothing. All the
-items for one game go through a single `steamcmd` run, because connecting costs far more than
-the transfer does.
+unchanged prints `<id> is up to date at workshop item <number>` and downloads nothing. An item
+Steam refuses to serve, because the author removed or hid it, prints `<id> is unavailable at
+workshop item <number>`. All the items for one game go through a single `steamcmd` run, because
+connecting costs far more than the transfer does.
 
 ## Workshop mods update themselves on a launch
 

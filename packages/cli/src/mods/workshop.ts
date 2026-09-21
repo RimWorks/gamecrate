@@ -168,12 +168,14 @@ function localDirs(
       continue
     }
     if (object.id.includes(':')) continue
+    const pin = libraryPin(game, object.id)
     const clone = sources.get(object.id.toLowerCase())
     if (clone !== undefined) {
-      out.add(clone)
+      // the map holds clone roots, and a pin's subdir sits under one. refFor joins it the same
+      // way, and without it the manifest is looked for in the wrong directory
+      out.add(pin?.subdir === undefined ? clone : join(clone, pin.subdir))
       continue
     }
-    const pin = libraryPin(game, object.id)
     if (pin?.path !== undefined) out.add(resolvePath(expandHome(pin.path)))
   }
   return [...out]

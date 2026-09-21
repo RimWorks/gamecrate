@@ -56,13 +56,13 @@ describe('checkDrift', () => {
   test('an unchanged item needs nothing', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [root], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], warnings: [] })
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a drifted item is queued', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [root], ok([detail('818773962', INSTALLED + 60)]))
-    expect(report).toEqual({ needed: ['818773962'], warnings: [] })
+    expect(report).toEqual({ needed: ['818773962'], unavailable: [], warnings: [] })
   })
 
   test('an id the .acf never heard of is queued', async () => {
@@ -72,7 +72,7 @@ describe('checkDrift', () => {
       [root],
       ok([detail('818773962', INSTALLED), detail('2009463077', INSTALLED)]),
     )
-    expect(report).toEqual({ needed: ['2009463077'], warnings: [] })
+    expect(report).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
   })
 
   test('an id in the .acf with no directory is queued', async () => {
@@ -82,14 +82,21 @@ describe('checkDrift', () => {
       [root],
       ok([detail('818773962', INSTALLED), detail('2009463077', INSTALLED)]),
     )
-    expect(report).toEqual({ needed: ['2009463077'], warnings: [] })
+    expect(report).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
   })
 
   test('a result other than 1 warns and is not queued', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962', '404'], [root], ok([detail('818773962', INSTALLED), detail('404', 0, 9)]))
     expect(report.needed).toEqual([])
+    expect(report.unavailable).toEqual(['404'])
     expect(report.warnings).toEqual(['workshop item 404 is not available (result 9); skipping it'])
+  })
+
+  test('an item steam serves normally is never reported unavailable', async () => {
+    const root = await tree({ '818773962': INSTALLED }, ['818773962'])
+    const report = await checkDrift(['818773962'], [root], ok([detail('818773962', INSTALLED)]))
+    expect(report.unavailable).toEqual([])
   })
 
   test('101 ids go out as two requests', async () => {
@@ -108,7 +115,7 @@ describe('checkDrift', () => {
     expect(bodies[0]).toContain('publishedfileids%5B99%5D=900099')
     expect(bodies[1]).toContain('itemcount=1')
     expect(bodies[1]).toContain('publishedfileids%5B0%5D=900100')
-    expect(report).toEqual({ needed: [], warnings: [] })
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a request that never answers falls back to the missing items at 5s', async () => {
@@ -131,6 +138,7 @@ describe('checkDrift', () => {
 
     expect(await report).toEqual({
       needed: ['2009463077'],
+      unavailable: [],
       warnings: ['could not ask steam which items changed (no answer in 5000ms); only missing items will download'],
     })
     vi.useRealTimers()
@@ -150,7 +158,7 @@ describe('checkDrift', () => {
     const host = await tree({ '111': INSTALLED }, ['111'])
     const docker = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [host, docker], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], warnings: [] })
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('an item in both roots is compared against the copy the first root holds', async () => {
@@ -159,23 +167,24 @@ describe('checkDrift', () => {
     const steam = ok([detail('818773962', INSTALLED + 60)])
     expect(await checkDrift(['818773962'], [older, newer], steam)).toEqual({
       needed: ['818773962'],
+      unavailable: [],
       warnings: [],
     })
-    expect(await checkDrift(['818773962'], [newer, older], steam)).toEqual({ needed: [], warnings: [] })
+    expect(await checkDrift(['818773962'], [newer, older], steam)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a root with no .acf is skipped rather than failing the check', async () => {
     const real = await tree({ '818773962': INSTALLED }, ['818773962'])
     const absent = join(tmp, 'never-downloaded', 'content', '294100')
     const report = await checkDrift(['818773962'], [absent, real], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], warnings: [] })
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('an item on disk in the second root only is not queued', async () => {
     const host = await tree({ '818773962': INSTALLED }, [])
     const docker = await tree({}, ['818773962'])
     const report = await checkDrift(['818773962'], [host, docker], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], warnings: [] })
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a body this does not understand falls back to the missing items', async () => {

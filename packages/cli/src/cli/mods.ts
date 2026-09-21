@@ -217,9 +217,12 @@ async function syncWorkshop(
       ? undefined
       : await downloadItems(ctx.config, game, ctx.config.dataRoot, drift.needed)
   for (const line of report?.warnings ?? []) warn(line)
+  const unavailable = new Set(drift.unavailable)
   for (const pin of pins) {
     const outcome = report?.items.get(pin.item)
-    if (outcome === undefined) status(`${pin.id} is up to date at workshop item ${pin.item}`)
+    // no outcome means it was never queued, which is up to date OR steam refusing to serve it
+    if (unavailable.has(pin.item)) status(`${pin.id} is unavailable at workshop item ${pin.item}`)
+    else if (outcome === undefined) status(`${pin.id} is up to date at workshop item ${pin.item}`)
     else if (outcome.ok) status(`synced ${pin.id} at workshop item ${pin.item}`)
   }
 }

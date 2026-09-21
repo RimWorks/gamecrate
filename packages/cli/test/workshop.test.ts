@@ -235,6 +235,24 @@ describe('prepareWorkshop', () => {
     expect(out.unfetched).toEqual([])
   })
 
+  test('a git pin with a subdir reads the manifest under it', async () => {
+    stubSteam()
+    const w = await setup([], { '222': about('222') })
+    const nested = join(w.root, 'clone', 'Mods', 'X', 'About')
+    await mkdir(nested, { recursive: true })
+    await writeFile(join(nested, 'About.txt'), about('local', ['222']))
+    // a manifest at the clone root would be found by mistake if subdir were ignored
+    await mkdir(join(w.root, 'clone', 'About'), { recursive: true })
+    await writeFile(join(w.root, 'clone', 'About', 'About.txt'), about('wrong'))
+    w.game.profiles['p']!.mods = ['mod.local']
+    w.game.library = { 'mod.local': { git: 'https://example.com/a/b', subdir: 'Mods/X' } }
+    w.sources = new Map([['mod.local', join(w.root, 'clone')]])
+
+    const out = await prepare(w)
+
+    expect([...out.ids]).toEqual(['222'])
+  })
+
   test('a dependency named by the steam client url form is walked', async () => {
     stubSteam()
     const w = await setup(['workshop:111'], {

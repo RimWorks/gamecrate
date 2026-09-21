@@ -10,6 +10,8 @@ const TIMEOUT_MS = 5_000
 export interface DriftReport {
   /** Ids that need steamcmd, because they drifted, are absent from the .acf, or are not on disk. */
   needed: string[]
+  /** Ids steam will not serve: removed, private or hidden. Not the same as up to date. */
+  unavailable: string[]
   warnings: string[]
 }
 
@@ -38,11 +40,13 @@ export async function checkDrift(
   } catch (error) {
     return {
       needed: missing,
+      unavailable: [],
       warnings: [`could not ask steam which items changed (${reason(error)}); only missing items will download`],
     }
   }
 
   const needed = new Set(missing)
+  const unavailable: string[] = []
   const warnings: string[] = []
   for (const id of wanted) {
     const detail = details.get(id)
@@ -51,12 +55,13 @@ export async function checkDrift(
       // removed, private or hidden: anonymous steamcmd cannot fetch it, so queueing it only fails later
       warnings.push(`workshop item ${id} is not available (result ${detail.result}); skipping it`)
       needed.delete(id)
+      unavailable.push(id)
       continue
     }
     const local = loaded.get(id)
     if (local !== undefined && detail.timeUpdated > local) needed.add(id)
   }
-  return { needed: [...needed], warnings }
+  return { needed: [...needed], unavailable, warnings }
 }
 
 /**
