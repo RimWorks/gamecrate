@@ -439,7 +439,14 @@ describe('lockDir', () => {
       lockDir(dir),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('waited on a dead holder')), 2000)),
     ])
+
+    // returning fast is not the same as taking it over: the file has to name us now
+    const held = JSON.parse(readFileSync(`${dir}.lock`, 'utf8')) as { pid: number }
+    expect(held.pid).toBe(process.pid)
+    expect(held.pid).not.toBe(Number(dead))
+
     await release()
+    expect(existsSync(`${dir}.lock`)).toBe(false)
   })
 
   // a simulation, not two real processes: it plays A's read, B's legitimate take, then A's steal
