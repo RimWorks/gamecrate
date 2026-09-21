@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-import { buildIndex, globMatch, resolveModRef } from '../src/mods/modindex'
+import { buildIndex, globMatch, resolveModRef, workshopStamp } from '../src/mods/modindex'
+import { downloadRoots } from '../src/mods/steamcmd'
 import { fixturePlugin, FIXTURE_DEFAULTS, parseFixtureManifest } from './fixture-plugin'
 import type { GameConfig, ScanRoot } from '../src/types'
 
@@ -266,6 +267,391 @@ describe('source cache scanning', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
       await rm(cache, { recursive: true, force: true })
+    }
+  })
+})
+
+// ----------------------------------------------------- the download trees
+
+/** The host steamcmd binary's tree. One HOME can hold this and the docker image's at once. */
+function hostTree(dataRoot: string): string {
+  return downloadRoots(dataRoot, atlas)[0] as string
+}
+
+/** The `steamcmd/steamcmd` image's tree. */
+function dockerTree(dataRoot: string): string {
+  return downloadRoots(dataRoot, atlas)[1] as string
+}
+
+/** Where steamcmd puts the acf for a tree: one level above `content/<appid>`. */
+function acfFile(tree: string): string {
+  return join(dirname(dirname(tree)), 'appworkshop_294100.acf')
+}
+
+/** The shape steam writes, with `timetouched` in the details block steamcmd keeps rewriting. */
+function acfText(items: Record<string, string>, timetouched: string): string {
+  const installed = Object.entries(items)
+    .map(([id, manifest]) => `\t\t"${id}"\n\t\t{\n\t\t\t"timeupdated"\t\t"1752434318"\n\t\t\t"manifest"\t\t"${manifest}"\n\t\t}`)
+    .join('\n')
+  const details = Object.keys(items)
+    .map((id) => `\t\t"${id}"\n\t\t{\n\t\t\t"timetouched"\t\t"${timetouched}"\n\t\t}`)
+    .join('\n')
+  return `"AppWorkshop"\n{\n\t"appid"\t\t"294100"\n\t"WorkshopItemsInstalled"\n\t{\n${installed}\n\t}\n\t"WorkshopItemDetails"\n\t{\n${details}\n\t}\n}\n`
+}
+
+/** Keeps the workshop cache inside the fixture, so no test reads the user's real one. */
+async function privateCache(dataRoot: string): Promise<() => void> {
+  const before = process.env['XDG_CACHE_HOME']
+  process.env['XDG_CACHE_HOME'] = join(dataRoot, 'xdg')
+  await mkdir(join(dataRoot, 'xdg'), { recursive: true })
+  return () => {
+    if (before === undefined) delete process.env['XDG_CACHE_HOME']
+    else process.env['XDG_CACHE_HOME'] = before
+  }
+}
+
+describe('two workshop roots', () => {
+  test('the download root wins an id the steam root also holds', async () => {
+    const data = await fixture()
+    const ws = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const downloaded = await mod(hostTree(data), '123456', 'ws.both')
+      await mod(ws, '123456', 'ws.both')
+
+      const cfg = withRoots(atlas, [], ws)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(index.byWorkshopId.get(123456)?.dir).toBe(downloaded)
+      expect(resolveModRef(index, 'ws.both', cfg)?.dir).toBe(downloaded)
+      expect(index.byPackageId.get('ws.both')).toHaveLength(2)
+      expect(index.problems).toEqual([])
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+      await rm(ws, { recursive: true, force: true })
+    }
+  })
+
+  test('an item in only one root resolves either way', async () => {
+    const data = await fixture()
+    const ws = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const downloaded = await mod(hostTree(data), '111', 'ws.downloaded')
+      const subscribed = await mod(ws, '222', 'ws.subscribed')
+
+      const cfg = withRoots(atlas, [], ws)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(resolveModRef(index, 'ws.downloaded', cfg)?.dir).toBe(downloaded)
+      expect(resolveModRef(index, 'ws.subscribed', cfg)?.dir).toBe(subscribed)
+      expect(index.byWorkshopId.get(111)?.dir).toBe(downloaded)
+      expect(index.byWorkshopId.get(222)?.dir).toBe(subscribed)
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+      await rm(ws, { recursive: true, force: true })
+    }
+  })
+
+  test('a null workshopRoot still scans the download roots', async () => {
+    const data = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const downloaded = await mod(hostTree(data), '333', 'ws.only')
+
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(resolveModRef(index, 'ws.only', cfg)?.dir).toBe(downloaded)
+      expect(index.byWorkshopId.get(333)?.dir).toBe(downloaded)
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('both download trees', () => {
+  test('an item only the docker image downloaded still resolves', async () => {
+    const data = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const downloaded = await mod(dockerTree(data), '444', 'ws.docker')
+
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(resolveModRef(index, 'ws.docker', cfg)?.dir).toBe(downloaded)
+      expect(index.byWorkshopId.get(444)?.dir).toBe(downloaded)
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('an item only the host binary downloaded still resolves', async () => {
+    const data = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const downloaded = await mod(hostTree(data), '555', 'ws.host')
+
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(resolveModRef(index, 'ws.host', cfg)?.dir).toBe(downloaded)
+      expect(index.byWorkshopId.get(555)?.dir).toBe(downloaded)
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('the host tree wins an id both download trees hold', async () => {
+    const data = await fixture()
+    const restore = await privateCache(data)
+    try {
+      const host = await mod(hostTree(data), '666', 'ws.twice')
+      await mod(dockerTree(data), '666', 'ws.twice')
+
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin, undefined, data)
+
+      expect(index.byWorkshopId.get(666)?.dir).toBe(host)
+      expect(resolveModRef(index, 'ws.twice', cfg)?.dir).toBe(host)
+      expect(index.byPackageId.get('ws.twice')).toHaveLength(2)
+      expect(index.problems).toEqual([])
+    } finally {
+      restore()
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the workshop stamp', () => {
+  test('a timetouched rewrite does not move it', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+
+      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      const before = workshopStamp(withRoots(atlas, [], null), data)
+
+      // the measured no-op run: timetouched moves, the installed manifest does not.
+      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789948957'))
+      const after = workshopStamp(withRoots(atlas, [], null), data)
+
+      expect(after).toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('the mtime moving on its own does not move it', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      const text = acfText({ '818773962': '1025052661578487222' }, '1789944542')
+
+      await writeFile(acf, text)
+      const before = workshopStamp(withRoots(atlas, [], null), data)
+      await utimes(acf, new Date(), new Date(Date.now() + 60_000))
+      expect(workshopStamp(withRoots(atlas, [], null), data)).toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a changed manifest id moves it', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+
+      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      const before = workshopStamp(withRoots(atlas, [], null), data)
+
+      await writeFile(acf, acfText({ '818773962': '7017455373945780161' }, '1789944542'))
+      expect(workshopStamp(withRoots(atlas, [], null), data)).not.toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a new item moves it, and item order does not', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+
+      await writeFile(acf, acfText({ '111': 'aaa', '222': 'bbb' }, '1789944542'))
+      const before = workshopStamp(withRoots(atlas, [], null), data)
+
+      await writeFile(acf, acfText({ '222': 'bbb', '111': 'aaa' }, '1789944542'))
+      expect(workshopStamp(withRoots(atlas, [], null), data)).toBe(before)
+
+      await writeFile(acf, acfText({ '111': 'aaa', '222': 'bbb', '333': 'ccc' }, '1789944542'))
+      expect(workshopStamp(withRoots(atlas, [], null), data)).not.toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a missing acf is a stable stamp, not a throw', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const first = workshopStamp(cfg, data)
+      expect(first).not.toBeNull()
+      expect(workshopStamp(cfg, data)).toBe(first)
+
+      // and an acf that parses to nothing reads the same as no acf at all
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      await writeFile(acf, '')
+      expect(workshopStamp(cfg, data)).toBe(first)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a half-written acf refuses the cache instead of reading as empty', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const empty = workshopStamp(cfg, data)
+
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      const full = acfText({ '818773962': '1025052661578487222' }, '1789944542')
+      await writeFile(acf, full.slice(0, Math.floor(full.length / 2)))
+
+      expect(workshopStamp(cfg, data)).toBeNull()
+      expect(workshopStamp(cfg, data)).not.toBe(empty)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('an unreadable download acf refuses the cache', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(hostTree(data))
+      // a directory where the acf should be: readFileSync gives EISDIR, not ENOENT
+      await mkdir(acf, { recursive: true })
+      expect(workshopStamp(withRoots(atlas, [], null), data)).toBeNull()
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('an item only in the docker tree is in the stamp', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const empty = workshopStamp(cfg, data)
+
+      const acf = acfFile(dockerTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+
+      const after = workshopStamp(cfg, data)
+      expect(after).not.toBeNull()
+      expect(after).not.toBe(empty)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a timetouched rewrite in either tree does not move it', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const host = acfFile(hostTree(data))
+      const docker = acfFile(dockerTree(data))
+      await mkdir(dirname(host), { recursive: true })
+      await mkdir(dirname(docker), { recursive: true })
+
+      await writeFile(host, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      await writeFile(docker, acfText({ '2009463077': '5401740761733772414' }, '1789944542'))
+      const before = workshopStamp(cfg, data)
+      expect(before).not.toBeNull()
+
+      await writeFile(host, acfText({ '818773962': '1025052661578487222' }, '1789948957'))
+      expect(workshopStamp(cfg, data)).toBe(before)
+
+      await writeFile(docker, acfText({ '2009463077': '5401740761733772414' }, '1789948957'))
+      expect(workshopStamp(cfg, data)).toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('a changed manifest id in either tree moves it', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const host = acfFile(hostTree(data))
+      const docker = acfFile(dockerTree(data))
+      await mkdir(dirname(host), { recursive: true })
+      await mkdir(dirname(docker), { recursive: true })
+
+      await writeFile(host, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      await writeFile(docker, acfText({ '2009463077': '5401740761733772414' }, '1789944542'))
+      const before = workshopStamp(cfg, data)
+
+      await writeFile(host, acfText({ '818773962': '7017455373945780161' }, '1789944542'))
+      const hostMoved = workshopStamp(cfg, data)
+      expect(hostMoved).not.toBe(before)
+
+      await writeFile(docker, acfText({ '2009463077': '1550515154196171565' }, '1789944542'))
+      expect(workshopStamp(cfg, data)).not.toBe(hostMoved)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('an acf with an empty install block is the empty set, not a refusal', async () => {
+    const data = await fixture()
+    try {
+      const cfg = withRoots(atlas, [], null)
+      const empty = workshopStamp(cfg, data)
+      expect(empty).not.toBeNull()
+
+      // what a fresh download root looks like: valid keyvalues, nothing installed yet. refusing
+      // the cache here would cost a full workshop rescan on every launch.
+      const acf = acfFile(hostTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      await writeFile(acf, acfText({}, '1789944542'))
+
+      expect(workshopStamp(cfg, data)).toBe(empty)
+      expect(workshopStamp(cfg, data)).toBe(empty)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('the steam root keeps its mtime stamp, and an unreadable one refuses the cache', async () => {
+    const data = await fixture()
+    const ws = await fixture()
+    try {
+      // <ws>/../appworkshop_294100.acf is the steam side; it does not exist yet.
+      expect(workshopStamp(withRoots(atlas, [], join(ws, 'content', '294100')), data)).toBeNull()
+
+      const steamAcf = join(ws, 'appworkshop_294100.acf')
+      await writeFile(steamAcf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      const cfg = withRoots(atlas, [], join(ws, 'content', '294100'))
+      const before = workshopStamp(cfg, data)
+      expect(before).not.toBeNull()
+
+      await utimes(steamAcf, new Date(), new Date(Date.now() + 60_000))
+      expect(workshopStamp(cfg, data)).not.toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+      await rm(ws, { recursive: true, force: true })
     }
   })
 })

@@ -257,6 +257,7 @@ async function resolved(
     config.games[game]!,
     requirePlugin(plugins, game),
     sourcesRoot(config.dataRoot),
+    config.dataRoot,
   )
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources: sources.dirs })
   if (problems.length > 0) reportProblems(problems)
@@ -526,6 +527,7 @@ async function mods(
     config.games[game]!,
     requirePlugin(plugins, game),
     sourcesRoot(config.dataRoot),
+    config.dataRoot,
   )
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources })

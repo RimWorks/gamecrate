@@ -317,7 +317,7 @@ export async function resolvePlan(
   if (args.dockerArgs?.length) settings.dockerArgs = [...(settings.dockerArgs ?? []), ...args.dockerArgs]
 
   const plugin = requirePlugin(options.plugins, gameName)
-  const index = options.index ?? (await buildIndex(gameName, game, plugin, sourcesRoot(root.dataRoot)))
+  const index = options.index ?? (await buildIndex(gameName, game, plugin, sourcesRoot(root.dataRoot), root.dataRoot))
   await applyWorktreeRequests(index, instance.requests, game)
   problems.push(...(await applySourceOverrides(index, args.use ?? [], game)))
 

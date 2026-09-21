@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -7,6 +8,8 @@ import picomatch from 'picomatch'
 
 import { expandHome } from '../config/load'
 import { GamecrateError, Exit, own } from '../types'
+import { installedItems, parseAcf } from './acf'
+import { downloadRoots } from './steamcmd'
 import { contains } from './worktree'
 import type { GamePlugin } from '../plugin'
 import type {
@@ -165,7 +168,7 @@ async function scanGameData(
 
 // --------------------------------------------------------------------- index
 
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 
 interface CacheFile {
   version: number
@@ -173,12 +176,49 @@ interface CacheFile {
   records: ModRecord[]
 }
 
-function workshopStamp(game: GameConfig): string | null {
-  if (game.workshopRoot === null) return null
-  const acf = join(dirname(dirname(resolvePath(expandHome(game.workshopRoot)))), `appworkshop_${game.steamAppId}.acf`)
+/** Every workshop tree ends in `workshop/content/<appid>`, and the acf sits above that. */
+function acfPath(root: string, steamAppId: number): string {
+  return join(dirname(dirname(resolvePath(expandHome(root)))), `appworkshop_${steamAppId}.acf`)
+}
+
+/**
+ * steamcmd rewrites `timetouched` on every run, so an mtime stamp would never hit here. The
+ * manifest ids only move when an item does. A missing acf contributes nothing.
+ *
+ * Null is unknown content: unreadable, or bytes that parse to no keys at all. An empty install
+ * block is a real empty set, because that is what a fresh download root looks like and refusing
+ * the cache there costs a full rescan every launch.
+ */
+function contentPairs(acf: string): string[] | null {
+  let text: string
   try {
-    const info = statSync(acf)
-    return `${info.mtimeMs}:${info.size}`
+    text = readFileSync(acf, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    return null
+  }
+  const pairs = [...installedItems(text)].map(([id, item]) => `${id}:${item.manifest}`).sort()
+  // a half-written acf yields no root keys at all, and steamcmd rewrites this one in place
+  if (pairs.length === 0 && text.trim() !== '' && Object.keys(parseAcf(text)).length === 0) return null
+  return pairs
+}
+
+/**
+ * Content hash across every download root, mtime for `game.workshopRoot`. The steam client owns
+ * that one and leaves it alone when idle, and an unreadable acf there still means no caching.
+ */
+export function workshopStamp(game: GameConfig, dataRoot: string | undefined): string | null {
+  const pairs: string[] = []
+  for (const root of dataRoot === undefined ? [] : downloadRoots(dataRoot, game)) {
+    const found = contentPairs(acfPath(root, game.steamAppId))
+    if (found === null) return null
+    pairs.push(...found)
+  }
+  const download = createHash('sha1').update(pairs.sort().join('\n')).digest('hex')
+  if (game.workshopRoot === null) return download
+  try {
+    const info = statSync(acfPath(game.workshopRoot, game.steamAppId))
+    return `${download}|${info.mtimeMs}:${info.size}`
   } catch {
     return null
   }
@@ -396,14 +436,15 @@ function insert(index: ModIndex, record: ModRecord): void {
 
 /**
  * Scans the game install, then every scan root in declaration order, then the source cache,
- * then the workshop root. Local roots rescan every launch; only the workshop scan is cached,
- * against the acf stamp.
+ * then the workshop roots. Local roots rescan every launch; only the workshop scan is cached,
+ * against the acf stamps. Without `dataRoot` there is no download root to scan.
  */
 export async function buildIndex(
   game: string,
   config: GameConfig,
   plugin: GamePlugin,
   sourcesDir?: string,
+  dataRoot?: string,
 ): Promise<ModIndex> {
   const index: ModIndex = {
     game,
@@ -431,8 +472,15 @@ export async function buildIndex(
   }
   for (const record of parsed) insert(index, record)
 
-  if (config.workshopRoot !== null) {
-    const stamp = workshopStamp(config)
+  // The download roots go first, so their rootIndex is lower and they win an id steam also
+  // holds. gamecrate refreshes its copy on a known cadence; steam's only moves when the client
+  // runs. A root that is not there scans as nothing, so both layouts go in unconditionally.
+  const workshopRoots: string[] = []
+  if (dataRoot !== undefined) workshopRoots.push(...downloadRoots(dataRoot, config))
+  if (config.workshopRoot !== null) workshopRoots.push(config.workshopRoot)
+
+  if (workshopRoots.length > 0) {
+    const stamp = workshopStamp(config, dataRoot)
     const cached = stamp === null ? null : await readWorkshopCache(game, stamp)
     if (cached) {
       for (const record of cached) insert(index, record)
@@ -440,7 +488,9 @@ export async function buildIndex(
       const items: Candidate[] = []
       // +1 keeps the numbering consistent, nothing more: `kind === 'workshop'` is tier index 2,
       // ahead of rootIndex at 4, so this can never change a pick.
-      await scanWorkshopRoot(config.workshopRoot, cacheIndex + 1, config.manifest.file, items)
+      for (const [i, root] of workshopRoots.entries()) {
+        await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
+      }
       const records = await parseAll(items, config, plugin, index.problems)
       for (const record of records) insert(index, record)
       if (stamp !== null) await writeWorkshopCache(game, stamp, records)

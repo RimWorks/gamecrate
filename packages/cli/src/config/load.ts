@@ -493,6 +493,7 @@ export function deepMerge<T>(base: T, over: unknown, concatArrays = false): T {
 
 function expandPaths(config: RootConfig): RootConfig {
   config.dataRoot = expandHome(config.dataRoot)
+  if (config.steamcmd?.path !== undefined) config.steamcmd.path = expandHome(config.steamcmd.path)
   for (const game of Object.values(config.games)) {
     if (game.gameFiles.host !== undefined) game.gameFiles.host = expandHome(game.gameFiles.host)
     if (game.image.context !== undefined) game.image.context = expandHome(game.image.context)

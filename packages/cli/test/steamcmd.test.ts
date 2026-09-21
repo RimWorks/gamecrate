@@ -3,10 +3,12 @@ import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   STEAMCMD_IMAGE,
-  downloadRoot,
+  downloadItems,
+  downloadRoots,
   resolveSteamcmd,
   steamHome,
   workshopUrlId,
@@ -42,12 +44,35 @@ function config(over: Partial<RootConfig> = {}): RootConfig {
   return { dataRoot: join(tmp, 'data'), games: {}, ...over }
 }
 
-describe('downloadRoot', () => {
-  test('is the steamcmd layout under the data root', async () => {
-    await mkdir(join(tmp, 'data'), { recursive: true })
-    const game = { steamAppId: 294100 } as GameConfig
-    expect(downloadRoot('/data', game)).toBe('/data/steam/.steam/SteamApps/workshop/content/294100')
+describe('downloadRoots', () => {
+  const game = { steamAppId: 294100 } as GameConfig
+
+  /** Host layout first, then the one the docker image writes. */
+  function both(root: string): string[] {
+    return [
+      join(steamHome(root), '.steam/SteamApps/workshop/content/294100'),
+      join(steamHome(root), '.local/share/Steam/steamapps/workshop/content/294100'),
+    ]
+  }
+
+  test('returns both layouts, host first, with nothing on disk', () => {
+    expect(downloadRoots('/data', game)).toEqual([
+      '/data/steam/.steam/SteamApps/workshop/content/294100',
+      '/data/steam/.local/share/Steam/steamapps/workshop/content/294100',
+    ])
     expect(steamHome('/data')).toBe('/data/steam')
+  })
+
+  test('returns the same two when only the docker tree exists', async () => {
+    const root = await mkdtemp(join(tmp, 'docker-layout-'))
+    await mkdir(both(root)[1] as string, { recursive: true })
+    expect(downloadRoots(root, game)).toEqual(both(root))
+  })
+
+  test('returns the same two when only the host tree exists', async () => {
+    const root = await mkdtemp(join(tmp, 'host-layout-'))
+    await mkdir(both(root)[0] as string, { recursive: true })
+    expect(downloadRoots(root, game)).toEqual(both(root))
   })
 })
 
@@ -162,5 +187,104 @@ describe('workshopUrlId', () => {
 
   test.each(cases)('%s -> %s', (url, expected) => {
     expect(workshopUrlId(url)).toBe(expected)
+  })
+})
+
+describe('downloadItems', () => {
+  const FAKE = fileURLToPath(new URL('./fixtures/fake-steamcmd.sh', import.meta.url))
+  const game = { steamAppId: 294100 } as GameConfig
+  /** Where the fake writes, which is the host layout. */
+  const hostRoot = (root: string): string => downloadRoots(root, game)[0] as string
+  const fakeEnv = ['FAKE_FAIL_IDS', 'FAKE_SKIP_IDS', 'FAKE_FLAKY_IDS', 'FAKE_BYTES', 'FAKE_EXIT']
+
+  afterEach(() => {
+    for (const key of fakeEnv) delete process.env[key]
+  })
+
+  /** A data root of its own, wired to the fake, so the tests never touch the network. */
+  async function fake(path = FAKE): Promise<{ root: string; cfg: RootConfig }> {
+    const root = await mkdtemp(join(tmp, 'dl-'))
+    return { root, cfg: { dataRoot: root, games: {}, steamcmd: { path } } }
+  }
+
+  test('parses items out of jammed, coloured output', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_BYTES = '2463770'
+    const report = await downloadItems(cfg, game, root, ['818773962', '777'])
+
+    expect(report.warnings).toEqual([])
+    expect(report.items.get('818773962')).toEqual({
+      ok: true,
+      dir: join(hostRoot(root), '818773962'),
+      bytes: 2463770,
+    })
+    expect(report.items.get('777')).toEqual({
+      ok: true,
+      dir: join(hostRoot(root), '777'),
+      bytes: 2463770,
+    })
+    expect(existsSync(join(hostRoot(root), '777', 'About', 'About.xml'))).toBe(true)
+  })
+
+  test('an id the output never mentions is a failure', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_SKIP_IDS = '777'
+    const report = await downloadItems(cfg, game, root, ['818773962', '777'])
+
+    expect(report.items.get('818773962')?.ok).toBe(true)
+    expect(report.items.get('777')).toEqual({ ok: false, reason: 'steamcmd reported nothing for it' })
+    expect(report.warnings).toEqual(['could not download workshop item 777: steamcmd reported nothing for it'])
+  })
+
+  test('an ERROR! line is a warning, and the rest still land', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_FAIL_IDS = '777'
+    const report = await downloadItems(cfg, game, root, ['818773962', '777'])
+
+    expect(report.items.get('818773962')?.ok).toBe(true)
+    expect(report.items.get('777')).toEqual({ ok: false, reason: 'Failure' })
+    expect(report.warnings).toEqual(['could not download workshop item 777: Failure'])
+  })
+
+  test('a non-zero exit with every item downloaded is a success', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_EXIT = '7'
+    const report = await downloadItems(cfg, game, root, ['818773962'])
+
+    expect(report.warnings).toEqual([])
+    expect(report.items.get('818773962')?.ok).toBe(true)
+  })
+
+  test('locks the steam home while steamcmd runs', async () => {
+    const { root, cfg } = await fake()
+    await downloadItems(cfg, game, root, ['777'])
+    // the fake records what it saw, because the lock is gone by the time this test can look
+    expect(existsSync(join(steamHome(root), 'lock-seen'))).toBe(true)
+    expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
+  })
+
+  test('releases the lock when the spawn throws', async () => {
+    const broken = join(await mkdtemp(join(tmp, 'broken-')), 'steamcmd')
+    await writeFile(broken, '#!/nonexistent/sh\n')
+    await chmod(broken, 0o755)
+    const { root, cfg } = await fake(broken)
+
+    await expect(downloadItems(cfg, game, root, ['777'])).rejects.toThrow(/could not run steamcmd/)
+    expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
+  })
+
+  test('retries an id that failed transiently', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_FLAKY_IDS = '777'
+    const report = await downloadItems(cfg, game, root, ['818773962', '777'])
+
+    expect(report.warnings).toEqual([])
+    expect(report.items.get('777')?.ok).toBe(true)
+  })
+
+  test('no ids never spawns anything', async () => {
+    const { root, cfg } = await fake(join(tmp, 'missing-steamcmd'))
+    const report = await downloadItems(cfg, game, root, [])
+    expect(report.items.size).toBe(0)
   })
 })

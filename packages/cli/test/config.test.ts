@@ -680,6 +680,27 @@ describe('loadConfig', () => {
     expect(config.dataRoot.startsWith('~')).toBe(false)
   })
 
+  test('a steamcmd path is expanded like every other host path', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePlugin(dir)
+    const file = join(dir, 'profiles.json')
+    const read = async (steamcmd: string): Promise<RootConfig> => {
+      await writeFile(file, `{ "plugins": ["./atlas-plugin.ts"], ${steamcmd} }`)
+      return (await loadConfig(file)).config
+    }
+
+    expect((await read('"steamcmd": { "path": "~/steamcmd/steamcmd.sh" }')).steamcmd?.path).toBe(
+      join(homedir(), 'steamcmd/steamcmd.sh'),
+    )
+    expect((await read('"steamcmd": { "path": "/usr/games/steamcmd" }')).steamcmd?.path).toBe(
+      '/usr/games/steamcmd',
+    )
+    expect((await read('"steamcmd": { "path": "./bin/steamcmd.sh" }')).steamcmd?.path).toBe(
+      './bin/steamcmd.sh',
+    )
+    expect((await read('"dataRoot": "/tmp/gc"')).steamcmd).toBeUndefined()
+  })
+
   test('a plugin named by path is loaded from the config directory, not the cwd', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
     await writePlugin(dir)
