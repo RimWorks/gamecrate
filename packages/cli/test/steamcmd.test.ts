@@ -172,6 +172,15 @@ describe('resolveSteamcmd', () => {
 describe('workshopUrlId', () => {
   const cases: [string | undefined, string | undefined][] = [
     ['https://steamcommunity.com/sharedfiles/filedetails/?id=818773962', '818773962'],
+    // the form 251 of 323 real About.xml dependencies use
+    ['steam://url/CommunityFilePage/818773962', '818773962'],
+    ['steam://url/communityfilepage/12', '12'],
+    ['  steam://url/CommunityFilePage/77  ', '77'],
+    ['steam://url/CommunityFilePage/', undefined],
+    ['steam://url/CommunityFilePage/12a', undefined],
+    ['steam://url/CommunityFilePage/1/2', undefined],
+    ['steam://url/StoreAppPage/3022790', undefined],
+    ['https://store.steampowered.com/app/3022790', undefined],
     ['https://www.steamcommunity.com/workshop/filedetails/?id=12', '12'],
     ['https://steamcommunity.com/sharedfiles/filedetails/?searchtext=a&id=77', '77'],
     ['https://steamcommunity.com/sharedfiles/filedetails/?id=77&searchtext=a', '77'],

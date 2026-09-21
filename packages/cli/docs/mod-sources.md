@@ -88,6 +88,10 @@ dependency of a dependency still arrives. A chain still unresolved after five ro
 launch problem that names the ids left over. Name them in the profile to get them in the first
 round.
 
+Mods you pin yourself count as well. A launch reads the manifest of every `path:` and `git:`
+mod the profile reaches, and fetches the workshop items they depend on. So a profile that
+pins only your own mod still gets the libraries it declares.
+
 A download that fails is a warning, not a failure. The launch keeps going with whatever is
 already on disk. It then reports each item still missing against the profile entry that wanted
 it.

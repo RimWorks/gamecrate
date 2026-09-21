@@ -73,6 +73,11 @@ function itemUrl(id: string): string {
   return `https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`
 }
 
+/** The form 251 of 323 real About files use, which `new URL` reads with hostname "url". */
+function clientUrl(id: string): string {
+  return `steam://url/CommunityFilePage/${id}`
+}
+
 /** A manifest naming `deps` by workshop url, the shape a real About file carries. */
 function about(id: string, deps: string[] = []): string {
   return [`packageid mod.${id}`, ...deps.map((dep) => `dep mod.${dep} ${itemUrl(dep)}`)].join('\n')
@@ -83,6 +88,8 @@ interface World {
   config: RootConfig
   root: string
   manifests: string
+  /** lowercased packageId -> clone dir, the map prepareSources hands a launch. */
+  sources?: Map<string, string>
 }
 
 /**
@@ -159,7 +166,7 @@ function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
 }
 
 async function prepare(w: World, args: Partial<ParsedArgs> = {}, allowFetch = true): ReturnType<typeof prepareWorkshop> {
-  return await prepareWorkshop(w.game, 'p', cliArgs(args), w.config, allowFetch, depPlugin())
+  return await prepareWorkshop(w.game, 'p', cliArgs(args), w.config, allowFetch, depPlugin(), w.sources ?? new Map())
 }
 
 describe('prepareWorkshop', () => {
@@ -195,6 +202,50 @@ describe('prepareWorkshop', () => {
     expect(out.problems).toEqual([])
     expect(out.unfetched).toEqual([])
     expect(asked).toEqual([['111'], ['222'], ['333']])
+  })
+
+  test('a path-pinned mod seeds the walk with its own workshop dependencies', async () => {
+    stubSteam()
+    const w = await setup([], { '222': about('222') })
+    const local = join(w.root, 'local-mod', 'About')
+    await mkdir(local, { recursive: true })
+    await writeFile(join(local, 'About.txt'), about('local', ['222']))
+    w.game.profiles['p']!.mods = [{ id: 'mod.local', path: join(w.root, 'local-mod') }]
+
+    const out = await prepare(w)
+
+    expect([...out.ids]).toEqual(['222'])
+    expect(out.unfetched).toEqual([])
+    expect(asked).toEqual([['222']])
+  })
+
+  test('a git-pinned mod seeds the walk from its clone directory', async () => {
+    stubSteam()
+    const w = await setup([], { '222': about('222') })
+    const clone = join(w.root, 'clone', 'About')
+    await mkdir(clone, { recursive: true })
+    await writeFile(join(clone, 'About.txt'), about('local', ['222']))
+    w.game.profiles['p']!.mods = ['mod.local']
+    w.game.library = { 'mod.local': { git: 'https://example.com/a/b' } }
+    w.sources = new Map([['mod.local', join(w.root, 'clone')]])
+
+    const out = await prepare(w)
+
+    expect([...out.ids]).toEqual(['222'])
+    expect(out.unfetched).toEqual([])
+  })
+
+  test('a dependency named by the steam client url form is walked', async () => {
+    stubSteam()
+    const w = await setup(['workshop:111'], {
+      '111': [`packageid mod.111`, `dep mod.222 ${clientUrl('222')}`].join('\n'),
+      '222': about('222'),
+    })
+
+    const out = await prepare(w)
+
+    expect([...out.ids].sort()).toEqual(['111', '222'])
+    expect(out.unfetched).toEqual([])
   })
 
   test('a cycle terminates instead of spinning', { timeout: 10_000 }, async () => {

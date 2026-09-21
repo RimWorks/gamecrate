@@ -102,6 +102,10 @@ function onPath(name: string): string | undefined {
 /** The published file id out of a workshop url, or undefined if it is not one. */
 export function workshopUrlId(url: string | undefined): string | undefined {
   if (url === undefined) return undefined
+  // About.xml names the steam client form far more often than the web one: 251 against 72 in a
+  // real 367-mod library. StoreAppPage is a store page, not a workshop item, so it stays out.
+  const client = /^steam:\/\/url\/CommunityFilePage\/(\d+)$/i.exec(url.trim())
+  if (client !== null) return client[1]
   let parsed: URL
   try {
     parsed = new URL(url)

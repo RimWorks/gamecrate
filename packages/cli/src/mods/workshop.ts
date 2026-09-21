@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 
-import { resolveProfile } from '../config/load'
+import { expandHome, resolveProfile } from '../config/load'
 import { libraryPin, reachedEntries } from './source'
 import { downloadItems, downloadRoots, workshopUrlId } from './steamcmd'
 import { checkDrift } from './workshopapi'
@@ -43,13 +43,18 @@ export async function prepareWorkshop(
   config: RootConfig,
   allowFetch: boolean,
   plugin: GamePlugin,
+  sources: ReadonlyMap<string, string>,
 ): Promise<PreparedWorkshop> {
   const roots = mountedRoots(config.dataRoot, game)
   const ids = new Set<string>()
   const warnings: string[] = []
   const problems: Problem[] = []
 
-  let frontier = wantedIds(game, resolveProfile(game, profileName), args)
+  const profile = resolveProfile(game, profileName)
+  // a mod you pin yourself declares workshop dependencies too, and that is the whole point of a
+  // dev profile: the local mod is the thing under test, and HugsLib is what it needs to boot
+  const seeded = await localSeeds(game, profile, args, sources, plugin, problems)
+  let frontier = [...new Set([...wantedIds(game, profile, args), ...seeded])]
   for (let round = 0; round < ROUNDS && frontier.length > 0; round++) {
     for (const id of frontier) ids.add(id)
     if (allowFetch) {
@@ -108,7 +113,15 @@ async function manifestOf(
   problems: Problem[],
 ): Promise<ModManifest | null> {
   const dir = itemDir(roots, id)
-  if (dir === undefined) return null
+  return dir === undefined ? null : await manifestAt(dir, game, plugin, problems)
+}
+
+async function manifestAt(
+  dir: string,
+  game: GameConfig,
+  plugin: GamePlugin,
+  problems: Problem[],
+): Promise<ModManifest | null> {
   const file = join(dir, game.manifest.file)
   if (!existsSync(file)) return null
   try {
@@ -117,6 +130,53 @@ async function manifestOf(
     problems.push({ where: file, message: error instanceof Error ? error.message : String(error) })
     return null
   }
+}
+
+/** Workshop ids the profile's own path- and git-pinned mods declare as dependencies. */
+async function localSeeds(
+  game: GameConfig,
+  profile: ProfileConfig,
+  args: Partial<ParsedArgs>,
+  sources: ReadonlyMap<string, string>,
+  plugin: GamePlugin,
+  problems: Problem[],
+): Promise<string[]> {
+  const out = new Set<string>()
+  for (const dir of localDirs(game, profile, args, sources)) {
+    const manifest = await manifestAt(dir, game, plugin, problems)
+    for (const dep of manifest?.modDependencies ?? []) {
+      const id = workshopUrlId(dep.steamWorkshopUrl)
+      if (id !== undefined) out.add(id)
+    }
+  }
+  return [...out]
+}
+
+// `sources` is keyed by lowercased packageId, the map prepareSources hands resolvePlan
+function localDirs(
+  game: GameConfig,
+  profile: ProfileConfig,
+  args: Partial<ParsedArgs>,
+  sources: ReadonlyMap<string, string>,
+): string[] {
+  const out = new Set<string>()
+  for (const entry of reachedEntries(game, profile, args)) {
+    if (typeof entry !== 'string' && 'match' in entry) continue
+    const object = typeof entry === 'string' ? { id: entry } : entry
+    if (object.path !== undefined) {
+      out.add(resolvePath(expandHome(object.path)))
+      continue
+    }
+    if (object.id.includes(':')) continue
+    const clone = sources.get(object.id.toLowerCase())
+    if (clone !== undefined) {
+      out.add(clone)
+      continue
+    }
+    const pin = libraryPin(game, object.id)
+    if (pin?.path !== undefined) out.add(resolvePath(expandHome(pin.path)))
+  }
+  return [...out]
 }
 
 function wantedIds(game: GameConfig, profile: ProfileConfig, args: Partial<ParsedArgs>): string[] {

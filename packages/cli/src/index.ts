@@ -240,7 +240,7 @@ async function run(
   const allowFetch = !args.dryRun && !args.printPlan
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
   try {
-    const workshop = await prepareWorkshop(gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game))
+    const workshop = await prepareWorkshop(gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game), sources.dirs)
     return await resolved(argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch)
   } finally {
     await sources.release()
@@ -547,8 +547,9 @@ async function mods(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
+  const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   // listing never downloads, so an id a launch would fetch comes back as unfetched, not missing.
-  const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game))
+  const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game), sources)
   for (const warning of workshop.warnings) warn(warning)
   const index = await buildIndex(
     game,
@@ -557,7 +558,6 @@ async function mods(
     sourcesRoot(config.dataRoot),
     config.dataRoot,
   )
-  const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources, unfetched: workshop.unfetched })
   const fatal = warnUnfetched([...workshop.problems, ...problems], workshop.unfetched)
   if (fatal.length > 0) reportProblems(fatal)
@@ -572,6 +572,11 @@ async function mods(
 function usesWorkshop(game: GameConfig): boolean {
   for (const entry of Object.values(game.library ?? {})) {
     if (entry.workshop !== undefined) return true
+  }
+  // preCore, core, dlc and base reach a launch too, so a workshop ref parked in one of them
+  // needs steamcmd just as much as one named in a profile
+  for (const ref of [...(game.preCore ?? []), game.core, ...game.dlc, ...(game.base ?? [])]) {
+    if (ref.startsWith('workshop:')) return true
   }
   for (const profile of Object.values(game.profiles)) {
     for (const entry of profile.mods ?? []) {
