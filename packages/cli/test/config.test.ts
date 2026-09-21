@@ -349,6 +349,29 @@ describe('validateConfig', () => {
     expect(find(bad.problems, '/games/atlas/dataDir/env')).toBeDefined()
   })
 
+  test('the steamcmd block is optional, and so is its path', () => {
+    expect(merged({}).problems).toEqual([])
+    expect(merged({ steamcmd: { path: '/usr/games/steamcmd' } }).problems).toEqual([])
+    expect(merged({ steamcmd: {} }).problems).toEqual([])
+  })
+
+  test('a non-string steamcmd path is reported with a pointer', () => {
+    const { problems } = merged({ steamcmd: { path: 7 } })
+    expect(find(problems, 'expected a string')?.where).toBe('/steamcmd/path')
+  })
+
+  test('a non-string steamcmd path fails the load with a config exit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePlugin(dir)
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{ "plugins": ["./atlas-plugin.ts"], "steamcmd": { "path": 7 } }')
+
+    const error = (await loadConfig(file).catch((e: unknown) => e)) as GamecrateError
+    expect(error).toBeInstanceOf(GamecrateError)
+    expect(error.code).toBe(Exit.Config)
+    expect(error.detail).toContain('/steamcmd/path')
+  })
+
   test('wrong types are reported, not coerced', () => {
     const { problems } = merged({ games: { atlas: { steamAppId: '294100' } } })
     expect(find(problems, 'expected a number')?.where).toBe('/games/atlas/steamAppId')

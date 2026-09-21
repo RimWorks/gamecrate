@@ -12,7 +12,7 @@ import {
   defaultBranch,
   ensureClone,
   gitRefOf,
-  lockClone,
+  lockDir,
   normalizeUrl,
 } from '../mods/source'
 import type { GitRef } from '../mods/source'
@@ -182,7 +182,7 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
     // the fetch dedupes, the report does not: every id the user named gets its own line
     if (!fetched.has(dir)) {
       fetched.add(dir)
-      const unlock = await lockClone(dir)
+      const unlock = await lockDir(dir)
       try {
         // `force` is the point: a plain fetch never moves a tag, and never resets toward a commit.
         const result = await ensureClone(ctx.config.dataRoot, gitPin(pin.git, pin.entry), ref, 'force')
@@ -301,7 +301,7 @@ async function discover(
 
   const ref = source.ref ?? defaultBranch(source.url)
   const dir = cloneDir(ctx.config.dataRoot, source.url, ref)
-  const unlock = await lockClone(dir)
+  const unlock = await lockDir(dir)
   let root: string
   try {
     const result = await ensureClone(ctx.config.dataRoot, { url: source.url }, ref, 'fetch')

@@ -236,6 +236,7 @@ const root = obj({
   plugins: strArray.optional(),
   dataRoot: str,
   defaults: obj({ settings: settings.optional() }).optional(),
+  steamcmd: obj({ path: str.optional() }).optional(),
   // Checked per game below, so the pointers stay rooted at each game's name.
   games: z.unknown(),
 })

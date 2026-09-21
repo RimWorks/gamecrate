@@ -222,6 +222,8 @@ export interface RootConfig {
   plugins?: string[]
   dataRoot: string
   defaults?: { settings?: Partial<Settings> }
+  /** Where the steamcmd binary is. Root level, not per game, because it names a host tool. */
+  steamcmd?: { path?: string }
   games: Record<string, GameConfig>
 }
 

@@ -165,8 +165,8 @@ function staleWarning(dir: string, url: string, step: string): string {
 // scope is the caller's call: `prepareSources` holds it across a whole build, `mods sync` wraps
 // it tightly around one `ensureClone`. the record is the launch lock's pid/startedAt shape, so
 // `isRunning` can tell a live holder from a crashed one and this takes the lock over rather than
-// wedging the clone forever
-export async function lockClone(dir: string): Promise<() => Promise<void>> {
+// wedging the directory forever
+export async function lockDir(dir: string): Promise<() => Promise<void>> {
   const path = `${dir}.lock`
   await mkdir(dirname(path), { recursive: true })
   const deadline = Date.now() + LOCK_TIMEOUT_MS
@@ -348,7 +348,7 @@ export async function prepareSources(
     // two runs take the same pair of locks in opposite order and sit on the timeout
     for (const dir of [...jobs.keys()].sort()) {
       const job = jobs.get(dir) as { pin: GitPin; ref: GitRef }
-      locks.push(await lockClone(dir))
+      locks.push(await lockDir(dir))
       const result = await ensureClone(dataRoot, job.pin, job.ref, allowFetch ? 'fetch' : 'use')
       fetched.push(result.dir)
       if (result.warning !== undefined) warnings.push(result.warning)

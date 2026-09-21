@@ -9,7 +9,7 @@ import { Exit } from '../src/types'
 import type { GameConfig, GamecrateError, LaunchPlan, ParsedArgs, Problem, ProfileConfig } from '../src/types'
 import { buildIndex } from '../src/mods/modindex'
 import { resolvePlan } from '../src/launch/resolve'
-import { cachedSources, cloneDir, defaultBranch, ensureClone, gitRefOf, isMoving, lockClone, normalizeUrl, prepareSources, sourcesRoot, unlinkOrphan } from '../src/mods/source'
+import { cachedSources, cloneDir, defaultBranch, ensureClone, gitRefOf, isMoving, lockDir, normalizeUrl, prepareSources, sourcesRoot, unlinkOrphan } from '../src/mods/source'
 
 const ROOT = '/data/gamecrate'
 const MAIN = { kind: 'branch', value: 'main' } as const
@@ -408,14 +408,14 @@ describe('ensureClone', () => {
   })
 })
 
-describe('lockClone', () => {
+describe('lockDir', () => {
   test('is exclusive until released', async () => {
     const root = temp('gc-data-')
     const dir = join(root, 'sources', 'x')
-    const release = await lockClone(dir)
+    const release = await lockDir(dir)
 
     let taken = false
-    const second = lockClone(dir).then((r) => {
+    const second = lockDir(dir).then((r) => {
       taken = true
       return r
     })
@@ -436,7 +436,7 @@ describe('lockClone', () => {
     writeFileSync(`${dir}.lock`, JSON.stringify({ pid: Number(dead), startedAt: new Date().toISOString() }))
 
     const release = await Promise.race([
-      lockClone(dir),
+      lockDir(dir),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('waited on a dead holder')), 2000)),
     ])
     await release()
@@ -492,10 +492,10 @@ describe('lockClone', () => {
   test('releasing twice does not unlink the next holder', async () => {
     const root = temp('gc-data-')
     const dir = join(root, 'sources', 'x')
-    const release = await lockClone(dir)
+    const release = await lockDir(dir)
     await release()
 
-    const second = await lockClone(dir)
+    const second = await lockDir(dir)
     await release()
     expect(existsSync(`${dir}.lock`)).toBe(true)
     await second()
@@ -694,7 +694,7 @@ describe('prepareSources', () => {
     expect(existsSync(`${dir}.lock`)).toBe(true)
     await result.release()
 
-    const again = await lockClone(dir)
+    const again = await lockDir(dir)
     await again()
   })
 
