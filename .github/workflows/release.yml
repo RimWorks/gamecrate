@@ -58,7 +58,7 @@ jobs:
         run: |
           npm config set @discordservers:registry https://npm.pkg.github.com
           npm config set //npm.pkg.github.com/:_authToken "$GITHUB_PACKAGES_TOKEN"
-          npm install --no-save \
+          npm install --no-save --ignore-scripts \
             semantic-release@25.0.9 \
             @discordservers/semantic-release-monorepo@1.0.0
 
