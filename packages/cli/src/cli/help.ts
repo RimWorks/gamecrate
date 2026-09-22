@@ -86,7 +86,7 @@ function gameHelp(name: string, game: GameConfig): string {
     const notes: string[] = []
     if (config.alias) notes.push(`alias for ${config.alias}`)
     if (config.extends) notes.push(`extends ${config.extends}`)
-    if (config.autoDependencies) notes.push('auto dependencies')
+    if (config.autoDependencies === false) notes.push('no auto dependencies')
     const count = config.mods?.length ?? 0
     if (!config.alias) notes.push(count === 1 ? '1 entry' : `${count} entries`)
   if (config.aliases?.length) notes.push(`aka ${config.aliases.join(', ')}`)

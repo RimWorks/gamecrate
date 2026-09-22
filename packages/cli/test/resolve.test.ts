@@ -380,7 +380,7 @@ describe('autoDependencies', () => {
   })
 
   test('dependencies stay uninserted when autoDependencies is off', async () => {
-    const game = beacon({ sundial: { mods: ['Example.Sundial'] } })
+    const game = beacon({ sundial: { mods: ['Example.Sundial'], autoDependencies: false } })
     index = makeIndex([
       { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
       { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
@@ -396,6 +396,26 @@ describe('autoDependencies', () => {
       index,
     })
     expect(plan.mods.map((m) => m.packageId)).not.toContain('Kitted.Core')
+  })
+
+  test('a declared dependency is inserted by default', async () => {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Kitted.Core'] },
+      { id: 'Kitted.Core', dir: await modDir('KittedCore') },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+    })
+    // gamecrate downloads a declared dependency anyway, so refusing to load it only breaks the game
+    expect(plan.mods.map((m) => m.packageId)).toContain('Kitted.Core')
   })
 })
 

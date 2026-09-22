@@ -327,7 +327,9 @@ export async function resolvePlan(
     }
   }
 
-  if (profile.autoDependencies === true) insertDependencies(staged, present, index, game, problems)
+  // on by default: a mod that declares a dependency does not work without it, and gamecrate
+  // downloads the declared ones anyway. set autoDependencies: false to keep a list literal.
+  if (profile.autoDependencies !== false) insertDependencies(staged, present, index, game, problems)
   // insertDependencies stays network-free, so relabel its misses here instead of teaching it.
   if (unfetched.size > 0) {
     for (const problem of problems) {

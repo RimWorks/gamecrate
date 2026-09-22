@@ -174,6 +174,7 @@ export interface ProfileConfig {
   extends?: string
   exclude?: string[]
   includeBase?: boolean
+  /** Default true. False keeps the mod list literal, dependencies and all. */
   autoDependencies?: boolean
   settings?: Partial<Settings>
   instances?: Record<string, InstanceConfig>

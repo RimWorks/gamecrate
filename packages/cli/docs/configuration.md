@@ -130,8 +130,12 @@ A profile names a mod set. Each entry under `mods` takes one of three shapes:
 
 `extends` inherits a parent profile's mods and appends its own. `exclude` drops entries by glob,
 and a child's list adds to its parent's. `includeBase: false` leaves out the game's `base` list.
-`autoDependencies: true` inserts each mod's declared dependencies ahead of it. A dependency that
-is not installed is a launch problem.
+`autoDependencies` inserts each mod's declared dependencies ahead of it, and it is on unless you
+set it to `false`. A mod does not work without the dependencies it
+declares. Gamecrate downloads the declared ones anyway, so leaving them out of the load order
+only breaks the game.
+Set it to `false` when you want the mod list taken literally. A dependency that is not installed
+is a launch problem.
 
 `alias` marks a profile as another name for an existing one, and it cannot carry `mods` or
 `extends` of its own. `aliases` gives one profile extra names. Both share the parent's data
