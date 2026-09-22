@@ -53,7 +53,9 @@ function body(text: string, start: number, depth: number): { node: AcfNode; next
     i = skip(text, i)
     // EOF closes the root and nothing else, so an unterminated brace fails the whole parse.
     if (i >= text.length) return depth === 0 ? { node, next: i } : null
-    if (text[i] === '}') return depth === 0 ? null : { node, next: i + 1 }
+    // a stray close brace at the root is malformed, the same way an unterminated one is
+    if (text[i] === '}' && depth === 0) return null
+    if (text[i] === '}') return { node, next: i + 1 }
     if (text[i] !== '"') return null
 
     const next = readEntry(text, i, depth, node)
