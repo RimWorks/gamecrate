@@ -57,27 +57,8 @@ export async function prepareWorkshop(
   let frontier = [...new Set([...wantedIds(game, profile, args), ...seeded])]
   for (let round = 0; round < ROUNDS && frontier.length > 0; round++) {
     for (const id of frontier) ids.add(id)
-    if (allowFetch) {
-      try {
-        const drift = await checkDrift(frontier, roots)
-        warnings.push(...drift.warnings)
-        const downloaded = await downloadItems(config, game, config.dataRoot, drift.needed)
-        warnings.push(...downloaded.warnings)
-      } catch (error) {
-        // a launch downloads on the side, so no downloader is a warning here. what is missing
-        // comes back through unfetched. `mods add` and `mods sync` still throw.
-        warnings.push(`could not download workshop items: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-    const next = new Set<string>()
-    for (const id of frontier) {
-      const manifest = await manifestOf(roots, id, game, plugin, problems)
-      for (const dep of manifest?.modDependencies ?? []) {
-        const depId = workshopUrlId(dep.steamWorkshopUrl)
-        if (depId !== undefined && !ids.has(depId)) next.add(depId)
-      }
-    }
-    frontier = [...next]
+    if (allowFetch) warnings.push(...(await fetchRound(config, game, roots, frontier)))
+    frontier = await dependenciesOf(frontier, ids, roots, game, plugin, problems)
   }
 
   if (frontier.length > 0) {
@@ -88,6 +69,44 @@ export async function prepareWorkshop(
     })
   }
   return { ids, warnings, problems, unfetched: [...ids].filter((id) => itemDir(roots, id) === undefined) }
+}
+
+/** Downloads whatever this round is missing. Returns warnings; it never throws. */
+async function fetchRound(
+  config: RootConfig,
+  game: GameConfig,
+  roots: string[],
+  frontier: string[],
+): Promise<string[]> {
+  try {
+    const drift = await checkDrift(frontier, roots)
+    const downloaded = await downloadItems(config, game, config.dataRoot, drift.needed)
+    return [...drift.warnings, ...downloaded.warnings]
+  } catch (error) {
+    // a launch downloads on the side, so no downloader is a warning here. what is missing
+    // comes back through unfetched. `mods add` and `mods sync` still throw.
+    return [`could not download workshop items: ${error instanceof Error ? error.message : String(error)}`]
+  }
+}
+
+/** The workshop ids this round's manifests name, minus everything already walked. */
+async function dependenciesOf(
+  frontier: string[],
+  seen: Set<string>,
+  roots: string[],
+  game: GameConfig,
+  plugin: GamePlugin,
+  problems: Problem[],
+): Promise<string[]> {
+  const next = new Set<string>()
+  for (const id of frontier) {
+    const manifest = await manifestOf(roots, id, game, plugin, problems)
+    for (const dep of manifest?.modDependencies ?? []) {
+      const depId = workshopUrlId(dep.steamWorkshopUrl)
+      if (depId !== undefined && !seen.has(depId)) next.add(depId)
+    }
+  }
+  return [...next]
 }
 
 /**
@@ -161,24 +180,28 @@ function localDirs(
 ): string[] {
   const out = new Set<string>()
   for (const entry of reachedEntries(game, profile, args)) {
-    if (typeof entry !== 'string' && 'match' in entry) continue
-    const object = typeof entry === 'string' ? { id: entry } : entry
-    if (object.path !== undefined) {
-      out.add(resolvePath(expandHome(object.path)))
-      continue
-    }
-    if (object.id.includes(':')) continue
-    const pin = libraryPin(game, object.id)
-    const clone = sources.get(object.id.toLowerCase())
-    if (clone !== undefined) {
-      // the map holds clone roots, and a pin's subdir sits under one. refFor joins it the same
-      // way, and without it the manifest is looked for in the wrong directory
-      out.add(pin?.subdir === undefined ? clone : join(clone, pin.subdir))
-      continue
-    }
-    if (pin?.path !== undefined) out.add(resolvePath(expandHome(pin.path)))
+    const dir = localDirOf(entry, game, sources)
+    if (dir !== undefined) out.add(dir)
   }
   return [...out]
+}
+
+/** Where one entry's own files sit, or undefined when it is not pinned locally. */
+function localDirOf(
+  entry: ModEntry,
+  game: GameConfig,
+  sources: ReadonlyMap<string, string>,
+): string | undefined {
+  if (typeof entry !== 'string' && 'match' in entry) return undefined
+  const object = typeof entry === 'string' ? { id: entry } : entry
+  if (object.path !== undefined) return resolvePath(expandHome(object.path))
+  if (object.id.includes(':')) return undefined
+  const pin = libraryPin(game, object.id)
+  const clone = sources.get(object.id.toLowerCase())
+  // the map holds clone roots, and a pin's subdir sits under one. refFor joins it the same
+  // way, and without it the manifest is looked for in the wrong directory
+  if (clone !== undefined) return pin?.subdir === undefined ? clone : join(clone, pin.subdir)
+  return pin?.path === undefined ? undefined : resolvePath(expandHome(pin.path))
 }
 
 function wantedIds(game: GameConfig, profile: ProfileConfig, args: Partial<ParsedArgs>): string[] {

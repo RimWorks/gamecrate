@@ -56,25 +56,31 @@ function body(text: string, start: number, depth: number): { node: AcfNode; next
     if (text[i] === '}') return depth === 0 ? null : { node, next: i + 1 }
     if (text[i] !== '"') return null
 
-    const key = quoted(text, i)
-    if (key === null) return null
-    i = skip(text, key.next)
-    if (i >= text.length) return null
-
-    if (text[i] === '{') {
-      const child = body(text, i + 1, depth + 1)
-      if (child === null) return null
-      node[key.value] = child.node
-      i = child.next
-      continue
-    }
-
-    if (text[i] !== '"') return null
-    const value = quoted(text, i)
-    if (value === null) return null
-    node[key.value] = value.value
-    i = value.next
+    const next = readEntry(text, i, depth, node)
+    if (next === null) return null
+    i = next
   }
+}
+
+/** Reads one `"key" "value"` or `"key" { ... }` into node. Returns the index after it. */
+function readEntry(text: string, start: number, depth: number, node: AcfNode): number | null {
+  const key = quoted(text, start)
+  if (key === null) return null
+  const i = skip(text, key.next)
+  if (i >= text.length) return null
+
+  if (text[i] === '{') {
+    const child = body(text, i + 1, depth + 1)
+    if (child === null) return null
+    node[key.value] = child.node
+    return child.next
+  }
+
+  if (text[i] !== '"') return null
+  const value = quoted(text, i)
+  if (value === null) return null
+  node[key.value] = value.value
+  return value.next
 }
 
 /** Parses KeyValues text. A malformed file is an empty object, never a throw. */

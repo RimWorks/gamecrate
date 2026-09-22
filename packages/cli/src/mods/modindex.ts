@@ -214,7 +214,7 @@ export function workshopStamp(game: GameConfig, dataRoot: string | undefined): s
     if (found === null) return null
     pairs.push(...found)
   }
-  const download = createHash('sha1').update(pairs.sort().join('\n')).digest('hex')
+  const download = createHash('sha256').update(pairs.toSorted().join('\n')).digest('hex')
   if (game.workshopRoot === null) return download
   try {
     const info = statSync(acfPath(game.workshopRoot, game.steamAppId))
