@@ -417,7 +417,7 @@ export interface ParsedArgs {
   build?: BuildPolicy
   sort?: 'topo' | 'none'
   /** `clean` only: --staging is the default, --all additionally requires --yes. */
-  cleanTier?: 'staging' | 'logs' | 'all'
+  cleanTier?: 'staging' | 'logs' | 'all' | 'downloads'
   dockerArgs: string[]
   gameArgs: string[]
   dryRun: boolean

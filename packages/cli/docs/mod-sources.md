@@ -116,8 +116,12 @@ the `steamcmd/steamcmd` image writes `.local/share/Steam/steamapps`, and a Valve
 gamecrate scans that root, then `workshopRoot`. So for one item id, its own copy wins over the
 copy the Steam client downloaded.
 
-**`gamecrate clean` cannot reclaim `<dataRoot>/steam`.** No tier reaches it, because it belongs
-to no one profile. Delete the directory by hand when you need the space back.
+`gamecrate clean <game> --downloads` reclaims the space. It drops this game's item tree and the
+`.acf` beside it. It keeps the `steamcmd` install, which is 200 MB that would re-download for
+nothing. The next launch fetches only what the profile asks for.
+
+Downloads belong to the game, not one profile, so every profile of that game shares them.
+`clean --all --yes` takes the downloads, the profile, and its saves.
 
 ### `workshopRoot`
 

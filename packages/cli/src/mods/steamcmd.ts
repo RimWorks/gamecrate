@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, mkdirSync, statSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { accessSync, constants, existsSync, mkdirSync, statSync } from 'node:fs'
+import { readdir, rm } from 'node:fs/promises'
+import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { expandHome } from '../config/load'
@@ -31,6 +32,18 @@ export function steamHome(dataRoot: string): string {
  */
 export function downloadRoot(dataRoot: string, game: GameConfig): string {
   return join(steamHome(dataRoot), 'steamapps', 'workshop', 'content', String(game.steamAppId))
+}
+
+/**
+ * Drops a game's downloaded items and the .acf beside them. Never the steamcmd install above
+ * those: that is 200MB of bootstrap which would re-download for nothing. Returns what it did.
+ */
+export async function removeDownloads(root: string, steamAppId: number): Promise<string> {
+  if (!existsSync(root)) return `no workshop downloads at ${root}`
+  const items = (await readdir(root).catch(() => [])).length
+  await rm(root, { recursive: true, force: true })
+  await rm(join(dirname(dirname(root)), `appworkshop_${steamAppId}.acf`), { force: true })
+  return `removed ${root} (${items} item(s))`
 }
 
 /**

@@ -98,7 +98,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'tiered wipe of a profile',
     usage: '<game> [profile]',
     positionals: ['game', 'profile'],
-    flags: ['--staging', '--logs', '--all', '--yes', '--instance', '--worktree', '--no-worktree'],
+    flags: ['--staging', '--logs', '--all', '--downloads', '--yes', '--instance', '--worktree', '--no-worktree'],
   },
   {
     name: 'clone',
@@ -298,7 +298,8 @@ export function buildProgram(): Command {
     .option('--root', 'run as root instead of mapping the host uid')
     .option('--staging', 'clean: wipe .stage only (the default)')
     .option('--logs', 'clean: wipe the captured run logs')
-    .option('--all', 'clean: wipe the whole profile, saves included (needs --yes)')
+    .option('--all', 'clean: wipe the whole profile and the game downloads (needs --yes)')
+    .option('--downloads', 'clean: wipe this game\'s workshop downloads, keeping steamcmd')
     .option('-f, --follow', 'keep printing as the run writes')
     .option('-y, --yes', 'skip destructive-action confirmation')
     .option('--path <dir>', 'mods add: take the mod from this directory')
@@ -379,7 +380,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
       seen.add(long)
       counts.set(long, (counts.get(long) ?? 0) + 1)
       if (long === '--worktree' && value !== undefined) worktree.push(value)
-      if (long === '--staging' || long === '--logs' || long === '--all') {
+      if (long === '--staging' || long === '--logs' || long === '--all' || long === '--downloads') {
         cleanTier = long.slice(2) as ParsedArgs['cleanTier']
       }
     })

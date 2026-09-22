@@ -44,24 +44,32 @@ function quoted(text: string, start: number): { value: string; next: number } | 
   return null
 }
 
-function body(text: string, start: number, depth: number): { node: AcfNode; next: number } | null {
+/** The root: entries until EOF. A close brace out here is malformed, same as anywhere else. */
+function root(text: string): AcfNode | null {
+  const node: AcfNode = {}
+  let i = skip(text, 0)
+  while (i < text.length) {
+    if (text[i] !== '"') return null
+    const next = readEntry(text, i, 0, node)
+    if (next === null) return null
+    i = skip(text, next)
+  }
+  return node
+}
+
+/** A nested block, ended by its own close brace. Running out of text is an unterminated one. */
+function block(text: string, start: number, depth: number): { node: AcfNode; next: number } | null {
   if (depth > MAX_DEPTH) return null
   const node: AcfNode = {}
-  let i = start
-
-  for (;;) {
-    i = skip(text, i)
-    // EOF closes the root and nothing else, so an unterminated brace fails the whole parse.
-    if (i >= text.length) return depth === 0 ? { node, next: i } : null
-    // a stray close brace at the root is malformed, the same way an unterminated one is
-    if (text[i] === '}' && depth === 0) return null
+  let i = skip(text, start)
+  while (i < text.length) {
     if (text[i] === '}') return { node, next: i + 1 }
     if (text[i] !== '"') return null
-
     const next = readEntry(text, i, depth, node)
     if (next === null) return null
-    i = next
+    i = skip(text, next)
   }
+  return null
 }
 
 /** Reads one `"key" "value"` or `"key" { ... }` into node. Returns the index after it. */
@@ -72,7 +80,7 @@ function readEntry(text: string, start: number, depth: number, node: AcfNode): n
   if (i >= text.length) return null
 
   if (text[i] === '{') {
-    const child = body(text, i + 1, depth + 1)
+    const child = block(text, i + 1, depth + 1)
     if (child === null) return null
     node[key.value] = child.node
     return child.next
@@ -87,14 +95,14 @@ function readEntry(text: string, start: number, depth: number, node: AcfNode): n
 
 /** Parses KeyValues text. A malformed file is an empty object, never a throw. */
 export function parseAcf(text: string): AcfNode {
-  return body(text, 0, 0)?.node ?? {}
+  return root(text) ?? {}
 }
 
 /** Finds a section on the root itself or on one of its direct children. */
-function section(root: AcfNode, name: string): AcfNode | undefined {
-  const direct = root[name]
+function section(node: AcfNode, name: string): AcfNode | undefined {
+  const direct = node[name]
   if (typeof direct === 'object') return direct
-  for (const child of Object.values(root)) {
+  for (const child of Object.values(node)) {
     if (typeof child === 'object' && typeof child[name] === 'object') return child[name]
   }
   return undefined

@@ -48,7 +48,7 @@ import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/s
 import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
-import { downloadRoot, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
+import { downloadRoot, removeDownloads, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
 import type { SteamcmdRunner } from './mods/steamcmd'
 import { prepareWorkshop } from './mods/workshop'
 import type { PreparedWorkshop } from './mods/workshop'
@@ -843,6 +843,13 @@ async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
   const tier = args.cleanTier ?? 'staging'
   const saveSuffixes = config.games[game]!.saveExtensions.map((ext) => `.${ext.replace(/^\./, '')}`.toLowerCase())
 
+  // Downloads belong to the game, not one profile: every profile of it reads the same tree.
+  const downloads = downloadRoot(config.dataRoot, config.games[game]!)
+  if (tier === 'downloads') {
+    status(await removeDownloads(downloads, config.games[game]!.steamAppId))
+    return Exit.Ok
+  }
+
   // The cheap tiers belong to one instance; --all takes the profile and every instance with it.
   if (tier !== 'all') {
     const target = join(instanceDir(args, config, game, profile), tier === 'logs' ? 'logs' : '.stage')
@@ -854,15 +861,17 @@ async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
   const saves = await countSaves(dir, saveSuffixes)
   if (!args.yes) {
     throw new GamecrateError(
-      `clean --all would delete ${dir}, including ${saves} save file(s)`,
+      `clean --all would delete ${dir}, including ${saves} save file(s), and ${game}'s workshop downloads`,
       Exit.Usage,
-      'add --yes to confirm',
+      'add --yes to confirm, or --downloads to drop only the downloads',
     )
   }
   await rm(dir, { recursive: true, force: true })
   status(`removed ${dir} (${saves} save file(s))`)
+  status(await removeDownloads(downloads, config.games[game]!.steamAppId))
   return Exit.Ok
 }
+
 
 async function countSaves(dir: string, suffixes: string[]): Promise<number> {
   let count = 0

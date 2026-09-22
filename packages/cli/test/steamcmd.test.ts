@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { existsSync } from 'node:fs'
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,6 +9,7 @@ import {
   STEAMCMD_IMAGE,
   downloadItems,
   downloadRoot,
+  removeDownloads,
   resolveSteamcmd,
   steamHome,
   workshopUrlId,
@@ -55,6 +56,48 @@ describe('downloadRoot', () => {
   test('does not consult the filesystem', async () => {
     const root = await mkdtemp(join(tmp, 'layout-'))
     expect(downloadRoot(root, game)).toBe(join(steamHome(root), 'steamapps/workshop/content/294100'))
+  })
+})
+
+describe('removeDownloads', () => {
+  const game = { steamAppId: 294100 } as GameConfig
+
+  /** A tree with two items, the acf beside them, and a steamcmd install above both. */
+  async function tree(): Promise<{ data: string; root: string; acf: string; install: string }> {
+    const data = await mkdtemp(join(tmp, 'dl-rm-'))
+    const root = downloadRoot(data, game)
+    for (const id of ['111', '222']) await mkdir(join(root, id, 'About'), { recursive: true })
+    const acf = join(steamHome(data), 'steamapps', 'workshop', 'appworkshop_294100.acf')
+    await writeFile(acf, '"AppWorkshop"\n{\n}\n')
+    const install = join(steamHome(data), 'steamcmd', 'linux32')
+    await mkdir(install, { recursive: true })
+    await writeFile(join(install, 'steamcmd'), 'binary')
+    return { data, root, acf, install }
+  }
+
+  test('drops the items and the acf, and keeps the steamcmd install', async () => {
+    const t = await tree()
+    const said = await removeDownloads(t.root, 294100)
+
+    expect(said).toBe(`removed ${t.root} (2 item(s))`)
+    expect(existsSync(t.root)).toBe(false)
+    expect(existsSync(t.acf)).toBe(false)
+    // 200MB of bootstrap: deleting it means the next launch re-downloads steamcmd for nothing
+    expect(existsSync(join(t.install, 'steamcmd'))).toBe(true)
+  })
+
+  test('says so rather than throwing when there is nothing there', async () => {
+    const data = await mkdtemp(join(tmp, 'dl-none-'))
+    const root = downloadRoot(data, game)
+    expect(await removeDownloads(root, 294100)).toBe(`no workshop downloads at ${root}`)
+  })
+
+  test('leaves another game\'s acf alone', async () => {
+    const t = await tree()
+    const other = join(steamHome(t.data), 'steamapps', 'workshop', 'appworkshop_123456.acf')
+    await writeFile(other, 'x')
+    await removeDownloads(t.root, 294100)
+    expect(existsSync(other)).toBe(true)
   })
 })
 

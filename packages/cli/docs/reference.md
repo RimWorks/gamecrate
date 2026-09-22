@@ -110,8 +110,9 @@ Output and dry runs:
 - `--json` switches to machine-readable output.
 - `-f`, `--follow` keeps printing as the run writes. `logs` takes it.
 
-`clean` adds three tier flags: `--staging` (the default), `--logs`, and `--all`. `--all` deletes
-saves, so it needs `--yes`. `clone` and `fix-perms` take `--yes` too, and `fix-perms` takes
+`clean` adds four tier flags: `--staging` (the default), `--logs`, `--downloads`, and `--all`.
+`--downloads` drops the game's workshop items and keeps `steamcmd` itself. `--all` deletes saves
+and the downloads, so it needs `--yes`. `clone` and `fix-perms` take `--yes` too, and `fix-perms` takes
 `--dry-run`.
 
 Pairs that contradict each other are usage errors: `--build` with `--no-build`, `--replace` with
