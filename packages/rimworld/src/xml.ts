@@ -16,7 +16,7 @@ interface XmlNode {
  * accepted and its external part is never fetched, because saxes resolves nothing itself.
  */
 function parseDocument(text: string): XmlNode {
-  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  const src = text.codePointAt(0) === 0xfeff ? text.slice(1) : text
   const parser = new SaxesParser({ xmlns: false, position: true })
   const stack: { node: XmlNode; innerStart: number }[] = []
   let root: XmlNode | undefined
@@ -27,7 +27,7 @@ function parseDocument(text: string): XmlNode {
   parser.on('opentag', (tag) => {
     const node: XmlNode = { name: tag.name, children: [], text: '', inner: '' }
     stack.at(-1)?.node.children.push(node)
-    if (root === undefined) root = node
+    root ??= node
     if (tag.isSelfClosing) return
     stack.push({ node, innerStart: parser.position })
   })
@@ -111,7 +111,7 @@ export function parseAboutXml(text: string): ModManifest | null {
 }
 
 function escapeText(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
 
 function listBlock(name: string, items: string[]): string[] {

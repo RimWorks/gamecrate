@@ -135,7 +135,7 @@ export interface DownloadReport {
 // steamcmd colours its own output, and a code lands mid-sentence in the lines below. the output is
 // also not newline separated per item: a real run put the second `Downloading item` on the same
 // line as the first `Success.`, so these run over the whole text rather than line by line
-const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, 'g')
+const ANSI = new RegExp(String.raw`${String.fromCodePoint(27)}\[[0-9;?]*[ -/]*[@-~]`, 'g')
 const SUCCESS = /Success\. Downloaded item (\d+) to "([^"]+)" \((\d+) bytes\)/g
 const FAILED = /ERROR! Download item (\d+) failed \(([^)]+)\)/g
 const ATTEMPTS = 2

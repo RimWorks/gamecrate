@@ -27,49 +27,58 @@ export interface BuildTimes {
 
 /** One walk answers both questions: is this stale, and which files say so. */
 export async function scanBuildTimes(dir: string): Promise<BuildTimes> {
-  const times: BuildTimes = { sourceTimes: [] }
-  let budget = ENTRY_LIMIT
+  const state: WalkState = { root: dir, times: { sourceTimes: [] }, budget: ENTRY_LIMIT }
+  await walk(state, dir, false)
+  return state.times
+}
 
-  const walk = async (current: string, inAssemblies: boolean): Promise<void> => {
-    let entries
-    try {
-      entries = await readdir(current, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      if (budget-- <= 0) return
-      const path = join(current, entry.name)
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name.toLowerCase())) continue
-        // RimWorld ships per-version Assemblies dirs, so it is any depth, not just the root.
-        await walk(path, inAssemblies || entry.name === 'Assemblies')
-        continue
-      }
-      if (!entry.isFile()) continue
-      const lower = entry.name.toLowerCase()
-      const isSource = lower.endsWith('.cs')
-      const isAssembly = inAssemblies && lower.endsWith('.dll')
-      if (!isSource && !isAssembly) continue
+interface WalkState {
+  root: string
+  times: BuildTimes
+  budget: number
+}
 
-      let mtimeMs: number
-      try {
-        mtimeMs = (await stat(path)).mtimeMs
-      } catch {
-        continue
-      }
-      const found: Timestamped = { path: relative(dir, path), mtimeMs }
-      if (isSource) {
-        times.sourceTimes.push(mtimeMs)
-        if (mtimeMs > (times.newestSource?.mtimeMs ?? -1)) times.newestSource = found
-      } else if (mtimeMs > (times.newestAssembly?.mtimeMs ?? -1)) {
-        times.newestAssembly = found
-      }
-    }
+async function walk(state: WalkState, current: string, inAssemblies: boolean): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(current, { withFileTypes: true })
+  } catch {
+    return
   }
+  for (const entry of entries) {
+    if (state.budget-- <= 0) return
+    const path = join(current, entry.name)
+    if (entry.isDirectory()) {
+      // RimWorld ships per-version Assemblies dirs, so it is any depth, not just the root.
+      if (!SKIP_DIRS.has(entry.name.toLowerCase())) {
+        await walk(state, path, inAssemblies || entry.name === 'Assemblies')
+      }
+      continue
+    }
+    if (entry.isFile()) await record(state, path, entry.name, inAssemblies)
+  }
+}
 
-  await walk(dir, false)
-  return times
+async function record(state: WalkState, path: string, name: string, inAssemblies: boolean): Promise<void> {
+  const lower = name.toLowerCase()
+  const isSource = lower.endsWith('.cs')
+  const isAssembly = inAssemblies && lower.endsWith('.dll')
+  if (!isSource && !isAssembly) return
+
+  let mtimeMs: number
+  try {
+    mtimeMs = (await stat(path)).mtimeMs
+  } catch {
+    return
+  }
+  const { times } = state
+  const found: Timestamped = { path: relative(state.root, path), mtimeMs }
+  if (isSource) {
+    times.sourceTimes.push(mtimeMs)
+    if (mtimeMs > (times.newestSource?.mtimeMs ?? -1)) times.newestSource = found
+  } else if (mtimeMs > (times.newestAssembly?.mtimeMs ?? -1)) {
+    times.newestAssembly = found
+  }
 }
 
 /**

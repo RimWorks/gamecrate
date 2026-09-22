@@ -89,7 +89,7 @@ describe('resolveInstance', () => {
 
   test('an ambient cwd forks an instance of its own', () => {
     const got = select({}, undefined, treeA)
-    expect(got.requests.length).toBe(1)
+    expect(got.requests).toHaveLength(1)
     expect(got.requests[0]!.source).toBe('cwd')
     expect(got.name).toMatch(/^fix-thing-[0-9a-f]{6}$/)
     expect(got.dir).toBe(join(PROFILE_DIR, 'instances', got.name!))

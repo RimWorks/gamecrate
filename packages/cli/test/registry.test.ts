@@ -92,7 +92,7 @@ describe('listRuns', () => {
         startedAt: new Date().toISOString(),
       })
       const runs = await listRuns(dir, () => Promise.resolve(''))
-      expect(runs.length).toBe(2)
+      expect(runs).toHaveLength(2)
       expect(runs.find((r) => r.profile === 'gone')?.status).toBe('orphaned')
       expect(runs.find((r) => r.profile === 'booting')?.status).toBe('starting')
     } finally {
@@ -106,8 +106,8 @@ describe('listRuns', () => {
   test('a container and its lock are one row, not two', async () => {
     const docker = 'gamecrate-rimworld-dev\trimworld\tdev\t\tUp 4 minutes\n'
     const runs = await listRuns(root, () => Promise.resolve(docker))
-    expect(runs.length).toBe(2)
-    expect(runs.filter((r) => r.container === 'gamecrate-rimworld-dev').length).toBe(1)
+    expect(runs).toHaveLength(2)
+    expect(runs.filter((r) => r.container === 'gamecrate-rimworld-dev')).toHaveLength(1)
     expect(runs.find((r) => r.container === 'gamecrate-rimworld-dev')?.status).toBe('running')
     expect(runs.find((r) => r.container === 'gamecrate-rimworld-dev')?.pid).toBe(111)
     expect(runs.find((r) => r.container === 'gamecrate-rimworld-dev-wt-a1b2c3')?.pid).toBe(222)
@@ -156,7 +156,7 @@ describe('listRuns merge', () => {
     const dir = await collidingRoot(profile, instance)
     try {
       const runs = await listRuns(dir, () => Promise.resolve(docker))
-      expect(runs.length).toBe(1)
+      expect(runs).toHaveLength(1)
       return runs[0]!.pid
     } finally {
       await rm(dir, { recursive: true, force: true })

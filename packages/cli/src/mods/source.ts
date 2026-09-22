@@ -34,9 +34,10 @@ export function sourcesRoot(dataRoot: string): string {
 // `a/b`, `a/b.git`, `a/b/` and `a/b/.git/` are one clone. scheme and host fold because they are
 // case-insensitive; path and userinfo do not, some forges treat both as significant.
 export function normalizeUrl(url: string): string {
-  // single-char alternatives on purpose: `\/+` inside the `+` group backtracks exponentially
-  // on a long interior run of slashes.
-  const trimmed = url.replace(/(?:\/|\.git)+$/, '')
+  let trimmed = url
+  while (trimmed.endsWith('/') || trimmed.endsWith('.git')) {
+    trimmed = trimmed.slice(0, trimmed.endsWith('/') ? -1 : -4)
+  }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(trimmed)) {
     return trimmed.replace(
       /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/@]*@)?([^/]*)/,
@@ -58,11 +59,11 @@ export function cloneDir(dataRoot: string, url: string, ref: GitRef): string {
 }
 
 function lastSegment(url: string): string {
-  return url.split(/[/:]/).filter((part) => part.length > 0).pop() ?? 'repo'
+  return url.split(/[/:]/).findLast((part) => part.length > 0) ?? 'repo'
 }
 
 function slug(value: string): string {
-  const out = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const out = value.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-|-$/g, '')
   return (out.length === 0 ? 'x' : out).slice(0, SLUG_LIMIT)
 }
 
@@ -254,8 +255,7 @@ export function reachedEntries(
   const out: ModEntry[] = [...(game.preCore ?? []), game.core, ...game.dlc]
   if (profile.includeBase !== false) out.push(...(game.base ?? []))
   const only = args.only ?? []
-  out.push(...(only.length > 0 ? only : (profile.mods ?? [])))
-  out.push(...(args.mods ?? []))
+  out.push(...(only.length > 0 ? only : (profile.mods ?? [])), ...(args.mods ?? []))
   const dropped = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
   return out.filter((entry) => {
     if (typeof entry !== 'string' && 'match' in entry) return true

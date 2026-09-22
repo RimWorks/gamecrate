@@ -627,7 +627,7 @@ describe('network default', () => {
 describe('capture', () => {
   test('both streams arrive whole, stderr past the pipe buffer included, with the real exit code', async () => {
     const script = [
-      'process.stdout.write("  out \\n\\n")',
+      String.raw`process.stdout.write("  out \n\n")`,
       // the exit waits on the write callback, so the child cannot leave stderr buffered.
       'process.stderr.write("e".repeat(400000), () => process.exit(3))',
     ].join(';')

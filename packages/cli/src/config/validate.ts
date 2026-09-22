@@ -320,56 +320,71 @@ function crossReference(p: Problem[], games: Bag): void {
     if (!isObj(game_)) continue
     const profiles = game_['profiles']
     if (!isObj(profiles)) continue
-    const names = Object.keys(profiles)
 
     for (const [name, prof] of Object.entries(profiles)) {
       const w = `${where}/profiles/${esc(name)}`
       checkName(p, w, name, 'profile')
-      if (!isObj(prof)) continue
-
-      const parent = prof['extends']
-      if (typeof parent === 'string' && !resolves(profiles, parent)) {
-        const prob: Problem = { where: `${w}/extends`, message: `extends unknown profile "${parent}"` }
-        const hint = suggest(parent, names)
-        if (hint) prob.suggestion = `did you mean "${hint}"?`
-        p.push(prob)
-      }
-
-      const alias = prof['alias']
-      if (typeof alias === 'string' && !resolves(profiles, alias)) {
-        const prob: Problem = { where: `${w}/alias`, message: `alias of unknown profile "${alias}"` }
-        const hint = suggest(alias, [...names, 'modless'])
-        if (hint) prob.suggestion = `did you mean "${hint}"?`
-        p.push(prob)
-      }
-      if (typeof alias === 'string' && alias.toLowerCase() === name.toLowerCase()) {
-        p.push({ where: `${w}/alias`, message: 'a profile cannot alias itself' })
-      }
-
-      // An alias is a name you can type, so it gets the checks a profile key gets, and it
-      // must not shadow a real profile.
-      const aliases = prof['aliases']
-      if (Array.isArray(aliases)) {
-        for (const [i, entry] of aliases.entries()) {
-          if (typeof entry !== 'string') continue
-          const at = `${w}/aliases/${i}`
-          checkName(p, at, entry, 'profile alias')
-          if (names.some((k) => k.toLowerCase() === entry.toLowerCase())) {
-            p.push({ where: at, message: `alias "${entry}" is already a profile name` })
-          }
-        }
-      }
-
-      // The name becomes a directory and a container name, so it gets the same checks a profile does.
-      const instances = prof['instances']
-      if (isObj(instances)) {
-        for (const instance of Object.keys(instances)) {
-          checkName(p, `${w}/instances/${esc(instance)}`, instance, 'instance')
-        }
-      }
+      if (isObj(prof)) checkProfile(p, w, name, prof, profiles)
     }
 
     checkCollisions(p, where, gameName, profiles, containers)
+  }
+}
+
+function checkProfile(p: Problem[], w: string, name: string, prof: Bag, profiles: Bag): void {
+  const names = Object.keys(profiles)
+  checkExtends(p, w, prof, profiles, names)
+  checkAlias(p, w, name, prof, profiles, names)
+  checkAliases(p, w, prof, names)
+  checkInstances(p, w, prof)
+}
+
+function checkExtends(p: Problem[], w: string, prof: Bag, profiles: Bag, names: string[]): void {
+  const parent = prof['extends']
+  if (typeof parent !== 'string' || resolves(profiles, parent)) return
+  const prob: Problem = { where: `${w}/extends`, message: `extends unknown profile "${parent}"` }
+  const hint = suggest(parent, names)
+  if (hint) prob.suggestion = `did you mean "${hint}"?`
+  p.push(prob)
+}
+
+function checkAlias(p: Problem[], w: string, name: string, prof: Bag, profiles: Bag, names: string[]): void {
+  const alias = prof['alias']
+  if (typeof alias !== 'string') return
+  if (!resolves(profiles, alias)) {
+    const prob: Problem = { where: `${w}/alias`, message: `alias of unknown profile "${alias}"` }
+    const hint = suggest(alias, [...names, 'modless'])
+    if (hint) prob.suggestion = `did you mean "${hint}"?`
+    p.push(prob)
+  }
+  if (alias.toLowerCase() === name.toLowerCase()) {
+    p.push({ where: `${w}/alias`, message: 'a profile cannot alias itself' })
+  }
+}
+
+/**
+ * An alias is a name you can type, so it gets the checks a profile key gets, and it must not
+ * shadow a real profile.
+ */
+function checkAliases(p: Problem[], w: string, prof: Bag, names: string[]): void {
+  const aliases = prof['aliases']
+  if (!Array.isArray(aliases)) return
+  for (const [i, entry] of aliases.entries()) {
+    if (typeof entry !== 'string') continue
+    const at = `${w}/aliases/${i}`
+    checkName(p, at, entry, 'profile alias')
+    if (names.some((k) => k.toLowerCase() === entry.toLowerCase())) {
+      p.push({ where: at, message: `alias "${entry}" is already a profile name` })
+    }
+  }
+}
+
+/** The name becomes a directory and a container name, so it gets the checks a profile does. */
+function checkInstances(p: Problem[], w: string, prof: Bag): void {
+  const instances = prof['instances']
+  if (!isObj(instances)) return
+  for (const instance of Object.keys(instances)) {
+    checkName(p, `${w}/instances/${esc(instance)}`, instance, 'instance')
   }
 }
 
@@ -432,40 +447,52 @@ function checkCollisions(
     containers.set(prefix + lower, w)
 
     if (!isObj(prof)) continue
+    checkAliasOwners(p, w, prof, name, aliasOwners)
+    checkInstanceContainers(p, w, profiles, name, `${prefix}${lower}`, containers)
+  }
+}
 
-    const aliases = prof['aliases']
-    if (Array.isArray(aliases)) {
-      for (const [i, entry] of aliases.entries()) {
-        if (typeof entry !== 'string') continue
-        const owner = aliasOwners.get(entry.toLowerCase())
-        if (owner !== undefined) {
-          p.push({
-            where: `${w}/aliases/${i}`,
-            message: `alias "${entry}" is already declared by profile "${owner}"`,
-          })
-          continue
-        }
-        aliasOwners.set(entry.toLowerCase(), name)
-      }
+function checkAliasOwners(p: Problem[], w: string, prof: Bag, name: string, owners: Map<string, string>): void {
+  const aliases = prof['aliases']
+  if (!Array.isArray(aliases)) return
+  for (const [i, entry] of aliases.entries()) {
+    if (typeof entry !== 'string') continue
+    const owner = owners.get(entry.toLowerCase())
+    if (owner !== undefined) {
+      p.push({
+        where: `${w}/aliases/${i}`,
+        message: `alias "${entry}" is already declared by profile "${owner}"`,
+      })
+      continue
     }
+    owners.set(entry.toLowerCase(), name)
+  }
+}
 
-    const declared = prof['instances']
-    for (const instance of instanceNames(profiles, name, prof)) {
-      const container = `${prefix}${lower}-${instance.toLowerCase()}`
-      // An inherited instance has no key of its own to point at, so blame the profile.
-      const at = isObj(declared) && Object.hasOwn(declared, instance)
-        ? `${w}/instances/${esc(instance)}`
-        : w
-      const first = containers.get(container)
-      if (first !== undefined) {
-        p.push({
-          where: at,
-          message: `instance "${instance}" makes a container name that collides with ${first}`,
-        })
-        continue
-      }
-      containers.set(container, at)
+function checkInstanceContainers(
+  p: Problem[],
+  w: string,
+  profiles: Bag,
+  name: string,
+  prefix: string,
+  containers: Map<string, string>,
+): void {
+  const prof = profiles[name]
+  if (!isObj(prof)) return
+  const declared = prof['instances']
+  for (const instance of instanceNames(profiles, name, prof)) {
+    const container = `${prefix}-${instance.toLowerCase()}`
+    // An inherited instance has no key of its own to point at, so blame the profile.
+    const at = isObj(declared) && Object.hasOwn(declared, instance) ? `${w}/instances/${esc(instance)}` : w
+    const first = containers.get(container)
+    if (first !== undefined) {
+      p.push({
+        where: at,
+        message: `instance "${instance}" makes a container name that collides with ${first}`,
+      })
+      continue
     }
+    containers.set(container, at)
   }
 }
 
@@ -500,7 +527,7 @@ function checkName(p: Problem[], where: string, name: string, kind: string): voi
 }
 
 function esc(segment: string): string {
-  return segment.replace(/~/g, '~0').replace(/\//g, '~1')
+  return segment.replaceAll('~', '~0').replaceAll('/', '~1')
 }
 
 export function isObj(v: unknown): v is Bag {

@@ -810,7 +810,7 @@ describe('prepareSources', () => {
       join(cloneDir(data, url, { kind: 'tag', value: 'v2' }), 'V14', 'Mod'),
     ].sort())
     // and a second id inside the same clones is untouched
-    expect((index.byPackageId.get('acme.other') ?? []).length).toBe(2)
+    expect((index.byPackageId.get('acme.other') ?? [])).toHaveLength(2)
   })
 
   test('a git pin prepared here resolves to the subdir it names, not the one the scan finds', async () => {

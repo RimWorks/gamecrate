@@ -81,19 +81,21 @@ export async function modsAdd(args: ParsedArgs, ctx: ModsContext): Promise<numbe
   const twice = [...where.values()].filter((at) => at.length > 1)
   if (twice.length > 0) {
     const lines = [...where.entries()].filter(([, at]) => at.length > 1)
+    const rows = lines.map(([id, at]) => `  ${id}: ${at.join(', ')}`).join('\n')
     throw new GamecrateError(
       `${twice.length} mod id(s) are declared by more than one directory in ${describe(source)}`,
       Exit.Config,
-      `${lines.map(([id, at]) => `  ${id}: ${at.join(', ')}`).join('\n')}\npin one of them with --subdir`,
+      `${rows}\npin one of them with --subdir`,
     )
   }
 
   const clashes = pins.filter((pin) => existingKey(target.existing, pin.id) !== undefined)
   if (clashes.length > 0 && args.force !== true) {
+    const rows = clashes.map((pin) => `  ${pin.id}`).join('\n')
     throw new GamecrateError(
       `${clashes.length} mod id(s) are already pinned in ${target.file}`,
       Exit.Config,
-      `${clashes.map((pin) => `  ${pin.id}`).join('\n')}\noverwrite them with --force`,
+      `${rows}\noverwrite them with --force`,
     )
   }
 
@@ -142,17 +144,7 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
   const only = args.rest.map((id) => id.toLowerCase())
   const games = args.game === undefined ? Object.keys(ctx.config.games) : [requireGame(args, ctx.config)]
 
-  const wanted: { id: string; git: string; entry: LibraryEntry }[] = []
-  const subscribed: { game: string; pins: { id: string; item: string }[] }[] = []
-  for (const name of games) {
-    const pins: { id: string; item: string }[] = []
-    for (const [id, entry] of Object.entries(ctx.config.games[name]?.library ?? {})) {
-      if (only.length > 0 && !only.includes(id.toLowerCase())) continue
-      if (entry.git !== undefined) wanted.push({ id, git: entry.git, entry })
-      else if (entry.workshop !== undefined) pins.push({ id, item: String(entry.workshop) })
-    }
-    if (pins.length > 0) subscribed.push({ game: name, pins })
-  }
+  const { wanted, subscribed } = collectPins(ctx.config, games, only)
   const named = [...wanted.map((pin) => pin.id), ...subscribed.flatMap((one) => one.pins.map((pin) => pin.id))]
   const missing = only.filter((id) => !named.some((pinned) => pinned.toLowerCase() === id))
   if (missing.length > 0) {
@@ -167,7 +159,43 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
     return Exit.Ok
   }
 
-  // one ls-remote per url, and one fetch per clone directory
+  await syncGit(ctx, wanted)
+  for (const one of subscribed) await syncWorkshop(ctx, one.game, one.pins)
+  return Exit.Ok
+}
+
+interface GitPin {
+  id: string
+  git: string
+  entry: LibraryEntry
+}
+
+interface WorkshopPin {
+  id: string
+  item: string
+}
+
+function collectPins(
+  config: RootConfig,
+  games: string[],
+  only: string[],
+): { wanted: GitPin[]; subscribed: { game: string; pins: WorkshopPin[] }[] } {
+  const wanted: GitPin[] = []
+  const subscribed: { game: string; pins: WorkshopPin[] }[] = []
+  for (const name of games) {
+    const pins: WorkshopPin[] = []
+    for (const [id, entry] of Object.entries(config.games[name]?.library ?? {})) {
+      if (only.length > 0 && !only.includes(id.toLowerCase())) continue
+      if (entry.git !== undefined) wanted.push({ id, git: entry.git, entry })
+      else if (entry.workshop !== undefined) pins.push({ id, item: String(entry.workshop) })
+    }
+    if (pins.length > 0) subscribed.push({ game: name, pins })
+  }
+  return { wanted, subscribed }
+}
+
+/** One ls-remote per url, and one fetch per clone directory. */
+async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
   const branches = new Map<string, GitRef>()
   const fetched = new Set<string>()
   for (const pin of wanted) {
@@ -181,19 +209,21 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
     // the fetch dedupes, the report does not: every id the user named gets its own line
     if (!fetched.has(dir)) {
       fetched.add(dir)
-      const unlock = await lockDir(dir)
-      try {
-        // `force` is the point: a plain fetch never moves a tag, and never resets toward a commit.
-        const result = await ensureClone(ctx.config.dataRoot, gitPin(pin.git, pin.entry), ref, 'force')
-        if (result.warning !== undefined) warn(result.warning)
-      } finally {
-        await unlock()
-      }
+      await fetchClone(ctx, pin, ref, dir)
     }
     status(`synced ${pin.id} at ${ref.kind} ${ref.value}`)
   }
-  for (const one of subscribed) await syncWorkshop(ctx, one.game, one.pins)
-  return Exit.Ok
+}
+
+async function fetchClone(ctx: ModsContext, pin: GitPin, ref: GitRef, dir: string): Promise<void> {
+  const unlock = await lockDir(dir)
+  try {
+    // `force` is the point: a plain fetch never moves a tag, and never resets toward a commit.
+    const result = await ensureClone(ctx.config.dataRoot, gitPin(pin.git, pin.entry), ref, 'force')
+    if (result.warning !== undefined) warn(result.warning)
+  } finally {
+    await unlock()
+  }
 }
 
 /**

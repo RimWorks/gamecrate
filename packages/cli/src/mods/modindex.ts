@@ -33,7 +33,7 @@ function cacheDir(): string {
  * routinely named `[KV] Mod Manager`, so brackets and braces must not be glob syntax.
  */
 export function globMatch(pattern: string, path: string): boolean {
-  return picomatch.isMatch(path, pattern.replace(/[[\]{}()!,@+|^$.\\]/g, '\\$&'), { dot: true })
+  return picomatch.isMatch(path, pattern.replaceAll(/[[\]{}()!,@+|^$.\\]/g, String.raw`\$&`), { dot: true })
 }
 
 function excluded(patterns: string[], relativePath: string): boolean {
@@ -281,7 +281,7 @@ function compareTiers(a: ModRecord, b: ModRecord): number {
 
 /** Selection, then non-workshop, then non-worktree, then scan-root order. */
 function rank(a: ModRecord, b: ModRecord): number {
-  return compareTiers(a, b) || byClone(a, b) || (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0)
+  return compareTiers(a, b) || byClone(a, b) || Number(a.dir > b.dir) - Number(a.dir < b.dir)
 }
 
 /**
@@ -311,12 +311,7 @@ export async function applyWorktreeRequests(
   for (const bucket of index.byPackageId.values()) {
     for (const record of bucket) {
       known.add(record.dir)
-      for (const request of requests) {
-        if (!contains(request, record.dir)) continue
-        record.worktree = { root: request.root, branch: request.branch, source: request.source }
-        record.selectedWorktree = request.order
-        break
-      }
+      stampOwner(record, requests)
     }
   }
 
@@ -332,13 +327,26 @@ export async function applyWorktreeRequests(
     const fresh = found.filter((c) => !known.has(c.dir))
     if (fresh.length === 0) continue
     for (const record of await parseAll(fresh, config, index.plugin, index.problems)) {
-      record.worktree = { root: request.root, branch: request.branch, source: request.source }
-      record.selectedWorktree = request.order
+      markWorktree(record, request)
       insert(index, record)
     }
   }
 
   for (const bucket of index.byPackageId.values()) bucket.sort(rank)
+}
+
+/** The first request that contains the record owns it; later ones never overwrite. */
+function stampOwner(record: ModRecord, requests: WorktreeRequest[]): void {
+  for (const request of requests) {
+    if (!contains(request, record.dir)) continue
+    markWorktree(record, request)
+    return
+  }
+}
+
+function markWorktree(record: ModRecord, request: WorktreeRequest): void {
+  record.worktree = { root: request.root, branch: request.branch, source: request.source }
+  record.selectedWorktree = request.order
 }
 
 /** Deep enough for a repo-shaped worktree without walking a whole build tree. */
@@ -455,50 +463,68 @@ export async function buildIndex(
     problems: [],
   }
 
+  // after every user root, not before: lower rootIndex wins, and a clone must never quietly
+  // replace a checkout the user already has.
+  const cacheIndex = config.scanRoots.length
+  await indexLocal(index, config, sourcesDir, cacheIndex)
+  await indexWorkshop(index, config, dataRoot, cacheIndex)
+
+  for (const bucket of index.byPackageId.values()) bucket.sort(rank)
+  return index
+}
+
+async function indexLocal(
+  index: ModIndex,
+  config: GameConfig,
+  sourcesDir: string | undefined,
+  cacheIndex: number,
+): Promise<void> {
   const local: Candidate[] = []
   await scanGameData(config, -1, local)
   for (const [i, root] of config.scanRoots.entries()) {
     await scanLocalRoot(root, i, config.manifest.file, local)
   }
-  // after every user root, not before: lower rootIndex wins, and a clone must never quietly
-  // replace a checkout the user already has.
-  const cacheIndex = config.scanRoots.length
-  const parsed = await parseAll(local, config, plugin, index.problems)
+  const parsed = await parseAll(local, config, index.plugin, index.problems)
   if (sourcesDir !== undefined) {
     const cache: Candidate[] = []
     // <name-hash>/<ref>/<subdir>/<mod>
     await scanLocalRoot({ path: sourcesDir, maxDepth: 4 }, cacheIndex, config.manifest.file, cache)
-    parsed.push(...oneModPerClone(await parseAll(cache, config, plugin, index.problems), sourcesDir))
+    const records = await parseAll(cache, config, index.plugin, index.problems)
+    parsed.push(...oneModPerClone(records, sourcesDir))
   }
   for (const record of parsed) insert(index, record)
+}
 
+async function indexWorkshop(
+  index: ModIndex,
+  config: GameConfig,
+  dataRoot: string | undefined,
+  cacheIndex: number,
+): Promise<void> {
   // The download root goes first, so its rootIndex is lower and it wins an id steam also
   // holds. gamecrate refreshes its copy on a known cadence; steam's only moves when the client
   // runs. A root that is not there scans as nothing, so it goes in unconditionally.
-  const workshopRoots: string[] = []
-  if (dataRoot !== undefined) workshopRoots.push(downloadRoot(dataRoot, config))
-  if (config.workshopRoot !== null) workshopRoots.push(config.workshopRoot)
+  const roots: string[] = []
+  if (dataRoot !== undefined) roots.push(downloadRoot(dataRoot, config))
+  if (config.workshopRoot !== null) roots.push(config.workshopRoot)
+  if (roots.length === 0) return
 
-  if (workshopRoots.length > 0) {
-    const stamp = workshopStamp(config, dataRoot)
-    const cached = stamp === null ? null : await readWorkshopCache(game, stamp)
-    if (cached) {
-      for (const record of cached) insert(index, record)
-    } else {
-      const items: Candidate[] = []
-      // +1 keeps the numbering consistent, nothing more: `kind === 'workshop'` is tier index 2,
-      // ahead of rootIndex at 4, so this can never change a pick.
-      for (const [i, root] of workshopRoots.entries()) {
-        await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
-      }
-      const records = await parseAll(items, config, plugin, index.problems)
-      for (const record of records) insert(index, record)
-      if (stamp !== null) await writeWorkshopCache(game, stamp, records)
-    }
+  const stamp = workshopStamp(config, dataRoot)
+  const cached = stamp === null ? null : await readWorkshopCache(index.game, stamp)
+  if (cached) {
+    for (const record of cached) insert(index, record)
+    return
   }
 
-  for (const bucket of index.byPackageId.values()) bucket.sort(rank)
-  return index
+  const items: Candidate[] = []
+  // +1 keeps the numbering consistent, nothing more: `kind === 'workshop'` is tier index 2,
+  // ahead of rootIndex at 4, so this can never change a pick.
+  for (const [i, root] of roots.entries()) {
+    await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
+  }
+  const records = await parseAll(items, config, index.plugin, index.problems)
+  for (const record of records) insert(index, record)
+  if (stamp !== null) await writeWorkshopCache(index.game, stamp, records)
 }
 
 /**
@@ -511,7 +537,7 @@ export async function buildIndex(
 function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
   const kept = new Map<string, ModRecord>()
   const stamps = new Map<string, number>()
-  for (const record of [...records].sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0))) {
+  for (const record of [...records].sort((a, b) => Number(a.dir > b.dir) - Number(a.dir < b.dir))) {
     const clone = relative(sourcesDir, record.dir).split(sep).slice(0, 2).join(sep)
     const at = join(sourcesDir, clone)
     let stamp = stamps.get(at)
@@ -590,8 +616,8 @@ function resolveRaw(index: ModIndex, ref: string, game: GameConfig): ModRecord |
   }
 
   const short = index.byShortName.get(ref.toLowerCase())
-  if (short && short.length === 1) return pick(index, short[0]!.toLowerCase(), ref)
-  if (short && short.length > 1) {
+  if (short?.length === 1) return pick(index, short[0]!.toLowerCase(), ref)
+  if (short !== undefined && short.length > 1) {
     throw new GamecrateError(
       `"${ref}" is a short name for ${short.length} mods`,
       Exit.Resolution,

@@ -119,14 +119,14 @@ describe('resolveWorktree', () => {
 describe('collectRequests', () => {
   test('flags outrank the env var, which outranks cwd', () => {
     const { requests } = collectRequests([worktree], undefined, primary, false)
-    expect(requests.length).toBe(1)
+    expect(requests).toHaveLength(1)
     expect(requests[0]!.source).toBe('flag')
     expect(requests[0]!.order).toBe(0)
   })
 
   test('cwd inside a linked worktree is an ambient selection', () => {
     const { requests } = collectRequests([], undefined, join(worktree, 'Mod'), false)
-    expect(requests.length).toBe(1)
+    expect(requests).toHaveLength(1)
     expect(requests[0]!.source).toBe('cwd')
     expect(requests[0]!.root).toBe(worktree)
   })
@@ -144,12 +144,12 @@ describe('collectRequests', () => {
 
   test('the same directory named twice is one request', () => {
     const { requests } = collectRequests([worktree, join(worktree, 'Mod')], undefined, '/tmp', false)
-    expect(requests.length).toBe(1)
+    expect(requests).toHaveLength(1)
   })
 
   test('a bad explicit flag is a Problem; a bad cwd is not', () => {
     const withFlag = collectRequests(['/nope/missing'], undefined, '/tmp', false)
-    expect(withFlag.problems.length).toBe(1)
+    expect(withFlag.problems).toHaveLength(1)
 
     const cwdOnly = collectRequests([], undefined, '/tmp', false)
     expect(cwdOnly.problems).toEqual([])
@@ -171,7 +171,7 @@ describe('promotion', () => {
     const index = await buildIndex('atlas', game, fixturePlugin())
     const bucket = index.byPackageId.get(PACKAGE_ID) ?? []
 
-    expect(bucket.length).toBe(1)
+    expect(bucket).toHaveLength(1)
     expect(bucket[0]!.dir).toBe(join(primary, 'Mod'))
     expect(bucket[0]!.selectedWorktree).toBeUndefined()
   })

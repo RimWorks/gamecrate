@@ -96,11 +96,11 @@ function derive(requests: WorktreeRequest[]): string | undefined {
 }
 
 function slug(root: string): string {
-  const body = basename(root)
+  let body = basename(root)
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, '-')
+    .replaceAll(/[^a-z0-9._-]+/g, '-')
     .replace(/^[^a-z0-9]+/, '')
     .slice(0, SLUG_LIMIT)
-    .replace(/[-._]+$/, '')
+  while (body !== '' && '-._'.includes(body.slice(-1))) body = body.slice(0, -1)
   return body === '' ? 'wt' : body
 }

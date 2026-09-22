@@ -63,6 +63,7 @@ import type {
   Identity,
   LaunchPlan,
   LaunchResult,
+  ModEntry,
   ParsedArgs,
   Problem,
   ProfileConfig,
@@ -241,7 +242,7 @@ async function run(
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
   try {
     const workshop = await prepareWorkshop(gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game), sources.dirs)
-    return await resolved(argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch)
+    return await resolved({ argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch })
   } finally {
     await sources.release()
   }
@@ -261,18 +262,21 @@ function warnUnfetched(problems: Problem[], unfetched: string[]): Problem[] {
   return fatal
 }
 
-async function resolved(
-  argv: string[],
-  args: ParsedArgs,
-  config: RootConfig,
-  plugins: Map<string, GamePlugin>,
-  asShell: boolean,
-  game: string,
-  profile: string,
-  sources: PreparedSources,
-  workshop: PreparedWorkshop,
-  allowFetch: boolean,
-): Promise<number> {
+interface ResolveInputs {
+  argv: string[]
+  args: ParsedArgs
+  config: RootConfig
+  plugins: Map<string, GamePlugin>
+  asShell: boolean
+  game: string
+  profile: string
+  sources: PreparedSources
+  workshop: PreparedWorkshop
+  allowFetch: boolean
+}
+
+async function resolved(inputs: ResolveInputs): Promise<number> {
+  const { argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch } = inputs
   for (const warning of [...sources.warnings, ...workshop.warnings]) warn(warning)
   const index = await buildIndex(
     game,
@@ -289,19 +293,7 @@ async function resolved(
 
   const identity = resolveIdentity(args.root)
 
-  if (args.printPlan || args.dryRun) {
-    const environment = await preflight(plan)
-    // buildRunSpec is a validation gate of its own: the "=" landmine throws here.
-    buildRunSpec(plan, [], identity)
-    if (args.printPlan) printPlan(plan, args.json)
-    for (const warning of planWarnings(plan)) warn(warning)
-    if (environment.length > 0) reportEnvironment(environment)
-    if (!args.printPlan) {
-      const what = plan.instance === undefined ? profile : `${profile}/${plan.instance}`
-      status(`${game} ${what}: ${plan.mods.length} mods resolve cleanly`)
-    }
-    return Exit.Ok
-  }
+  if (args.printPlan || args.dryRun) return await reportPlanOnly(plan, args, profile, identity)
 
   const environment = await preflight(plan)
   if (environment.length > 0) reportEnvironment(environment)
@@ -320,6 +312,26 @@ async function resolved(
   } finally {
     await lock.release()
   }
+}
+
+/** --print-plan and --dry-run stop here, after validation and before the first write. */
+async function reportPlanOnly(
+  plan: LaunchPlan,
+  args: ParsedArgs,
+  profile: string,
+  identity: Identity,
+): Promise<number> {
+  const environment = await preflight(plan)
+  // buildRunSpec is a validation gate of its own: the "=" landmine throws here.
+  buildRunSpec(plan, [], identity)
+  if (args.printPlan) printPlan(plan, args.json)
+  for (const warning of planWarnings(plan)) warn(warning)
+  if (environment.length > 0) reportEnvironment(environment)
+  if (!args.printPlan) {
+    const what = plan.instance === undefined ? profile : `${profile}/${plan.instance}`
+    status(`${plan.game} ${what}: ${plan.mods.length} mods resolve cleanly`)
+  }
+  return Exit.Ok
 }
 
 async function launch(
@@ -349,22 +361,25 @@ async function launch(
     args.supervised && args.log === undefined ? redirectOutput(join(runDir, 'supervisor.log')) : undefined
 
   try {
-    return await execute(plan, args, config, identity, asShell, profileSpec, runDir, releaseSources)
+    return await execute({ plan, args, config, identity, asShell, profileSpec, runDir, releaseSources })
   } finally {
     supervisorLog?.close()
   }
 }
 
-async function execute(
-  plan: LaunchPlan,
-  args: ParsedArgs,
-  config: RootConfig,
-  identity: Identity,
-  asShell: boolean,
-  profileSpec: ProfileConfig,
-  runDir: string,
-  releaseSources: () => Promise<void>,
-): Promise<LaunchResult> {
+interface ExecuteInputs {
+  plan: LaunchPlan
+  args: ParsedArgs
+  config: RootConfig
+  identity: Identity
+  asShell: boolean
+  profileSpec: ProfileConfig
+  runDir: string
+  releaseSources: () => Promise<void>
+}
+
+async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
+  const { plan, args, config, identity, asShell, profileSpec, runDir, releaseSources } = inputs
   const game = plan.game
   await buildLocalMods(plan, buildPolicy(args, profileSpec))
   // the build writes into the clones, so their lock only comes off once it is done. it covers
@@ -530,7 +545,7 @@ async function copyOutLogs(plan: LaunchPlan): Promise<void> {
   if (spec.mode !== 'copy-out') return
   const source = join(plan.dataDirHost, spec.from)
   if (!existsSync(source)) return
-  const target = join(plan.runDirHost, basename(spec.from.replace(/\/+$/, '')))
+  const target = join(plan.runDirHost, basename(spec.from))
   try {
     await cp(source, target, { recursive: true, force: true })
   } catch (error) {
@@ -570,22 +585,17 @@ async function mods(
  * instead, so a config with no workshop mods never gets a steamcmd check.
  */
 function usesWorkshop(game: GameConfig): boolean {
-  for (const entry of Object.values(game.library ?? {})) {
-    if (entry.workshop !== undefined) return true
-  }
+  if (Object.values(game.library ?? {}).some((entry) => entry.workshop !== undefined)) return true
   // preCore, core, dlc and base reach a launch too, so a workshop ref parked in one of them
   // needs steamcmd just as much as one named in a profile
-  for (const ref of [...(game.preCore ?? []), game.core, ...game.dlc, ...(game.base ?? [])]) {
-    if (ref.startsWith('workshop:')) return true
-  }
-  for (const profile of Object.values(game.profiles)) {
-    for (const entry of profile.mods ?? []) {
-      if (typeof entry === 'string') {
-        if (entry.startsWith('workshop:')) return true
-      } else if ('workshop' in entry && entry.workshop !== undefined) return true
-    }
-  }
-  return false
+  const slots = [...(game.preCore ?? []), game.core, ...game.dlc, ...(game.base ?? [])]
+  if (slots.some((ref) => ref.startsWith('workshop:'))) return true
+  return Object.values(game.profiles).some((profile) => (profile.mods ?? []).some(isWorkshopEntry))
+}
+
+function isWorkshopEntry(entry: ModEntry): boolean {
+  if (typeof entry === 'string') return entry.startsWith('workshop:')
+  return 'workshop' in entry && entry.workshop !== undefined
 }
 
 function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
@@ -602,33 +612,41 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
     const gameConfig = config.games[game]!
     const sources = cachedSources(gameConfig, 'modless', {}, config.dataRoot)
     const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
-    const steamcmd: Problem[] = []
-    if (usesWorkshop(gameConfig)) {
-      try {
-        status(`${game}: steamcmd ${steamcmdSource(resolveSteamcmd(config), config)}`)
-      } catch (error) {
-        steamcmd.push({
-          where: 'steamcmd',
-          message: error instanceof Error ? error.message : String(error),
-          ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
-        })
-      }
-      const root = downloadRoot(config.dataRoot, gameConfig)
-      status(`${game}: workshop downloads ${root}${existsSync(root) ? '' : ' (not created yet)'}`)
-    }
-    const all = [...problems, ...(await preflight(plan)), ...steamcmd]
-    if (all.length === 0) {
-      status(`${game}: ok`)
-      continue
-    }
-    failed = true
-    status(`${game}: ${all.length} problem(s)`)
-    for (const problem of all) {
-      process.stderr.write(`  ${problem.where}\n    ${problem.message}\n`)
-      if (problem.suggestion) process.stderr.write(`      try: ${problem.suggestion}\n`)
-    }
+    const all = [...problems, ...(await preflight(plan)), ...steamcmdProblems(game, gameConfig, config)]
+    if (!reportDoctor(game, all)) failed = true
   }
   return failed ? Exit.Environment : Exit.Ok
+}
+
+function steamcmdProblems(game: string, gameConfig: GameConfig, config: RootConfig): Problem[] {
+  if (!usesWorkshop(gameConfig)) return []
+  const problems: Problem[] = []
+  try {
+    status(`${game}: steamcmd ${steamcmdSource(resolveSteamcmd(config), config)}`)
+  } catch (error) {
+    problems.push({
+      where: 'steamcmd',
+      message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
+    })
+  }
+  const root = downloadRoot(config.dataRoot, gameConfig)
+  status(`${game}: workshop downloads ${root}${existsSync(root) ? '' : ' (not created yet)'}`)
+  return problems
+}
+
+/** False once the game has something to fix, which is what makes doctor exit non-zero. */
+function reportDoctor(game: string, all: Problem[]): boolean {
+  if (all.length === 0) {
+    status(`${game}: ok`)
+    return true
+  }
+  status(`${game}: ${all.length} problem(s)`)
+  for (const problem of all) {
+    process.stderr.write(`  ${problem.where}\n    ${problem.message}\n`)
+    if (problem.suggestion) process.stderr.write(`      try: ${problem.suggestion}\n`)
+  }
+  return false
 }
 
 async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
@@ -738,7 +756,7 @@ async function verify(
 
   const name = containerName(plan)
   const info = await inspectContainer(name)
-  if (info === null || !info.running) {
+  if (!info?.running) {
     throw new GamecrateError(
       `no container named ${name} is running`,
       Exit.Environment,
@@ -823,8 +841,10 @@ function renderVerify(
 
   for (const [i, mod] of boundMods.entries()) {
     const origin = mod.branch === null ? '' : `worktree ${mod.branch}`
-    out.push(`  ${mod.packageId.padEnd(idWidth)}  ${paths[i]!.padEnd(pathWidth)} ${origin}`.trimEnd())
-    out.push(`  ${' '.repeat(idWidth)}  ${stamps[i]!.padEnd(stampWidth)}   ${boundStatus(mod)}`)
+    out.push(
+      `  ${mod.packageId.padEnd(idWidth)}  ${paths[i]!.padEnd(pathWidth)} ${origin}`.trimEnd(),
+      `  ${' '.repeat(idWidth)}  ${stamps[i]!.padEnd(stampWidth)}   ${boundStatus(mod)}`,
+    )
   }
   return out.join('\n')
 }
@@ -1052,26 +1072,14 @@ async function configEdit(args: ParsedArgs): Promise<number> {
 }
 
 /** Never silently chowns: it reports what it found and only acts under --yes. */
-async function fixPerms(args: ParsedArgs, config: RootConfig): Promise<number> {
-  const game = requireGame(args, config)
-  const identity = resolveIdentity(false)
-  const found: string[] = []
-  for (const dir of await profileDirs(config, game, args.profile)) {
-    if (!existsSync(dir)) continue
-    found.push(...(await detectForeignOwnership(dir, identity.uid, 10_000)))
-  }
-
-  if (found.length === 0) {
-    status(`${game}: every path is owned by uid ${identity.uid}`)
-    return Exit.Ok
-  }
-  if (args.dryRun || !args.yes) {
-    for (const path of found) process.stdout.write(`would chown ${identity.uid}:${identity.gid} ${path}\n`)
-    status(`${found.length} foreign-owned path(s); re-run with --yes to chown them`)
-    return Exit.Environment
-  }
-  // chown of a foreign-owned path needs root either way, so an empty directory whose parent
-  // we own is recovered by removing it: the next launch recreates it as the caller.
+/**
+ * chown of a foreign-owned path needs root either way, so an empty directory whose parent we
+ * own is recovered by removing it: the next launch recreates it as the caller.
+ */
+async function repairOwnership(
+  found: string[],
+  identity: Identity,
+): Promise<{ fixed: number; stuck: string[] }> {
   let fixed = 0
   const stuck: string[] = []
   for (const path of found) {
@@ -1090,6 +1098,28 @@ async function fixPerms(args: ParsedArgs, config: RootConfig): Promise<number> {
     }
     stuck.push(path)
   }
+  return { fixed, stuck }
+}
+
+async function fixPerms(args: ParsedArgs, config: RootConfig): Promise<number> {
+  const game = requireGame(args, config)
+  const identity = resolveIdentity(false)
+  const found: string[] = []
+  for (const dir of await profileDirs(config, game, args.profile)) {
+    if (!existsSync(dir)) continue
+    found.push(...(await detectForeignOwnership(dir, identity.uid, 10_000)))
+  }
+
+  if (found.length === 0) {
+    status(`${game}: every path is owned by uid ${identity.uid}`)
+    return Exit.Ok
+  }
+  if (args.dryRun || !args.yes) {
+    for (const path of found) process.stdout.write(`would chown ${identity.uid}:${identity.gid} ${path}\n`)
+    status(`${found.length} foreign-owned path(s); re-run with --yes to chown them`)
+    return Exit.Environment
+  }
+  const { fixed, stuck } = await repairOwnership(found, identity)
 
   if (fixed > 0) status(`fixed ${fixed} path(s) for ${identity.uid}:${identity.gid}`)
   if (stuck.length > 0) {

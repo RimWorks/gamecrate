@@ -122,7 +122,7 @@ function readDetails(payload: unknown): Map<string, Detail> {
     const id = entry['publishedfileid']
     const result = entry['result']
     if (typeof id !== 'string' || typeof result !== 'number') {
-      throw new Error('steam returned a body this does not understand')
+      throw new TypeError('steam returned a body this does not understand')
     }
     out.set(id, { result, timeUpdated: Number(entry['time_updated']) || 0 })
   }

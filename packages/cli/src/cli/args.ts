@@ -340,11 +340,15 @@ function checkValueTokens(program: Command, head: string[]): void {
     if (option === undefined) continue
     const value = head[++i]
     if (value === undefined) return // commander reports the missing argument itself
-    // --docker-arg is the one flag whose value legitimately starts with a dash.
-    if (option.long === '--docker-arg') continue
-    if (value.startsWith('-') && value.length > 1) {
-      throw usage(`${option.long ?? token} needs a value, got the flag ${value}`)
-    }
+    checkValue(option, token, value)
+  }
+}
+
+function checkValue(option: Option, token: string, value: string): void {
+  // --docker-arg is the one flag whose value legitimately starts with a dash.
+  if (option.long === '--docker-arg') return
+  if (value.startsWith('-') && value.length > 1) {
+    throw usage(`${option.long ?? token} needs a value, got the flag ${value}`)
   }
 }
 
@@ -367,24 +371,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   const head = sep === -1 ? argv : argv.slice(0, sep)
 
   const program = buildProgram()
-  const seen = new Set<string>()
-  const counts = new Map<string, number>()
-  const worktree: string[] = []
-  let cleanTier: ParsedArgs['cleanTier']
-
-  // Commander keeps no record of how often a flag appeared, or which half of a
-  // --x/--no-x pair the user typed; the events do.
-  for (const option of program.options) {
-    const long = option.long ?? option.flags
-    program.on(`option:${option.name()}`, (value?: string) => {
-      seen.add(long)
-      counts.set(long, (counts.get(long) ?? 0) + 1)
-      if (long === '--worktree' && value !== undefined) worktree.push(value)
-      if (long === '--staging' || long === '--logs' || long === '--all' || long === '--downloads') {
-        cleanTier = long.slice(2) as ParsedArgs['cleanTier']
-      }
-    })
-  }
+  const log = recordFlags(program)
+  const { seen, counts, worktree } = log
 
   checkValueTokens(program, head)
   try {
@@ -393,20 +381,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     throw translate(error, program)
   }
 
-  for (const option of program.options) {
-    const long = option.long ?? option.flags
-    const repeatable = Array.isArray(option.defaultValue)
-    if (option.required && !repeatable && (counts.get(long) ?? 0) > 1) {
-      throw usage(`${long} given more than once`)
-    }
-  }
-  if (seen.has('--build') && seen.has('--no-build')) throw usage('--build and --no-build contradict')
-  if (seen.has('--replace') && seen.has('--no-replace')) throw usage('--replace and --no-replace contradict')
-  if (seen.has('--detach')) {
-    if (seen.has('--no-detach')) throw usage('--detach and --no-detach contradict')
-    if (seen.has('--dry-run')) throw usage('--detach and --dry-run contradict')
-    if (seen.has('--print-plan')) throw usage('--detach and --print-plan contradict')
-  }
+  checkRepeats(program, counts)
+  checkContradictions(seen)
 
   const values = program.opts() as Values
   const envBuild = applyEnv(program, seen, env, values)
@@ -448,7 +424,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.sort = values['sort'] as 'topo' | 'none' | undefined
   out.instance = values['instance'] as string | undefined
   out.build = envBuild ?? policy(values['build'])
-  out.cleanTier = cleanTier
+  out.cleanTier = log.cleanTier
 
   if (opts.defaults?.game !== undefined) out.game = opts.defaults.game
 
@@ -466,6 +442,52 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     throw usage('shell cannot detach: a shell needs the terminal --detach gives up')
   }
   return out
+}
+
+interface FlagLog {
+  seen: Set<string>
+  counts: Map<string, number>
+  worktree: string[]
+  cleanTier?: ParsedArgs['cleanTier']
+}
+
+/**
+ * Commander keeps no record of how often a flag appeared, or which half of a `--x`/`--no-x`
+ * pair the user typed; the events do.
+ */
+function recordFlags(program: Command): FlagLog {
+  const log: FlagLog = { seen: new Set(), counts: new Map(), worktree: [] }
+  for (const option of program.options) {
+    const long = option.long ?? option.flags
+    program.on(`option:${option.name()}`, (value?: string) => {
+      log.seen.add(long)
+      log.counts.set(long, (log.counts.get(long) ?? 0) + 1)
+      if (long === '--worktree' && value !== undefined) log.worktree.push(value)
+      if (long === '--staging' || long === '--logs' || long === '--all' || long === '--downloads') {
+        log.cleanTier = long.slice(2) as ParsedArgs['cleanTier']
+      }
+    })
+  }
+  return log
+}
+
+function checkRepeats(program: Command, counts: Map<string, number>): void {
+  for (const option of program.options) {
+    const long = option.long ?? option.flags
+    const repeatable = Array.isArray(option.defaultValue)
+    if (option.required && !repeatable && (counts.get(long) ?? 0) > 1) {
+      throw usage(`${long} given more than once`)
+    }
+  }
+}
+
+function checkContradictions(seen: Set<string>): void {
+  if (seen.has('--build') && seen.has('--no-build')) throw usage('--build and --no-build contradict')
+  if (seen.has('--replace') && seen.has('--no-replace')) throw usage('--replace and --no-replace contradict')
+  if (!seen.has('--detach')) return
+  if (seen.has('--no-detach')) throw usage('--detach and --no-detach contradict')
+  if (seen.has('--dry-run')) throw usage('--detach and --dry-run contradict')
+  if (seen.has('--print-plan')) throw usage('--detach and --print-plan contradict')
 }
 
 function policy(value: unknown): BuildPolicy | undefined {
@@ -500,46 +522,8 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
     return
   }
 
-  const sub = SUBCOMMANDS.find((s) => s.name === first)
-  let slots: PositionalSlot[]
-  let rest: string[]
-
-  if (sub) {
-    out.subcommand = sub.name
-    rest = positional.slice(1)
-    const head = rest[0]
-    const verbSlots = head === undefined || sub.subverbs === undefined ? undefined : own(sub.subverbs, head)
-    if (verbSlots === undefined) {
-      slots = [...sub.positionals]
-    } else {
-      out.subverb = head as NonNullable<ParsedArgs['subverb']>
-      rest.shift()
-      slots = [...verbSlots]
-    }
-  } else {
-    const known = !NAME_PATTERN.test(first) ? false : games === undefined || games.includes(first)
-    if (!known) {
-      const candidates = [...SUBCOMMANDS.map((s) => s.name), ...(games ?? [])]
-      throw usage(`${first} is not a game or a subcommand`, suggest(first, candidates))
-    }
-    out.subcommand = 'run'
-    out.game = first
-    slots = ['profile', 'rest']
-    rest = positional.slice(1)
-  }
-
-  for (const slot of slots) {
-    if (slot === 'rest') {
-      out.rest = rest
-      rest = []
-      break
-    }
-    const value = rest.shift()
-    if (value === undefined) break
-    if (!NAME_PATTERN.test(value)) throw usage(`${value} is not a valid ${slot} name`)
-    if (slot === 'game') out.game = value
-    else out.profile = value
-  }
+  const { sub, slots, rest } = routePositionals(out, first, positional, games)
+  const left = fillSlots(out, slots, rest)
 
   // sync is the only subverb whose game and ids are optional.
   if (!help && (out.subverb === 'add' || out.subverb === 'rm')) {
@@ -547,10 +531,61 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
     if (out.subverb === 'rm' && out.rest.length === 0) throw usage('mods rm needs at least one mod id')
   }
 
-  if (rest.length > 0) {
+  if (left.length > 0) {
     const shape = sub ? `${sub.name} ${sub.usage}`.trim() : `${out.game} [profile]`
-    throw usage(`unexpected argument ${rest[0]}`, `gamecrate ${shape}`)
+    throw usage(`unexpected argument ${left[0]}`, `gamecrate ${shape}`)
   }
+}
+
+interface Route {
+  sub?: SubcommandSpec
+  slots: PositionalSlot[]
+  rest: string[]
+}
+
+function routePositionals(
+  out: ParsedArgs,
+  first: string,
+  positional: string[],
+  games?: readonly string[],
+): Route {
+  const sub = SUBCOMMANDS.find((s) => s.name === first)
+  if (!sub) {
+    const known = !NAME_PATTERN.test(first) ? false : games === undefined || games.includes(first)
+    if (!known) {
+      const candidates = [...SUBCOMMANDS.map((s) => s.name), ...(games ?? [])]
+      throw usage(`${first} is not a game or a subcommand`, suggest(first, candidates))
+    }
+    out.subcommand = 'run'
+    out.game = first
+    return { slots: ['profile', 'rest'], rest: positional.slice(1) }
+  }
+
+  out.subcommand = sub.name
+  const rest = positional.slice(1)
+  const head = rest[0]
+  const verbSlots = head === undefined || sub.subverbs === undefined ? undefined : own(sub.subverbs, head)
+  if (verbSlots === undefined) return { sub, slots: [...sub.positionals], rest }
+  out.subverb = head as NonNullable<ParsedArgs['subverb']>
+  rest.shift()
+  return { sub, slots: [...verbSlots], rest }
+}
+
+/** What is left over after every slot is filled, which is an error at every call site. */
+function fillSlots(out: ParsedArgs, slots: PositionalSlot[], rest: string[]): string[] {
+  const left = [...rest]
+  for (const slot of slots) {
+    if (slot === 'rest') {
+      out.rest = left
+      return []
+    }
+    const value = left.shift()
+    if (value === undefined) break
+    if (!NAME_PATTERN.test(value)) throw usage(`${value} is not a valid ${slot} name`)
+    if (slot === 'game') out.game = value
+    else out.profile = value
+  }
+  return left
 }
 
 /**
@@ -572,28 +607,46 @@ function applyEnv(
     seen.add(flag)
 
     if (flag === '--build') {
-      if (!BUILD_POLICIES.includes(raw as BuildPolicy)) {
-        throw usage(`${name} must be one of ${BUILD_POLICIES.join(', ')}, got ${raw}`)
-      }
-      build = raw as BuildPolicy
+      build = envBuildPolicy(name, raw)
       continue
     }
-
-    const option = program.options.find((o) => o.long === flag)!
-    const key = option.attributeName()
-    if (!option.required) {
-      if (truthy(raw)) values[key] = true
-      continue
-    }
-    if (option.argChoices && !option.argChoices.includes(raw)) {
-      throw usage(`${name} must be one of ${option.argChoices.join(', ')}, got ${raw}`)
-    }
-    values[key] = option.parseArg === undefined ? raw : option.parseArg(raw, values[key])
+    applyEnvValue(program, flag, name, raw, values)
   }
   return build
 }
 
+function envBuildPolicy(name: string, raw: string): BuildPolicy {
+  if (!BUILD_POLICIES.includes(raw as BuildPolicy)) {
+    throw usage(`${name} must be one of ${BUILD_POLICIES.join(', ')}, got ${raw}`)
+  }
+  return raw as BuildPolicy
+}
+
+function applyEnvValue(program: Command, flag: string, name: string, raw: string, values: Values): void {
+  const option = program.options.find((o) => o.long === flag)!
+  const key = option.attributeName()
+  if (!option.required) {
+    if (truthy(raw)) values[key] = true
+    return
+  }
+  if (option.argChoices && !option.argChoices.includes(raw)) {
+    throw usage(`${name} must be one of ${option.argChoices.join(', ')}, got ${raw}`)
+  }
+  values[key] = option.parseArg === undefined ? raw : option.parseArg(raw, values[key])
+}
+
 function applyDefaults(
+  out: ParsedArgs,
+  seen: Set<string>,
+  defaults: ProjectDefaults,
+  hasGameArgs: boolean,
+): void {
+  applyListDefaults(out, seen, defaults, hasGameArgs)
+  applyScalarDefaults(out, defaults)
+  applyFlagDefaults(out, seen, defaults)
+}
+
+function applyListDefaults(
   out: ParsedArgs,
   seen: Set<string>,
   defaults: ProjectDefaults,
@@ -608,7 +661,9 @@ function applyDefaults(
   }
   if (!seen.has('--use') && defaults.use !== undefined) out.use = [...defaults.use]
   if (!hasGameArgs && defaults.gameArgs !== undefined) out.gameArgs = [...defaults.gameArgs]
+}
 
+function applyScalarDefaults(out: ParsedArgs, defaults: ProjectDefaults): void {
   out.mode ??= defaults.mode
   out.marker ??= defaults.marker
   out.timeout ??= defaults.timeout
@@ -620,7 +675,9 @@ function applyDefaults(
   out.build ??= defaults.build
   out.sort ??= defaults.sort
   out.instance ??= defaults.instance
+}
 
+function applyFlagDefaults(out: ParsedArgs, seen: Set<string>, defaults: ProjectDefaults): void {
   if (!seen.has('--dry-run')) out.dryRun = defaults.dryRun ?? out.dryRun
   if (!seen.has('--print-plan')) out.printPlan = defaults.printPlan ?? out.printPlan
   if (!seen.has('--json')) out.json = defaults.json ?? out.json
@@ -704,7 +761,9 @@ function modSource(values: Values): NonNullable<ParsedArgs['source']> {
   if (kinds.length > 1) throw usage(`${kinds[0]} and ${kinds[1]} contradict: a source has one kind`)
 
   if (url === undefined) {
-    const stray = refs[0] === undefined ? (subdir === undefined ? undefined : '--subdir') : `--${refs[0]}`
+    let stray: string | undefined
+    if (refs[0] !== undefined) stray = `--${refs[0]}`
+    else if (subdir !== undefined) stray = '--subdir'
     if (stray !== undefined) throw usage(`${stray} only applies to a --git source`)
   }
   if (refs.length > 1) throw usage(`--${refs[0]} and --${refs[1]} contradict: a git source has one ref`)

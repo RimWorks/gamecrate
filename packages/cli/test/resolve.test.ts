@@ -1094,8 +1094,8 @@ describe('generated config files', () => {
     expect((await lstat(prefsPath)).isDirectory()).toBe(true)
   })
 
-  test('an unreadable Prefs leaves the tuned keys on disk', async () => {
-    if (process.getuid?.() === 0) return
+  test('an unreadable Prefs leaves the tuned keys on disk', async (ctx) => {
+    if (process.getuid?.() === 0) ctx.skip()
     const plan = await prefsPlan()
     const prefsPath = join(plan.dataDirHost, 'SaveData', 'Prefs.txt')
     await rm(prefsPath, { force: true, recursive: true })

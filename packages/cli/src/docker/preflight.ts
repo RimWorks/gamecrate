@@ -40,7 +40,7 @@ async function checkDocker(problems: Problem[]): Promise<boolean> {
 
   problems.push({
     where: 'docker',
-    message: `docker is not reachable: ${firstLine(result.stderr) || `exit ${result.code}`}`,
+    message: `docker is not reachable: ${firstLine(result.stderr) || exitCode(result.code)}`,
     suggestion: 'start the docker daemon, or check that your user is in the docker group',
   })
   return false
@@ -65,7 +65,7 @@ async function checkImageRunnable(
     where,
     message: corrupt
       ? `image ${ref} is present but unrunnable; its layers are missing from the content store`
-      : `image ${ref} is present but failed to start: ${err || `exit ${run.code}`}`,
+      : `image ${ref} is present but failed to start: ${err || exitCode(run.code)}`,
     suggestion: corrupt
       ? `docker image rm ${ref} && docker builder prune -f, then gamecrate build ${game}`
       : undefined,
@@ -106,7 +106,7 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
 
   problems.push({
     where,
-    message: `image ${image.ref} is not present locally and cannot be pulled: ${firstLine(remote.stderr) || `exit ${remote.code}`}`,
+    message: `image ${image.ref} is not present locally and cannot be pulled: ${firstLine(remote.stderr) || exitCode(remote.code)}`,
     suggestion: host ? `docker login ${host}` : undefined,
   })
 }
@@ -150,7 +150,7 @@ function checkCdi(problems: Problem[]): void {
     return
   }
 
-  if (!/^\s*-?\s*name:\s*["']?all["']?\s*$/m.test(text)) {
+  if (!/^[ \t]*(?:-[ \t]*)?name:[ \t]*["']?all["']?[ \t]*$/m.test(text)) {
     problems.push({
       where: CDI_SPEC,
       message: 'CDI spec does not declare a device named "all"',
@@ -232,6 +232,10 @@ function hasStoredAuth(host: string): boolean {
   } catch {
     return false
   }
+}
+
+function exitCode(code: number): string {
+  return `exit ${code}`
 }
 
 function firstLine(text: string): string {

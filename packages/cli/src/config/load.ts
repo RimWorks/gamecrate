@@ -45,10 +45,11 @@ async function probe(dir: string, stem: string): Promise<string | undefined> {
     }
   }
   if (found.length > 1) {
+    const rows = found.map((f) => `  ${basename(f)}`).join('\n')
     throw new GamecrateError(
       `two configs in ${dir}`,
       Exit.Config,
-      `${found.map((f) => `  ${basename(f)}`).join('\n')}\nkeep one`,
+      `${rows}\nkeep one`,
     )
   }
   return found[0]
@@ -305,7 +306,7 @@ function origin(
   project?: ProjectDefaults,
 ): string {
   if (!where.startsWith('/')) return ''
-  const segments = where.slice(1).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'))
+  const segments = where.slice(1).split('/').map((s) => s.replaceAll('~1', '/').replaceAll('~0', '~'))
   const [section, name, sub, ...rest] = segments
 
   // ahead of the user check: a repo profile replacing a global one of the same name still
@@ -468,7 +469,7 @@ function entryIds(entry: ModEntry): string[] {
 }
 
 export function globToRegExp(pattern: string): RegExp {
-  const body = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
+  const body = pattern.replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`).replaceAll('*', '.*').replaceAll('?', '.')
   return new RegExp(`^${body}$`, 'i')
 }
 

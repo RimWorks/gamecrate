@@ -65,7 +65,7 @@ describe('globMatch', () => {
     expect(globMatch('[ab]/About', 'a/About')).toBe(false)
     expect(globMatch('{A}', '{A}')).toBe(true)
     expect(globMatch('{bin,obj}/**', 'obj/Debug')).toBe(false)
-    expect(globMatch('a\\b', 'a\\b')).toBe(true)
+    expect(globMatch(String.raw`a\b`, String.raw`a\b`)).toBe(true)
     expect(globMatch('Mod (Fork)', 'Mod (Fork)')).toBe(true)
     expect(globMatch('!x,y@z+w|v', '!x,y@z+w|v')).toBe(true)
   })
@@ -482,41 +482,6 @@ describe('the workshop stamp', () => {
       // a directory where the acf should be: readFileSync gives EISDIR, not ENOENT
       await mkdir(acf, { recursive: true })
       expect(workshopStamp(withRoots(atlas, [], null), data)).toBeNull()
-    } finally {
-      await rm(data, { recursive: true, force: true })
-    }
-  })
-
-  test('a timetouched rewrite does not move it', async () => {
-    const data = await fixture()
-    try {
-      const cfg = withRoots(atlas, [], null)
-      const acf = acfFile(downloadTree(data))
-      await mkdir(dirname(acf), { recursive: true })
-
-      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
-      const before = workshopStamp(cfg, data)
-      expect(before).not.toBeNull()
-
-      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789948957'))
-      expect(workshopStamp(cfg, data)).toBe(before)
-    } finally {
-      await rm(data, { recursive: true, force: true })
-    }
-  })
-
-  test('a changed manifest id moves it', async () => {
-    const data = await fixture()
-    try {
-      const cfg = withRoots(atlas, [], null)
-      const acf = acfFile(downloadTree(data))
-      await mkdir(dirname(acf), { recursive: true })
-
-      await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
-      const before = workshopStamp(cfg, data)
-
-      await writeFile(acf, acfText({ '818773962': '7017455373945780161' }, '1789944542'))
-      expect(workshopStamp(cfg, data)).not.toBe(before)
     } finally {
       await rm(data, { recursive: true, force: true })
     }

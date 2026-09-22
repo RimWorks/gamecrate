@@ -106,7 +106,7 @@ function fakeSteamcmd(fail = ''): { path: string; runs: () => number } {
       'root="$install/steamapps/workshop/content/$appid"',
       'for id in $ids; do',
       '  [ -d "$root/$id" ] || continue',
-      '  printf \'packageId a.item%s\\nname a.item%s\\n\' "$id" "$id" > "$root/$id/About/About.txt"',
+      String.raw`  printf 'packageId a.item%s\nname a.item%s\n' "$id" "$id" > "$root/$id/About/About.txt"`,
       'done',
       'exit $code',
       '',
@@ -363,7 +363,7 @@ describe('modsAdd', () => {
     const code = await modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx)
 
     expect(code).toBe(Exit.Ok)
-    expect(ctx.config.games['atlas']!.workshopRoot).toBe(null)
+    expect(ctx.config.games['atlas']!.workshopRoot).toBeNull()
     // the recorded entry is the same one a workshopRoot read used to write
     expect(library(ctx.globalPath, 'atlas')['a.item12345']).toEqual({ workshop: 12345 })
     const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)

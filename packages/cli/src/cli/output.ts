@@ -95,7 +95,7 @@ export interface PlanModPayload {
   containerDir: string
   origin: 'explicit' | 'auto'
   stale: boolean
-  staleReport?: ResolvedMod['staleReport']
+  staleReport?: NonNullable<ResolvedMod['staleReport']>
   workshopId?: number
 }
 
@@ -179,8 +179,10 @@ export function printPlan(plan: LaunchPlan, asJson: boolean): void {
     `  logs      ${payload.logsDirHost}`,
   ]
   if (payload.marker !== undefined) out.push(`  marker    ${payload.marker}`)
-  out.push(`  timeout   ${payload.timeoutSeconds}s, render wait ${payload.renderWaitSeconds}s`)
-  out.push(`  mods      ${payload.mods.length}`)
+  out.push(
+    `  timeout   ${payload.timeoutSeconds}s, render wait ${payload.renderWaitSeconds}s`,
+    `  mods      ${payload.mods.length}`,
+  )
 
   const width = Math.max(0, ...payload.mods.map((m) => m.packageId.length))
   for (const mod of payload.mods) {
@@ -194,7 +196,7 @@ export function printPlan(plan: LaunchPlan, asJson: boolean): void {
 
 /** Sortable lexicographically and safe on every filesystem: 20260730T142335123Z. */
 export function runTimestamp(now: Date = new Date()): string {
-  return now.toISOString().replace(/[-:.]/g, '')
+  return now.toISOString().replaceAll(/[-:.]/g, '')
 }
 
 /** Makes <logsDir>/runs/<ts>, repoints `current` at it, rotates the old ones, returns the dir. */
@@ -217,7 +219,11 @@ function append(fd: number, chunk: string | Uint8Array): void {
 
 function uniqueRunDir(runsDir: string, stamp: string): string {
   let candidate = join(runsDir, stamp)
-  for (let n = 2; existsSync(candidate); n++) candidate = join(runsDir, `${stamp}-${n}`)
+  let n = 2
+  while (existsSync(candidate)) {
+    candidate = join(runsDir, `${stamp}-${n}`)
+    n++
+  }
   return candidate
 }
 

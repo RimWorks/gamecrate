@@ -85,27 +85,31 @@ export async function listRuns(dataRoot: string, docker: Docker = dockerPs): Pro
 
   for (const lock of await walkLocks(dataRoot)) {
     const match = byContainer.get(lock.container)
-    if (match !== undefined) {
-      // on a shared container name a live lock beats a dead one, and a merged live pid is
-      // never replaced, so readdir order stops mattering either way
-      const stale = match.pid !== undefined && !isRunning(match.pid, match.startedAt)
-      if (match.pid === undefined || (stale && isRunning(lock.pid, lock.startedAt))) {
-        match.pid = lock.pid
-        match.startedAt = lock.startedAt
-        if (lock.mode !== undefined) match.mode = lock.mode
-      }
-      continue
-    }
-    out.push({
-      game: lock.game,
-      profile: lock.profile,
-      ...(lock.instance === undefined ? {} : { instance: lock.instance }),
-      container: lock.container,
-      pid: lock.pid,
-      ...(lock.mode === undefined ? {} : { mode: lock.mode }),
-      startedAt: lock.startedAt,
-      status: isRunning(lock.pid, lock.startedAt) ? 'starting' : 'orphaned',
-    })
+    if (match === undefined) out.push(fromLock(lock))
+    else mergeLock(match, lock)
   }
   return out
+}
+
+// on a shared container name a live lock beats a dead one, and a merged live pid is never
+// replaced, so readdir order stops mattering either way
+function mergeLock(match: RunRecord, lock: LockRecord): void {
+  const stale = match.pid !== undefined && !isRunning(match.pid, match.startedAt)
+  if (match.pid !== undefined && !(stale && isRunning(lock.pid, lock.startedAt))) return
+  match.pid = lock.pid
+  match.startedAt = lock.startedAt
+  if (lock.mode !== undefined) match.mode = lock.mode
+}
+
+function fromLock(lock: LockRecord): RunRecord {
+  return {
+    game: lock.game,
+    profile: lock.profile,
+    ...(lock.instance === undefined ? {} : { instance: lock.instance }),
+    container: lock.container,
+    pid: lock.pid,
+    ...(lock.mode === undefined ? {} : { mode: lock.mode }),
+    startedAt: lock.startedAt,
+    status: isRunning(lock.pid, lock.startedAt) ? 'starting' : 'orphaned',
+  }
 }

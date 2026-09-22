@@ -480,7 +480,7 @@ describe('help', () => {
   test('help is derived from the parser, so every public flag it accepts is listed', () => {
     const text = renderHelp(undefined, config)
     const options = buildProgram().options.filter((o) => !o.hidden)
-    expect(options.length).toBe(buildProgram().options.length - 1)
+    expect(options).toHaveLength(buildProgram().options.length - 1)
     for (const option of options) expect(text).toContain(option.flags)
   })
 
@@ -626,7 +626,7 @@ describe('printPlan payload', () => {
     const payload = planPayload(plan)
     const mod = payload.mods.find((m) => m.packageId === 'Lib.Bridge.Lantern')
     expect(mod?.hostDir.startsWith('/')).toBe(true)
-    expect(JSON.parse(JSON.stringify(payload)).mods.length).toBe(2)
+    expect(JSON.parse(JSON.stringify(payload)).mods).toHaveLength(2)
   })
 })
 

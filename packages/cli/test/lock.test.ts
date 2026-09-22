@@ -743,7 +743,7 @@ describe('awaitRunLog says so while it waits', () => {
       process.stderr.write = real
     }
 
-    expect(lines.length).toBe(2)
+    expect(lines).toHaveLength(2)
     for (const line of lines) expect(line).toContain(`${GAME} ${PROFILE} to open its log (`)
     // the label is elapsed since the wait began, not since the last line or since the epoch
     expect(lines[0]).toContain('(0s)')

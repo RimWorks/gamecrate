@@ -99,7 +99,7 @@ describe('parseJsonc', () => {
   })
 
   test('an escaped quote does not end the string', () => {
-    const v = parseJsonc('{ "a": "say \\" // not a comment" }') as Record<string, string>
+    const v = parseJsonc(String.raw`{ "a": "say \" // not a comment" }`) as Record<string, string>
     expect(v['a']).toBe('say " // not a comment')
   })
 
@@ -1344,11 +1344,15 @@ describe('project profiles', () => {
     await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
   })
 
-  test('profiles without a game is a config error that says why', async () => {
-    await write('profiles:\n  dev:\n    mods: []\n')
+  test.each([
+    ['profiles without a game', 'profiles:\n  dev:\n    mods: []\n', 'game'],
+    ['the old profile key', 'game: rimworld\nprofile: dev\n', 'unknown key'],
+    ['library without a game', 'library:\n  Some.Mod:\n    git: https://example.com/x.git\n', 'top-level game:'],
+  ])('%s is a config error that says why', async (_case, text, needle) => {
+    await write(text)
     await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
     await loadProjectDefaults(dir).catch((error: GamecrateError) => {
-      expect(error.detail).toContain('game')
+      expect(error.detail).toContain(needle)
     })
   })
 
@@ -1357,28 +1361,12 @@ describe('project profiles', () => {
     await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
   })
 
-  test('the old profile key is gone', async () => {
-    await write('game: rimworld\nprofile: dev\n')
-    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
-    await loadProjectDefaults(dir).catch((error: GamecrateError) => {
-      expect(error.detail).toContain('unknown key')
-    })
-  })
-
   test('flag defaults still work with none of the new keys', async () => {
     await write('game: rimworld\nmode: headless\ntimeout: 30\n')
     const defaults = await loadProjectDefaults(dir)
     expect(defaults.mode).toBe('headless')
     expect(defaults.timeout).toBe(30)
     expect(defaults.profiles).toBeUndefined()
-  })
-
-  test('library in a repo config without a game is a config error that says why', async () => {
-    await write('library:\n  Some.Mod:\n    git: https://example.com/x.git\n')
-    await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
-    await loadProjectDefaults(dir).catch((error: GamecrateError) => {
-      expect(error.detail).toContain('top-level game:')
-    })
   })
 
   test('detach is a project key like every other flag default', async () => {

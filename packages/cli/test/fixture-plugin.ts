@@ -23,7 +23,7 @@ export function parseFixtureManifest(text: string): ModManifest | null {
   const list = (key: string): string[] => {
     const value = fields.get(key.toLowerCase())
     if (value === undefined) return []
-    return value.replace(/^\[|\]$/g, '').split(/\s+/).filter((item) => item !== '')
+    return value.replaceAll(/^\[|\]$/g, '').split(/\s+/).filter((item) => item !== '')
   }
   const manifest: ModManifest = {
     packageId,
@@ -58,7 +58,8 @@ export function mergeFixturePrefs(existing: string | null, owned: Record<string,
     if (gap > 0) entries.set(line.slice(0, gap), line.slice(gap + 1))
   }
   for (const [key, value] of Object.entries(owned)) entries.set(key, value)
-  return `${[...entries].map(([k, v]) => `${k} ${v}`).join('\n')}\n`
+  const body = [...entries].map(([k, v]) => `${k} ${v}`).join('\n')
+  return `${body}\n`
 }
 
 export const FIXTURE_DEFAULTS: Partial<GameConfig> = {

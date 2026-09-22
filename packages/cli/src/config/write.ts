@@ -86,7 +86,7 @@ function unflowGrownMaps(doc: Document, path: (string | number)[]): void {
  */
 function editYaml(text: string, edits: ConfigEdit[]): string {
   const doc = parseDocument(text)
-  if (doc.errors.length > 0) throw doc.errors[0]!
+  if (doc.errors.length > 0) throw new GamecrateError(doc.errors[0]!.message, Exit.Config)
   for (const edit of edits) {
     if (edit.value === undefined) {
       if (doc.hasIn(edit.path)) doc.deleteIn(edit.path)

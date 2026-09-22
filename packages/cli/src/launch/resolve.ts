@@ -110,7 +110,7 @@ function expandDynamic(
     .sort((a, b) => firstOrder.indexOf(a.toLowerCase()) - firstOrder.indexOf(b.toLowerCase()))
   const rest = matched.filter((id) => !firstOrder.includes(id.toLowerCase()))
   if ((entry.sort ?? 'alpha') === 'alpha') {
-    rest.sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : a.toLowerCase() > b.toLowerCase() ? 1 : 0))
+    rest.sort((a, b) => Number(a.toLowerCase() > b.toLowerCase()) - Number(a.toLowerCase() < b.toLowerCase()))
   }
   return [...head, ...rest]
 }
@@ -179,49 +179,15 @@ function topoSort(list: Staged[], problems: Problem[], core?: string): Staged[] 
   const position = new Map<string, number>()
   for (const [i, mod] of list.entries()) position.set(mod.record.packageId.toLowerCase(), i)
 
-  const edges = new Set<string>()
-  const addEdge = (from: number | undefined, to: number | undefined): void => {
-    if (from === undefined || to === undefined || from === to) return
-    edges.add(`${from}>${to}`)
-  }
-  for (const [i, mod] of list.entries()) {
-    const { loadAfter, loadBefore, forceLoadAfter, forceLoadBefore } = mod.record.manifest
-    for (const id of [...loadAfter, ...forceLoadAfter]) addEdge(position.get(id.toLowerCase()), i)
-    for (const id of [...loadBefore, ...forceLoadBefore]) addEdge(i, position.get(id.toLowerCase()))
-  }
-
-  const indegree = list.map(() => 0)
-  const outgoing = list.map((): number[] => [])
-  // `incoming` is how the pre-core walk below follows the edges backwards.
-  const incoming = list.map((): number[] => [])
-  for (const edge of edges) {
-    const [from, to] = edge.split('>').map(Number) as [number, number]
-    outgoing[from]!.push(to)
-    incoming[to]!.push(from)
-    indegree[to]! += 1
-  }
-  const preCore = new Set<number>()
+  const { indegree, outgoing, incoming } = graph(list, position)
   const coreIndex = core === undefined ? undefined : position.get(core.toLowerCase())
-  if (coreIndex !== undefined) {
-    const queue = [coreIndex]
-    while (queue.length > 0) {
-      for (const from of incoming[queue.pop()!]!) {
-        if (preCore.has(from)) continue
-        preCore.add(from)
-        queue.push(from)
-      }
-    }
-  }
+  const preCore = reachesCore(incoming, coreIndex)
   const phase = (i: number): number => (preCore.has(i) ? 0 : 1)
 
   const sorted: Staged[] = []
   const done = list.map(() => false)
   for (;;) {
-    let next = -1
-    for (let i = 0; i < list.length; i++) {
-      if (done[i] || indegree[i] !== 0) continue
-      if (next === -1 || phase(i) < phase(next)) next = i
-    }
+    const next = nextReady(done, indegree, phase)
     if (next === -1) break
     done[next] = true
     sorted.push(list[next]!)
@@ -239,6 +205,62 @@ function topoSort(list: Staged[], problems: Problem[], core?: string): Staged[] 
   return sorted
 }
 
+/** The next node with no edges left pointing at it, core-side first. -1 when none is left. */
+function nextReady(done: boolean[], indegree: number[], phase: (i: number) => number): number {
+  let next = -1
+  for (let i = 0; i < done.length; i++) {
+    if (done[i] || indegree[i] !== 0) continue
+    if (next === -1 || phase(i) < phase(next)) next = i
+  }
+  return next
+}
+
+interface LoadGraph {
+  indegree: number[]
+  outgoing: number[][]
+  /** How the pre-core walk follows the edges backwards. */
+  incoming: number[][]
+}
+
+function graph(list: Staged[], position: Map<string, number>): LoadGraph {
+  const edges = new Set<string>()
+  const addEdge = (from: number | undefined, to: number | undefined): void => {
+    if (from === undefined || to === undefined || from === to) return
+    edges.add(`${from}>${to}`)
+  }
+  for (const [i, mod] of list.entries()) {
+    const { loadAfter, loadBefore, forceLoadAfter, forceLoadBefore } = mod.record.manifest
+    for (const id of [...loadAfter, ...forceLoadAfter]) addEdge(position.get(id.toLowerCase()), i)
+    for (const id of [...loadBefore, ...forceLoadBefore]) addEdge(i, position.get(id.toLowerCase()))
+  }
+
+  const indegree = list.map(() => 0)
+  const outgoing = list.map((): number[] => [])
+  const incoming = list.map((): number[] => [])
+  for (const edge of edges) {
+    const [from, to] = edge.split('>').map(Number) as [number, number]
+    outgoing[from]!.push(to)
+    incoming[to]!.push(from)
+    indegree[to]! += 1
+  }
+  return { indegree, outgoing, incoming }
+}
+
+/** Everything that has to precede core, walked backwards from core along the edges. */
+function reachesCore(incoming: number[][], coreIndex: number | undefined): Set<number> {
+  const preCore = new Set<number>()
+  if (coreIndex === undefined) return preCore
+  const queue = [coreIndex]
+  while (queue.length > 0) {
+    for (const from of incoming[queue.pop()!]!) {
+      if (preCore.has(from)) continue
+      preCore.add(from)
+      queue.push(from)
+    }
+  }
+  return preCore
+}
+
 function incompatibilityWarnings(list: Staged[]): string[] {
   const byId = new Map(list.map((mod) => [mod.record.packageId.toLowerCase(), mod.record.packageId]))
   const seen = new Set<string>()
@@ -254,6 +276,131 @@ function incompatibilityWarnings(list: Staged[]): string[] {
     }
   }
   return warnings
+}
+
+interface StageInputs {
+  game: GameConfig
+  gameName: string
+  profileName: string
+  profile: ProfileConfig
+  args: Partial<ParsedArgs>
+  index: ModIndex
+  sources: ReadonlyMap<string, string>
+  unfetched: Set<string>
+  problems: Problem[]
+  warnings: string[]
+}
+
+interface SlotRef {
+  ref: string
+  optional: boolean
+}
+
+function stageSlots(input: StageInputs): { staged: Staged[]; present: Set<string> } {
+  const { game, gameName, profileName, profile, args, index } = input
+  const excluded = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
+  const isExcluded = (id: string): boolean => excluded.some((pattern) => pattern.test(id))
+
+  const staged: Staged[] = []
+  const present = new Set<string>()
+  for (const slot of collectSlots(game, gameName, profileName, profile, args)) {
+    for (const { ref, optional } of slotRefs(slot, input)) {
+      const record = resolveModRef(index, ref, game)
+      if (!record) {
+        reportMissing(slot, ref, optional, input)
+        continue
+      }
+      const key = record.packageId.toLowerCase()
+      if (present.has(key) || isExcluded(record.packageId)) continue
+      present.add(key)
+      staged.push({ record, explicit: true })
+    }
+  }
+  return { staged, present }
+}
+
+function slotRefs(slot: Slot, input: StageInputs): SlotRef[] {
+  const { entry } = slot
+  if (isDynamic(entry)) {
+    return expandDynamic(entry, input.index, slot.where, input.problems).map((id) => ({ ref: id, optional: false }))
+  }
+  return [
+    {
+      ref: refFor(entry, input.game, input.sources),
+      optional: typeof entry !== 'string' && entry.optional === true,
+    },
+  ]
+}
+
+function reportMissing(slot: Slot, ref: string, optional: boolean, input: StageInputs): void {
+  // A declared DLC is what the game can have, not what this machine owns.
+  if (slot.dlc === true) return
+  if (optional) {
+    input.warnings.push(`optional mod ${ref} is not installed; skipped`)
+    return
+  }
+  if (ref.startsWith('workshop:') && input.unfetched.has(ref.slice(9))) {
+    input.problems.push({ where: slot.where, message: notFetched(ref.slice(9)) })
+    return
+  }
+  input.problems.push({ where: slot.where, message: `no mod matches "${ref}"` })
+}
+
+function relabelUnfetched(problems: Problem[], unfetched: Set<string>): void {
+  if (unfetched.size === 0) return
+  for (const problem of problems) {
+    const id = workshopUrlId(problem.suggestion)
+    if (id !== undefined && unfetched.has(id)) problem.message = notFetched(id)
+  }
+}
+
+async function describeMod(
+  { record, explicit }: Staged,
+  game: GameConfig,
+  index: ModIndex,
+  warnings: string[],
+): Promise<ResolvedMod> {
+  // Every local mod, not just a worktree: the primary checkout goes stale exactly as easily.
+  const times = record.kind === 'local' ? await scanBuildTimes(record.dir) : null
+  const report = times === null ? null : staleReport(times)
+  if (record.worktree) {
+    warnings.push(
+      `${record.packageId} comes from worktree ${record.worktree.branch} (${record.worktree.source}): ${record.dir}`,
+    )
+  }
+  const shadowed = (index.byPackageId.get(record.packageId.toLowerCase()) ?? [])
+    .filter((other) => other.dir !== record.dir)
+    .map((other) => other.dir)
+  return {
+    packageId: record.packageId,
+    hostDir: record.dir,
+    containerDir: `${game.modsDir.container}/${record.packageId}`,
+    kind: record.kind,
+    ...(record.workshopId === undefined ? {} : { workshopId: record.workshopId }),
+    explicit,
+    stale: times === null ? false : decideStale(times),
+    ...(report === null ? {} : { staleReport: report }),
+    ...(record.worktree === undefined
+      ? {}
+      : { worktree: { ...record.worktree, selected: record.selectedWorktree !== undefined } }),
+    ...(shadowed.length === 0 ? {} : { shadowed }),
+  }
+}
+
+/** RimWorld silently ignores a malformed override, so a bad one is a config problem here. */
+function checkDataDir(problems: Problem[], gameName: string, game: GameConfig): void {
+  if (game.dataDir.mode === 'arg' && game.dataDir.arg.split('=').length !== 2) {
+    problems.push({
+      where: `/games/${gameName}/dataDir/arg`,
+      message: `"${game.dataDir.arg}" must contain exactly one "="; RimWorld silently ignores anything else`,
+    })
+  }
+  if (game.dataDir.container.includes('=')) {
+    problems.push({
+      where: `/games/${gameName}/dataDir/container`,
+      message: `container data path "${game.dataDir.container}" contains "=", which disables the override silently`,
+    })
+  }
 }
 
 export async function resolvePlan(
@@ -298,91 +445,24 @@ export async function resolvePlan(
   await applyWorktreeRequests(index, instance.requests, game)
   problems.push(...(await applySourceOverrides(index, args.use ?? [], game)))
 
-  const excluded = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
-  const isExcluded = (id: string): boolean => excluded.some((pattern) => pattern.test(id))
-
-  const staged: Staged[] = []
-  const present = new Set<string>()
-  for (const slot of collectSlots(game, gameName, profileName, profile, args)) {
-    const entry = slot.entry
-    const refs: { ref: string; optional: boolean }[] = isDynamic(entry)
-      ? expandDynamic(entry, index, slot.where, problems).map((id) => ({ ref: id, optional: false }))
-      : [{ ref: refFor(entry, game, sources), optional: typeof entry !== 'string' && entry.optional === true }]
-
-    for (const { ref, optional } of refs) {
-      const record = resolveModRef(index, ref, game)
-      if (!record) {
-        // A declared DLC is what the game can have, not what this machine owns.
-        if (slot.dlc === true) continue
-        if (optional) warnings.push(`optional mod ${ref} is not installed; skipped`)
-        else if (ref.startsWith('workshop:') && unfetched.has(ref.slice(9))) {
-          problems.push({ where: slot.where, message: notFetched(ref.slice(9)) })
-        } else problems.push({ where: slot.where, message: `no mod matches "${ref}"` })
-        continue
-      }
-      const key = record.packageId.toLowerCase()
-      if (present.has(key) || isExcluded(record.packageId)) continue
-      present.add(key)
-      staged.push({ record, explicit: true })
-    }
-  }
+  const { staged, present } = stageSlots({
+    game, gameName, profileName, profile, args, index, sources, unfetched, problems, warnings,
+  })
 
   // on by default: a mod that declares a dependency does not work without it, and gamecrate
   // downloads the declared ones anyway. set autoDependencies: false to keep a list literal.
   if (profile.autoDependencies !== false) insertDependencies(staged, present, index, game, problems)
   // insertDependencies stays network-free, so relabel its misses here instead of teaching it.
-  if (unfetched.size > 0) {
-    for (const problem of problems) {
-      const id = workshopUrlId(problem.suggestion)
-      if (id !== undefined && unfetched.has(id)) problem.message = notFetched(id)
-    }
-  }
+  relabelUnfetched(problems, unfetched)
 
   const ordered = args.sort === 'none' ? staged : topoSort(staged, problems, game.core)
   warnings.push(...incompatibilityWarnings(ordered))
 
   const mods: ResolvedMod[] = []
-  for (const { record, explicit } of ordered) {
-    // Every local mod, not just a worktree: the primary checkout goes stale exactly as easily.
-    const times = record.kind === 'local' ? await scanBuildTimes(record.dir) : null
-    const report = times === null ? null : staleReport(times)
-    if (record.worktree) {
-      warnings.push(
-        `${record.packageId} comes from worktree ${record.worktree.branch} (${record.worktree.source}): ${record.dir}`,
-      )
-    }
-    const shadowed = (index.byPackageId.get(record.packageId.toLowerCase()) ?? [])
-      .filter((other) => other.dir !== record.dir)
-      .map((other) => other.dir)
-    mods.push({
-      packageId: record.packageId,
-      hostDir: record.dir,
-      containerDir: `${game.modsDir.container}/${record.packageId}`,
-      kind: record.kind,
-      ...(record.workshopId === undefined ? {} : { workshopId: record.workshopId }),
-      explicit,
-      stale: times === null ? false : decideStale(times),
-      ...(report === null ? {} : { staleReport: report }),
-      ...(record.worktree === undefined
-        ? {}
-        : { worktree: { ...record.worktree, selected: record.selectedWorktree !== undefined } }),
-      ...(shadowed.length === 0 ? {} : { shadowed }),
-    })
-  }
+  for (const entry of ordered) mods.push(await describeMod(entry, game, index, warnings))
   problems.push(...index.problems)
 
-  if (game.dataDir.mode === 'arg' && game.dataDir.arg.split('=').length !== 2) {
-    problems.push({
-      where: `/games/${gameName}/dataDir/arg`,
-      message: `"${game.dataDir.arg}" must contain exactly one "="; RimWorld silently ignores anything else`,
-    })
-  }
-  if (game.dataDir.container.includes('=')) {
-    problems.push({
-      where: `/games/${gameName}/dataDir/container`,
-      message: `container data path "${game.dataDir.container}" contains "=", which disables the override silently`,
-    })
-  }
+  checkDataDir(problems, gameName, game)
 
   const mode: ModeName = args.mode ?? 'headed'
   if (!game.modes.includes(mode)) {

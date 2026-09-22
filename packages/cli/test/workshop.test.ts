@@ -184,7 +184,7 @@ describe('prepareWorkshop', () => {
     expect(out.unfetched).toEqual([])
     expect(out.warnings).toEqual([])
     expect(out.problems).toEqual([])
-    expect(asked.length).toBe(1)
+    expect(asked).toHaveLength(1)
     expect(existsSync(join(hostRoot(w), '222', 'About', 'About.txt'))).toBe(true)
   })
 

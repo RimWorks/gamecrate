@@ -114,26 +114,37 @@ export async function adoptNewWindow(opts: AdoptOptions): Promise<WindowWatch> {
   const seen = new Set(before.map((w) => w.id))
   let stopped = false
 
-  void (async () => {
-    const deadline = Date.now() + WAIT_MS
-    while (!stopped && Date.now() < deadline) {
-      await sleep(POLL_MS)
-      if (stopped) return
+  void pollForWindow(seen, opts, () => stopped)
 
-      for (const match of newMatches((await toplevels()) ?? [], seen, opts.executable)) {
-        if (stopped) return
-        // Another run's window. Leave it alone and keep waiting for ours to open.
-        if (await claimedByPeer(match.id)) continue
-        if (!(await adopt(match.id, opts))) continue
+  return {
+    stop: () => {
+      stopped = true
+    },
+  }
+}
 
-        await capture(['wmctrl', '-i', '-r', match.id, '-N', opts.title])
-        if (opts.stripDelete) await watchForClose(match.id, () => stopped, opts.onClosed)
-        return
-      }
-    }
-  })()
+async function pollForWindow(seen: Set<string>, opts: AdoptOptions, stopped: () => boolean): Promise<void> {
+  const deadline = Date.now() + WAIT_MS
+  while (!stopped() && Date.now() < deadline) {
+    await sleep(POLL_MS)
+    if (stopped()) return
+    if (await adoptFirstMatch(seen, opts, stopped)) return
+  }
+}
 
-  return { stop: () => void (stopped = true) }
+/** True once the watch is over, whether it adopted a window or was stopped mid-sweep. */
+async function adoptFirstMatch(seen: Set<string>, opts: AdoptOptions, stopped: () => boolean): Promise<boolean> {
+  for (const match of newMatches((await toplevels()) ?? [], seen, opts.executable)) {
+    if (stopped()) return true
+    // Another run's window. Leave it alone and keep waiting for ours to open.
+    if (await claimedByPeer(match.id)) continue
+    if (!(await adopt(match.id, opts))) continue
+
+    await capture(['wmctrl', '-i', '-r', match.id, '-N', opts.title])
+    if (opts.stripDelete) await watchForClose(match.id, stopped, opts.onClosed)
+    return true
+  }
+  return false
 }
 
 /**
@@ -219,5 +230,5 @@ export function parseAtoms(stdout: string): string[] {
   return list
     .split(',')
     .map((atom) => atom.trim())
-    .filter((atom) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(atom))
+    .filter((atom) => /^[A-Za-z_]\w*$/.test(atom))
 }

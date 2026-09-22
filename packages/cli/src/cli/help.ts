@@ -1,4 +1,4 @@
-import type { GameConfig, RootConfig } from '../types'
+import type { GameConfig, ProfileConfig, RootConfig } from '../types'
 import { GamecrateError, Exit, own } from '../types'
 import type { Option } from 'commander'
 import { FLAG_ENV, GLOBAL_FLAGS, SUBCOMMANDS, buildProgram, suggest } from './args'
@@ -45,15 +45,17 @@ function topLevel(config?: RootConfig): string {
   ]
 
   const verbs = SUBCOMMANDS.map((s) => [`${s.name} ${s.usage}`.trim(), s.summary] as const)
-  lines.push(...columns(verbs, 2))
-  lines.push('', 'flags:')
-  lines.push(...columns(flags().map(flagRow), 2))
+  lines.push(...columns(verbs, 2), '', 'flags:', ...columns(flags().map(flagRow), 2))
 
   const games = Object.entries(config?.games ?? {})
   if (games.length > 0) {
-    lines.push('', 'games:')
-    lines.push(...columns(games.map(([name, game]) => [name, gameSummary(game)] as const), 2))
-    lines.push('', `${NAME} help <game> lists that game's profiles.`)
+    lines.push(
+      '',
+      'games:',
+      ...columns(games.map(([name, game]) => [name, gameSummary(game)] as const), 2),
+      '',
+      `${NAME} help <game> lists that game's profiles.`,
+    )
   }
 
   lines.push('', 'Game args go after a bare --. Env vars are GAMECRATE_ prefixed fallbacks only.')
@@ -69,8 +71,7 @@ function subcommandHelp(sub: SubcommandSpec): string {
     .map((name) => all.find((f) => f.long === name))
     .filter((f): f is Option => f !== undefined)
   if (specs.length > 0) {
-    lines.push('', 'flags:')
-    lines.push(...columns(specs.map(flagRow), 2))
+    lines.push('', 'flags:', ...columns(specs.map(flagRow), 2))
   }
   if (sub.name === 'run') {
     lines.push('', `  The subcommand slot defaults to run, so \`${NAME} <game> <profile>\` works.`)
@@ -81,35 +82,37 @@ function subcommandHelp(sub: SubcommandSpec): string {
 function gameHelp(name: string, game: GameConfig): string {
   const lines = [`usage: ${NAME} ${name} [profile] [flags] [-- game args]`, '', 'profiles:']
 
-  const rows: (readonly [string, string])[] = []
-  for (const [profile, config] of Object.entries(game.profiles)) {
-    const notes: string[] = []
-    if (config.alias) notes.push(`alias for ${config.alias}`)
-    if (config.extends) notes.push(`extends ${config.extends}`)
-    if (config.autoDependencies === false) notes.push('no auto dependencies')
-    const count = config.mods?.length ?? 0
-    if (!config.alias) notes.push(count === 1 ? '1 entry' : `${count} entries`)
-  if (config.aliases?.length) notes.push(`aka ${config.aliases.join(', ')}`)
-    rows.push([profile, notes.join(', ')])
-  }
+  const rows: (readonly [string, string])[] = Object.entries(game.profiles).map(
+    ([profile, config]) => [profile, profileNotes(config)] as const,
+  )
   if (rows.length === 0) rows.push(['(none declared)', ''])
   lines.push(...columns(rows, 2))
 
   if (game.aliases && Object.keys(game.aliases).length > 0) {
-    lines.push('', 'mod name aliases:')
-    lines.push(...columns(Object.entries(game.aliases).map(([k, v]) => [k, v] as const), 2))
+    lines.push('', 'mod name aliases:', ...columns(Object.entries(game.aliases).map(([k, v]) => [k, v] as const), 2))
   }
 
-  lines.push('', `modes: ${game.modes.join(', ')}`)
-  lines.push(`core: ${game.core}`)
+  lines.push('', `modes: ${game.modes.join(', ')}`, `core: ${game.core}`)
   if (game.dlc.length > 0) lines.push(`dlc: ${game.dlc.join(', ')}`)
   lines.push(`game files: ${game.gameFiles.source === 'mount' ? game.gameFiles.host ?? '(unset)' : game.image.ref}`)
   return lines.join('\n') + '\n'
 }
 
+function profileNotes(config: ProfileConfig): string {
+  const notes: string[] = []
+  if (config.alias) notes.push(`alias for ${config.alias}`)
+  if (config.extends) notes.push(`extends ${config.extends}`)
+  if (config.autoDependencies === false) notes.push('no auto dependencies')
+  const count = config.mods?.length ?? 0
+  if (!config.alias) notes.push(count === 1 ? '1 entry' : `${count} entries`)
+  if (config.aliases?.length) notes.push(`aka ${config.aliases.join(', ')}`)
+  return notes.join(', ')
+}
+
 function gameSummary(game: GameConfig): string {
   const count = Object.keys(game.profiles).length
-  return `${count === 1 ? '1 profile' : `${count} profiles`}; modes ${game.modes.join(', ')}`
+  const profiles = count === 1 ? '1 profile' : `${count} profiles`
+  return `${profiles}; modes ${game.modes.join(', ')}`
 }
 
 function flagRow(spec: Option): readonly [string, string] {
@@ -137,7 +140,7 @@ export function renderCompletion(shell: 'bash' | 'zsh'): string {
   const options = flags()
   const names = options.flatMap((f) => (f.short ? [f.long!, f.short] : [f.long!])).join(' ')
   const valueFlags = options.filter((f) => f.required).map((f) => f.long!)
-  const fn = `_${NAME.replace(/-/g, '_')}`
+  const fn = `_${NAME.replaceAll('-', '_')}`
 
   if (shell === 'bash') {
     const cases = options
@@ -166,11 +169,12 @@ complete -F ${fn} ${NAME}
 `
   }
 
-  const zshVerbs = SUBCOMMANDS.map((s) => `    '${s.name}:${s.summary.replace(/'/g, "'\\''")}'`).join('\n')
+  const zshVerbs = SUBCOMMANDS.map((s) => `    '${s.name}:${s.summary.replaceAll("'", String.raw`'\''`)}'`).join('\n')
   const zshFlags = options.map((f) => {
-    const desc = f.description.replace(/'/g, "'\\''").replace(/[[\]:]/g, '')
+    const desc = f.description.replaceAll("'", String.raw`'\''`).replaceAll(/[[\]:]/g, '')
     const arg = placeholder(f)
-    const value = arg ? `:${arg.replace(/[<>]/g, '')}:${f.argChoices ? `(${f.argChoices.join(' ')})` : '_files'}` : ''
+    const choices = f.argChoices ? `(${f.argChoices.join(' ')})` : '_files'
+    const value = arg ? `:${arg.replaceAll(/[<>]/g, '')}:${choices}` : ''
     const repeat = Array.isArray(f.defaultValue) ? '*' : ''
     return `    '${repeat}${f.long}[${desc}]${value}'`
   }).join('\n')

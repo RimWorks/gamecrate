@@ -44,24 +44,8 @@ export function buildRunSpec(
     LOGNAME: identity.user,
   }
 
-  if (game.gameFiles.source === 'mount') {
-    if (!game.gameFiles.host) {
-      throw new GamecrateError(
-        `gameFiles.source is "mount" but no host path is set for ${plan.game}`,
-        Exit.Config,
-      )
-    }
-    mounts.push({ type: 'bind', source: hostPath(game.gameFiles.host), target: game.gameFiles.container, readonly: true })
-  }
-
-  mounts.push({ type: 'bind', source: hostPath(plan.stageDirHost), target: game.modsDir.container, readonly: true })
-  // Nested per-mod binds sit inside the staged tree; the game never writes to a mod source.
-  for (const mount of modMounts) {
-    mounts.push(mount.type === 'bind' ? { ...mount, readonly: true } : mount)
-  }
-
-  // Read-write on purpose: both engines Create() subdirectories at boot and a ro mount fails there.
-  mounts.push({ type: 'bind', source: hostPath(plan.dataDirHost), target: game.dataDir.container })
+  addGameFiles(mounts, plan)
+  addStage(mounts, plan, modMounts)
 
   // xvfb-run -a picks a free display itself, which removes both the hardcoded :99 and the
   // startup race the old launch.sh papered over with `sleep 2`.
@@ -74,78 +58,16 @@ export function buildRunSpec(
         game.executable,
       ]
 
-  if (game.dataDir.mode === 'arg') {
-    command.push(validateDataDirArg(game.dataDir))
-  } else {
-    Object.assign(env, game.dataDir.env)
-  }
+  if (game.dataDir.mode === 'arg') command.push(validateDataDirArg(game.dataDir))
+  else Object.assign(env, game.dataDir.env)
 
   if (game.logFile.mode === 'arg') {
     mounts.push({ type: 'bind', source: hostPath(plan.runDirHost), target: CONTAINER_LOG_DIR })
     command.push(game.logFile.arg, `${CONTAINER_LOG_DIR}/Player.log`)
   }
 
-  // Unconditional, independent of the uid mode: a game may read mods from both roots.
-  for (const target of game.modsDir.mask ?? []) {
-    mounts.push({ type: 'tmpfs', target, size: MASK_SIZE, uid: identity.uid, gid: identity.gid, mode: '755' })
-  }
-
-  if (identity.uid !== 0) {
-    mounts.push({ type: 'tmpfs', target: identity.home, size: HOME_SIZE, uid: identity.uid, gid: identity.gid, mode: '700' })
-  }
-
-  mounts.push({
-    type: 'tmpfs',
-    target: CONTAINER_RUNTIME_DIR,
-    size: RUNTIME_DIR_SIZE,
-    uid: identity.uid,
-    gid: identity.gid,
-    mode: '700',
-  })
-  env.XDG_RUNTIME_DIR = CONTAINER_RUNTIME_DIR
-
-  // HOME is a tmpfs, so $HOME/.config and $HOME/.local/share are empty every run and .NET's
-  // GetFolderPath hands back "" for a missing directory. Point XDG at a per-profile bind
-  // instead. A game that already sets XDG_DATA_HOME to its save dir never gets
-  // overwritten.
-  mounts.push({ type: 'bind', source: hostPath(plan.configDirHost), target: CONTAINER_XDG_DIR })
-  env.XDG_CONFIG_HOME = `${CONTAINER_XDG_DIR}/config`
-  env.XDG_CACHE_HOME = `${CONTAINER_XDG_DIR}/cache`
-  env.XDG_DATA_HOME ??= `${CONTAINER_XDG_DIR}/data`
-
-  if (headed) {
-    if (settings.display === 'x11') {
-      const x11 = x11Session()
-      if (x11) {
-        mounts.push({ type: 'bind', source: X11_SOCKET_DIR, target: X11_SOCKET_DIR })
-        env.DISPLAY = x11.display
-        env.XDG_SESSION_TYPE = 'x11'
-        env.SDL_VIDEODRIVER = 'x11'
-        env.QT_QPA_PLATFORM = 'xcb'
-        if (x11.xauthority) {
-          mounts.push({ type: 'bind', source: x11.xauthority, target: CONTAINER_XAUTHORITY, readonly: true })
-          env.XAUTHORITY = CONTAINER_XAUTHORITY
-        }
-      }
-    } else {
-      const wayland = waylandSocket()
-      if (wayland) {
-        const target = `${CONTAINER_RUNTIME_DIR}/${wayland.name}`
-        mounts.push({ type: 'bind', source: wayland.source, target })
-        env.WAYLAND_DISPLAY = wayland.name
-        env.XDG_SESSION_TYPE = 'wayland'
-        env.SDL_VIDEODRIVER = 'wayland'
-        env.QT_QPA_PLATFORM = 'wayland'
-      }
-    }
-    if (settings.audio) {
-      for (const socket of audioSockets()) {
-        mounts.push({ type: 'bind', source: socket.source, target: `${CONTAINER_RUNTIME_DIR}/${socket.name}` })
-      }
-      env.PULSE_SERVER = `unix:${CONTAINER_RUNTIME_DIR}/pulse/native`
-    }
-  }
-  // Offscreen modes get their X server from xvfb-run below; DISPLAY is set by it, not by us.
+  addScratch(mounts, env, plan, identity)
+  if (headed) addSession(mounts, env, plan)
 
   const deviceCgroupRules: string[] = []
   if (settings.input) {
@@ -186,6 +108,96 @@ export function buildRunSpec(
   }
 }
 
+function addGameFiles(mounts: Mount[], plan: LaunchPlan): void {
+  const { gameFiles } = plan.gameConfig
+  if (gameFiles.source !== 'mount') return
+  if (!gameFiles.host) {
+    throw new GamecrateError(
+      `gameFiles.source is "mount" but no host path is set for ${plan.game}`,
+      Exit.Config,
+    )
+  }
+  mounts.push({ type: 'bind', source: hostPath(gameFiles.host), target: gameFiles.container, readonly: true })
+}
+
+function addStage(mounts: Mount[], plan: LaunchPlan, modMounts: Mount[]): void {
+  const game = plan.gameConfig
+  mounts.push({ type: 'bind', source: hostPath(plan.stageDirHost), target: game.modsDir.container, readonly: true })
+  // Nested per-mod binds sit inside the staged tree; the game never writes to a mod source.
+  for (const mount of modMounts) {
+    mounts.push(mount.type === 'bind' ? { ...mount, readonly: true } : mount)
+  }
+  // Read-write on purpose: both engines Create() subdirectories at boot and a ro mount fails there.
+  mounts.push({ type: 'bind', source: hostPath(plan.dataDirHost), target: game.dataDir.container })
+}
+
+/** The tmpfs set and the XDG roots that hang off it. */
+function addScratch(
+  mounts: Mount[],
+  env: Record<string, string>,
+  plan: LaunchPlan,
+  identity: Identity,
+): void {
+  const { uid, gid } = identity
+  // Unconditional, independent of the uid mode: a game may read mods from both roots.
+  for (const target of plan.gameConfig.modsDir.mask ?? []) {
+    mounts.push({ type: 'tmpfs', target, size: MASK_SIZE, uid, gid, mode: '755' })
+  }
+  if (uid !== 0) {
+    mounts.push({ type: 'tmpfs', target: identity.home, size: HOME_SIZE, uid, gid, mode: '700' })
+  }
+  mounts.push({ type: 'tmpfs', target: CONTAINER_RUNTIME_DIR, size: RUNTIME_DIR_SIZE, uid, gid, mode: '700' })
+  env.XDG_RUNTIME_DIR = CONTAINER_RUNTIME_DIR
+
+  // HOME is a tmpfs, so $HOME/.config and $HOME/.local/share are empty every run and .NET's
+  // GetFolderPath hands back "" for a missing directory. Point XDG at a per-profile bind
+  // instead. A game that already sets XDG_DATA_HOME to its save dir never gets
+  // overwritten.
+  mounts.push({ type: 'bind', source: hostPath(plan.configDirHost), target: CONTAINER_XDG_DIR })
+  env.XDG_CONFIG_HOME = `${CONTAINER_XDG_DIR}/config`
+  env.XDG_CACHE_HOME = `${CONTAINER_XDG_DIR}/cache`
+  env.XDG_DATA_HOME ??= `${CONTAINER_XDG_DIR}/data`
+}
+
+/**
+ * Display and audio for a headed run. Offscreen modes get their X server from xvfb-run, so
+ * DISPLAY is set by it, not by us.
+ */
+function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPlan): void {
+  const { settings } = plan
+  if (settings.display === 'x11') addX11(mounts, env)
+  else addWayland(mounts, env)
+
+  if (!settings.audio) return
+  for (const socket of audioSockets()) {
+    mounts.push({ type: 'bind', source: socket.source, target: `${CONTAINER_RUNTIME_DIR}/${socket.name}` })
+  }
+  env.PULSE_SERVER = `unix:${CONTAINER_RUNTIME_DIR}/pulse/native`
+}
+
+function addX11(mounts: Mount[], env: Record<string, string>): void {
+  const x11 = x11Session()
+  if (!x11) return
+  mounts.push({ type: 'bind', source: X11_SOCKET_DIR, target: X11_SOCKET_DIR })
+  env.DISPLAY = x11.display
+  env.XDG_SESSION_TYPE = 'x11'
+  env.SDL_VIDEODRIVER = 'x11'
+  env.QT_QPA_PLATFORM = 'xcb'
+  if (!x11.xauthority) return
+  mounts.push({ type: 'bind', source: x11.xauthority, target: CONTAINER_XAUTHORITY, readonly: true })
+  env.XAUTHORITY = CONTAINER_XAUTHORITY
+}
+
+function addWayland(mounts: Mount[], env: Record<string, string>): void {
+  const wayland = waylandSocket()
+  if (!wayland) return
+  mounts.push({ type: 'bind', source: wayland.source, target: `${CONTAINER_RUNTIME_DIR}/${wayland.name}` })
+  env.WAYLAND_DISPLAY = wayland.name
+  env.XDG_SESSION_TYPE = 'wayland'
+  env.SDL_VIDEODRIVER = 'wayland'
+  env.QT_QPA_PLATFORM = 'wayland'
+}
+
 /** Instances of one profile run side by side, so the name has to carry which one this is. */
 export function containerName(plan: LaunchPlan): string {
   const base = `gamecrate-${plan.game}-${plan.profile}`
@@ -210,15 +222,18 @@ export function toDockerArgs(spec: DockerRunSpec): string[] {
   for (const rule of spec.deviceCgroupRules) args.push('--device-cgroup-rule', rule)
   for (const ulimit of spec.ulimits) args.push('--ulimit', ulimit)
 
-  args.push('--network', spec.network)
-  args.push('--memory', spec.memory)
-  args.push('--memory-swap', spec.memorySwap)
-  args.push('--cpus', String(spec.cpus))
-  args.push('--pids-limit', String(spec.pidsLimit))
-  args.push('--workdir', spec.workdir)
-  args.push(...spec.extraArgs)
-  // Acquisition is an earlier explicit step; the run must never fetch a different digest.
-  args.push('--pull=never')
+  // `--pull=never`: acquisition is an earlier explicit step, so the run must never fetch a
+  // different digest.
+  args.push(
+    '--network', spec.network,
+    '--memory', spec.memory,
+    '--memory-swap', spec.memorySwap,
+    '--cpus', String(spec.cpus),
+    '--pids-limit', String(spec.pidsLimit),
+    '--workdir', spec.workdir,
+    ...spec.extraArgs,
+    '--pull=never',
+  )
   // The image's own ENTRYPOINT is not ours to trust: RimWorld's is ["/bin/bash"], which
   // would run the game's ELF as a shell script. State it explicitly every time.
   const [entrypoint, ...rest] = spec.command
@@ -289,7 +304,9 @@ function validateDataDirArg(dataDir: Extract<DataDirSpec, { mode: 'arg' }>): str
 }
 
 function trimSlash(path: string): string {
-  return path.length > 1 ? path.replace(/\/+$/, '') : path
+  let end = path.length
+  while (end > 1 && path[end - 1] === '/') end--
+  return path.slice(0, end)
 }
 
 /** The image bakes llvmpipe, so the tool states the whole GL story rather than inheriting it. */
@@ -331,7 +348,9 @@ export function waylandSocket(): { source: string; name: string } | null {
   const runtime = process.env.XDG_RUNTIME_DIR
   if (!display) return null
 
-  const source = display.startsWith('/') ? display : runtime ? join(runtime, display) : null
+  let source: string | null = null
+  if (display.startsWith('/')) source = display
+  else if (runtime) source = join(runtime, display)
   if (!source || !existsSync(source)) return null
   return { source, name: basename(source) }
 }

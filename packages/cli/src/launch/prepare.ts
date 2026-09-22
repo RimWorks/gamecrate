@@ -52,16 +52,7 @@ export async function acquireImage(
   const { image } = config
   const present = (await imageDigest(image.ref)) !== null
 
-  if (image.acquire === 'build') {
-    if (image.context === undefined) {
-      throw new GamecrateError(`${game} has image.acquire "build" but no context`, Exit.Config)
-    }
-    if (present && pull !== 'always') return
-    if ((await inherit(['docker', 'build', '--tag', image.ref, image.context])) !== 0) {
-      throw new GamecrateError(`docker build failed for ${image.ref}`, Exit.Environment)
-    }
-    return
-  }
+  if (image.acquire === 'build') return await buildImage(game, image, present, pull)
 
   if (pull === 'never') {
     if (present) return
@@ -72,6 +63,21 @@ export async function acquireImage(
   if ((await inherit(['docker', 'pull', image.ref])) !== 0) {
     if (present) return
     throw new GamecrateError(`docker pull failed for ${image.ref}`, Exit.Environment)
+  }
+}
+
+async function buildImage(
+  game: string,
+  image: GameConfig['image'],
+  present: boolean,
+  pull: PullPolicy,
+): Promise<void> {
+  if (image.context === undefined) {
+    throw new GamecrateError(`${game} has image.acquire "build" but no context`, Exit.Config)
+  }
+  if (present && pull !== 'always') return
+  if ((await inherit(['docker', 'build', '--tag', image.ref, image.context])) !== 0) {
+    throw new GamecrateError(`docker build failed for ${image.ref}`, Exit.Environment)
   }
 }
 
