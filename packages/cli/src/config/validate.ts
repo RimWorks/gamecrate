@@ -181,6 +181,55 @@ const libraryEntry = obj({
   }
 })
 
+/** Reports the second occurrence of a repeated name: the first one is the definition. */
+function repeats(entries: unknown[], key: string): { index: number; name: string }[] {
+  const seen = new Set<string>()
+  const found: { index: number; name: string }[] = []
+  entries.forEach((entry, index) => {
+    const name = (entry as Bag | null)?.[key]
+    if (typeof name !== 'string') return
+    if (seen.has(name)) found.push({ index, name })
+    else seen.add(name)
+  })
+  return found
+}
+
+function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): void {
+  const push = (message: string, path: PropertyKey[], suggestion?: string): void => {
+    ctx.issues.push({
+      code: 'custom',
+      message,
+      path,
+      input: ctx.value,
+      ...(suggestion === undefined ? {} : { params: { suggestion } }),
+    })
+  }
+  const branches = ctx.value['branches']
+  const variants = ctx.value['variants']
+
+  if (Array.isArray(variants) && variants.length === 0) {
+    push('steamBuild.variants cannot be empty', ['variants'])
+  }
+  if (Array.isArray(branches)) {
+    for (const dup of repeats(branches, 'name')) {
+      push(`duplicate branch name "${dup.name}"`, ['branches', dup.index, 'name'])
+    }
+  }
+  if (!Array.isArray(variants)) return
+  for (const dup of repeats(variants, 'name')) {
+    push(`duplicate variant name "${dup.name}"`, ['variants', dup.index, 'name'])
+  }
+  variants.forEach((variant, index) => {
+    const v = variant as Bag | null
+    if (v?.['depot'] !== 'macos' || (v['base'] !== 'xvfb' && v['base'] !== 'proton')) return
+    push(
+      'a macos depot cannot be runnable',
+      ['variants', index, 'base'],
+      'set base to "none"; no macos container runtime exists',
+    )
+  })
+}
+
 const game = obj({
   gameFiles: obj({ source: oneOf(['mount', 'image']), host: str.optional(), container: str }).check(
     requiredWhen('host', (v) => v['source'] === 'mount'),
@@ -211,6 +260,20 @@ const game = obj({
   manifest: obj({ file: str }),
   modsConfig: obj({ file: str }),
   prefs: obj({ file: str }),
+  version: obj({ file: str }),
+  steamBuild: obj({
+    branches: z.array(obj({ name: str, password: bool.optional() }), { error: 'expected an array' }),
+    variants: z.array(
+      obj({
+        name: str,
+        depot: oneOf(['linux', 'windows', 'macos']).optional(),
+        base: oneOf(['xvfb', 'proton', 'none']),
+        include: strArray,
+        executable: str.optional(),
+      }),
+      { error: 'expected an array' },
+    ),
+  }).check(steamBuildRules),
   saveExtensions: strArray,
   core: str,
   dlc: strArray,

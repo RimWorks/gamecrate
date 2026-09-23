@@ -24,7 +24,7 @@ import {
   runTimestamp,
 } from '../src/cli/output'
 import { exited, spawnArgv } from '../src/docker/run'
-import { fixturePlugin } from './fixture-plugin'
+import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import type { GameConfig, LaunchPlan, Problem, ProjectDefaults, RootConfig, Settings } from '../src/types'
 import { GamecrateError, Exit, RESERVED_NAMES } from '../src/types'
 
@@ -426,6 +426,8 @@ function game(overrides: Partial<GameConfig> = {}): GameConfig {
     manifest: { file: 'About/About.txt' },
     modsConfig: { file: 'Config/ModsConfig.txt' },
     prefs: { file: 'Prefs.txt' },
+    version: FIXTURE_VERSION,
+    steamBuild: FIXTURE_STEAM_BUILD,
     saveExtensions: ['sav'],
     core: 'beaconco.beacon',
     dlc: [],

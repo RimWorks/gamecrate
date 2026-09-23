@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from '../src/config/builtin'
+import { PLUGIN_API_VERSION } from '../src/plugin'
 import { FIXTURE_DEFAULTS, fixtureGame, writePluginPackage } from './fixture-plugin'
 import {
   canonicalProfile,
@@ -53,7 +54,7 @@ async function writePlugin(dir: string, game = 'atlas'): Promise<string> {
   await writeFile(
     file,
     `export default {
-      apiVersion: 1,
+      apiVersion: ${PLUGIN_API_VERSION},
       game: ${JSON.stringify(game)},
       defaults: ${JSON.stringify(ATLAS_DEFAULTS)},
       parseManifest: (text) => (text.includes('packageId') ? { packageId: 'x', modDependencies: [], loadAfter: [], loadBefore: [], forceLoadAfter: [], forceLoadBefore: [], incompatibleWith: [] } : null),
@@ -428,6 +429,83 @@ describe('validateConfig', () => {
 
   test('a non-object config is one problem, not a crash', () => {
     expect(validateConfig('nope').problems).toHaveLength(1)
+  })
+
+  test('a macos depot with a runnable base is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [{ name: 'mac', depot: 'macos', base: 'xvfb', include: [] }],
+      } } },
+    })
+    const p = find(problems, 'macos')
+    expect(p?.message).toBe('a macos depot cannot be runnable')
+    expect(p?.suggestion).toBe('set base to "none"; no macos container runtime exists')
+    expect(p?.where).toBe('/games/atlas/steamBuild/variants/0/base')
+  })
+
+  test('a macos depot with base none is accepted', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [{ name: 'mac-ref', depot: 'macos', base: 'none', include: ['Managed'] }],
+      } } },
+    })
+    expect(find(problems, 'macos')).toBeUndefined()
+  })
+
+  test('the second variant with a repeated name is the one reported', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [
+          { name: 'linux', base: 'xvfb', include: [] },
+          { name: 'linux', base: 'none', include: [] },
+        ],
+      } } },
+    })
+    const p = find(problems, 'duplicate')
+    expect(p?.message).toBe('duplicate variant name "linux"')
+    expect(p?.where).toBe('/games/atlas/steamBuild/variants/1/name')
+  })
+
+  test('a repeated branch name is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }, { name: 'public' }],
+        variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+      } } },
+    })
+    const p = find(problems, 'duplicate')
+    expect(p?.message).toBe('duplicate branch name "public"')
+    expect(p?.where).toBe('/games/atlas/steamBuild/branches/1/name')
+  })
+
+  test('an empty variants list is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'public' }], variants: [] } } },
+    })
+    expect(find(problems, 'variants')?.message).toBe('steamBuild.variants cannot be empty')
+  })
+
+  test('an unknown base value is refused with the list of real ones', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [{ name: 'linux', base: 'wayland', include: [] }],
+      } } },
+    })
+    expect(find(problems, 'expected one of')?.where).toBe('/games/atlas/steamBuild/variants/0/base')
+  })
+
+  test('a branch name with a dot survives validation', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }, { name: '1.5-test', password: true }],
+        variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+      } } },
+    })
+    expect(problems).toHaveLength(0)
   })
 })
 
@@ -861,7 +939,7 @@ describe('loadConfig', () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
     await writeFile(
       join(dir, 'thin.ts'),
-      'export default { apiVersion: 1, game: "atlas", defaults: {}, windowedPrefs: {}, parseManifest: () => null }\n',
+      `export default { apiVersion: ${PLUGIN_API_VERSION}, game: "atlas", defaults: {}, windowedPrefs: {}, parseManifest: () => null }\n`,
     )
     const file = join(dir, 'profiles.json')
     await writeFile(file, '{ "plugins": ["./thin.ts"] }')

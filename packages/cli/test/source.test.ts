@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
 
-import { fixturePlugin } from './fixture-plugin'
+import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { Exit } from '../src/types'
 import type { GameConfig, GamecrateError, LaunchPlan, ParsedArgs, Problem, ProfileConfig } from '../src/types'
 import { buildIndex } from '../src/mods/modindex'
@@ -523,6 +523,8 @@ function gameWith(library: GameConfig['library'], profiles: Record<string, Profi
     manifest: { file: 'About/About.txt' },
     modsConfig: { file: 'Config/ModsConfig.txt' },
     prefs: { file: 'Config/Prefs.txt' },
+    version: FIXTURE_VERSION,
+    steamBuild: FIXTURE_STEAM_BUILD,
     saveExtensions: ['sav'],
     core: 'Atlasco.Atlas',
     dlc: [],

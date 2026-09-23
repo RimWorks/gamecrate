@@ -14,7 +14,7 @@ async function readInstallVersion(
   if (game.gameFiles.source !== 'mount' || host === undefined) return null
   let raw: string
   try {
-    raw = await readFile(join(expandHome(host), 'Version.txt'), 'utf8')
+    raw = await readFile(join(expandHome(host), game.version.file), 'utf8')
   } catch {
     return null
   }
@@ -68,7 +68,7 @@ export async function generateModsConfig(plan: LaunchPlan): Promise<string> {
 
   const installed = await readInstallVersion(game, plan.plugin)
   if (installed === null) {
-    plan.warnings.push(`could not read Version.txt for ${plan.game}; ModsConfig version may be rejected`)
+    plan.warnings.push(`could not read ${game.version.file} for ${plan.game}; ModsConfig version may be rejected`)
   }
   // Engines fill a case-sensitive active set from these strings but look ids up lowercased, so
   // manifest casing reads back as inactive and SetActive appends a twin. Write lowercase only.

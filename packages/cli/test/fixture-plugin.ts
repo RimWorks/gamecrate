@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
+import { PLUGIN_API_VERSION } from '../src/plugin'
 import type { GamePlugin, ModsConfigInput } from '../src/plugin'
 import type { GameConfig, ModManifest } from '../src/types'
 
@@ -62,6 +63,16 @@ export function mergeFixturePrefs(existing: string | null, owned: Record<string,
   return `${body}\n`
 }
 
+export const FIXTURE_VERSION: GameConfig['version'] = { file: 'Version.txt' }
+
+export const FIXTURE_STEAM_BUILD: GameConfig['steamBuild'] = {
+  branches: [{ name: 'public' }],
+  variants: [
+    { name: 'linux', base: 'xvfb', include: [] },
+    { name: 'linux-ref', base: 'none', include: ['Managed', 'Version.txt'] },
+  ],
+}
+
 export const FIXTURE_DEFAULTS: Partial<GameConfig> = {
   gameFiles: { source: 'mount', host: '/fixtures/games/Atlas', container: '/game' },
   dataDir: { container: '/data', mode: 'arg', arg: '-savedatafolder=/data' },
@@ -74,6 +85,8 @@ export const FIXTURE_DEFAULTS: Partial<GameConfig> = {
   manifest: { file: 'About/About.txt' },
   modsConfig: { file: 'Config/ModsConfig.txt' },
   prefs: { file: 'Config/Prefs.txt' },
+  version: FIXTURE_VERSION,
+  steamBuild: FIXTURE_STEAM_BUILD,
   saveExtensions: ['sav'],
   core: 'atlasco.atlas',
   dlc: [],
@@ -91,7 +104,7 @@ export function fixtureGame(): GameConfig {
 
 export function fixturePlugin(game = 'atlas', defaults: Partial<GameConfig> = {}): GamePlugin {
   return {
-    apiVersion: 1,
+    apiVersion: PLUGIN_API_VERSION,
     game,
     defaults: { ...FIXTURE_DEFAULTS, ...defaults },
     parseManifest: parseFixtureManifest,
@@ -125,7 +138,7 @@ export async function writePluginPackage(dir: string, exports: unknown, game = '
   await writeFile(
     join(dir, 'dist', 'plugin.js'),
     `export default {
-      apiVersion: 1,
+      apiVersion: ${PLUGIN_API_VERSION},
       game: ${JSON.stringify(game)},
       defaults: ${JSON.stringify(defaults)},
       parseManifest: () => null,

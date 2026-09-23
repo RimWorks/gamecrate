@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { PLUGIN_API_VERSION } from '../src/plugin'
 import { FIXTURE_DEFAULTS } from './fixture-plugin'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
@@ -22,7 +23,7 @@ afterEach(() => {
 
 /** The fixture codec, small enough to inline: one `key value` per line, packageId is all we read. */
 const PLUGIN = `export default {
-  apiVersion: 1,
+  apiVersion: ${PLUGIN_API_VERSION},
   game: 'atlas',
   defaults: ${JSON.stringify(FIXTURE_DEFAULTS)},
   parseManifest: (text) => {

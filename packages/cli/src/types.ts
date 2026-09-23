@@ -190,6 +190,27 @@ export interface ProfileConfig {
   build?: BuildPolicy
 }
 
+/** One image built from a steam depot. The first entry of `variants` is the default. */
+export interface SteamVariant {
+  name: string
+  depot?: 'linux' | 'windows' | 'macos'
+  base: 'xvfb' | 'proton' | 'none'
+  include: string[]
+  executable?: string
+}
+
+/** A steam branch to download from. The first entry of `branches` is the default. */
+export interface SteamBranch {
+  name: string
+  password?: boolean
+}
+
+/** How a plugin's game image gets built from steam. */
+export interface SteamBuildSpec {
+  branches: SteamBranch[]
+  variants: SteamVariant[]
+}
+
 export interface GameConfig {
   gameFiles: GameFilesSpec
   dataDir: DataDirSpec
@@ -203,6 +224,9 @@ export interface GameConfig {
   manifest: { file: string }
   modsConfig: { file: string }
   prefs: { file: string }
+  /** Where the engine writes its version string. */
+  version: { file: string }
+  steamBuild: SteamBuildSpec
   /** Filename suffixes that mean "a save". `clean --all` counts them before it deletes. */
   saveExtensions: string[]
   core: string

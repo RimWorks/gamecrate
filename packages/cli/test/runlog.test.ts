@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { PLUGIN_API_VERSION } from '../src/plugin'
 import { FIXTURE_DEFAULTS, writePluginPackage } from './fixture-plugin'
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
@@ -37,7 +38,7 @@ async function fixture(): Promise<{ dir: string; env: Record<string, string> }> 
   await writeFile(
     join(pkg, 'dist', 'plugin.js'),
     `export default {
-      apiVersion: 1,
+      apiVersion: ${PLUGIN_API_VERSION},
       game: 'atlas',
       defaults: ${JSON.stringify(defaults)},
       parseManifest: (text) => {

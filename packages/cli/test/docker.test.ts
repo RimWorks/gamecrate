@@ -10,7 +10,7 @@ import type { ChildProcess } from 'node:child_process'
 import { capture, waitForMarker } from '../src/docker/run'
 import { runtimeLayerRef } from '../src/launch/prepare'
 import { isPeerClaim, newMatches, parseAtoms, parseWindowPid } from '../src/docker/window'
-import { fixturePlugin } from './fixture-plugin'
+import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { deadPid } from './pids'
 import type { GameConfig, Identity, LaunchPlan, ModeName, Settings } from '../src/types'
 import { GamecrateError, Exit } from '../src/types'
@@ -46,6 +46,8 @@ const atlas: GameConfig = {
   manifest: { file: 'About/About.txt' },
   modsConfig: { file: 'Config/ModsConfig.txt' },
   prefs: { file: 'Config/Prefs.txt' },
+  version: FIXTURE_VERSION,
+  steamBuild: FIXTURE_STEAM_BUILD,
   saveExtensions: ['sav'],
   core: 'atlasco.atlas',
   dlc: [],
@@ -70,6 +72,8 @@ const beacon: GameConfig = {
   manifest: { file: 'About/About.txt' },
   modsConfig: { file: 'SaveData/Config/ModsConfig.txt' },
   prefs: { file: 'SaveData/Prefs.txt' },
+  version: FIXTURE_VERSION,
+  steamBuild: FIXTURE_STEAM_BUILD,
   saveExtensions: ['sav'],
   core: 'beaconco.beacon',
   dlc: [],

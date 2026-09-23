@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, w
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { fixturePlugin } from './fixture-plugin'
+import { fixtureGame, fixturePlugin } from './fixture-plugin'
 import { cloneDir } from '../src/mods/source'
 import { Exit, GamecrateError } from '../src/types'
 import type {
@@ -91,6 +91,8 @@ function atlas(profiles: Record<string, ProfileConfig>): GameConfig {
     manifest: { file: 'About/About.txt' },
     modsConfig: { file: 'Config/ModsConfig.txt' },
     prefs: { file: 'Config/Prefs.txt' },
+    version: { file: 'Version.txt' },
+    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'xvfb', include: [] }] },
     saveExtensions: ['sav'],
     core: 'Atlasco.Atlas',
     dlc: ['Atlasco.Atlas.Royalty', 'Atlasco.Atlas.Ideology'],
@@ -114,6 +116,8 @@ function beacon(profiles: Record<string, ProfileConfig>): GameConfig {
     manifest: { file: 'About/About.txt' },
     modsConfig: { file: 'SaveData/Config/ModsConfig.txt' },
     prefs: { file: 'SaveData/Prefs.txt' },
+    version: { file: 'Version.txt' },
+    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'xvfb', include: [] }] },
     saveExtensions: ['sav'],
     core: 'Atlasco.Beacon',
     dlc: [],
@@ -1001,6 +1005,53 @@ describe('generated config files', () => {
     // The other plugin cannot read that file at all, which is the point of per-plugin parsing.
     expect(ATLAS_PLUGIN.parseVersion('0.0.2145.1260')?.buildNumber).toBe(-1)
     expect(BEACON_PLUGIN.parseVersion('1.6.4871 rev598')).toBeNull()
+  })
+
+  test('the version file name comes from the game, not from the core', async () => {
+    const dir = join(tmp, 'BuildInfoGame')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'BuildInfo.txt'), '9.9.9 rev42\n')
+    const game = fixtureGame()
+    game.version = { file: 'BuildInfo.txt' }
+    game.gameFiles = { source: 'mount', host: dir, container: '/game' }
+    game.profiles = { solo: { mods: [] } }
+    index = makeIndex([{ id: 'atlasco.atlas', dir: await modDir('bi-core'), kind: 'core' }])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'solo',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    await ensureProfileTree(plan)
+
+    const written = await readFile(await generateModsConfig(plan), 'utf8')
+    const result = {
+      version: /version (.+)/.exec(written)![1],
+      buildNumber: Number(/buildNumber (-?\d+)/.exec(written)![1]),
+    }
+    expect(result).toEqual({ version: '9.9.9 rev42', buildNumber: 42 })
+  })
+
+  test('a missing version file warns with the configured name', async () => {
+    const dir = join(tmp, 'NoBuildInfoGame')
+    await mkdir(dir, { recursive: true })
+    const game = fixtureGame()
+    game.version = { file: 'BuildInfo.txt' }
+    game.gameFiles = { source: 'mount', host: dir, container: '/game' }
+    game.profiles = { solo: { mods: [] } }
+    index = makeIndex([{ id: 'atlasco.atlas', dir: await modDir('nbi-core'), kind: 'core' }])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'solo',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    await ensureProfileTree(plan)
+    await generateModsConfig(plan)
+
+    expect(plan.warnings.join('\n')).toContain('BuildInfo.txt')
   })
 
   test('a game with no dlc neither looks for Data/ nor warns about it', async () => {
