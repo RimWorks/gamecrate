@@ -195,14 +195,18 @@ export async function downloadItems(
 }
 
 function run(runner: SteamcmdRunner, game: GameConfig, dataRoot: string, ids: string[]): string {
-  const argv = [
+  return spawnSteamcmd([
     ...runner.argv,
     // before +login, or steamcmd applies it to nothing
     '+force_install_dir', steamHome(dataRoot),
     '+login', 'anonymous',
     ...ids.flatMap((id) => ['+workshop_download_item', String(game.steamAppId), id]),
     '+quit',
-  ]
+  ], runner)
+}
+
+/** argv already carries runner.argv; the runner is here for its env. */
+function spawnSteamcmd(argv: string[], runner: SteamcmdRunner): string {
   const r = spawnSync(argv[0] as string, argv.slice(1), {
     encoding: 'utf8',
     env: { ...process.env, ...runner.env },
@@ -217,4 +221,121 @@ function run(runner: SteamcmdRunner, game: GameConfig, dataRoot: string, ids: st
   }
   // the two streams interleave and both carry result lines, so they are parsed as one text
   return `${r.stdout ?? ''}\n${r.stderr ?? ''}`.replace(ANSI, '')
+}
+
+/**
+ * Per branch and per depot, not per variant: `linux` and `linux-ref` come out of one +app_update.
+ * A shared directory means the second +app_update rewrites the first one's files.
+ */
+export function appDownloadRoot(dataRoot: string, appId: number, branch: string, depot?: string): string {
+  return join(steamHome(dataRoot), 'apps', `${appId}-${branch}-${depot ?? 'native'}`)
+}
+
+export interface AppDownload {
+  dir: string
+  warnings: string[]
+}
+
+const APP_OK = /Success! App '(\d+)' fully installed/
+const APP_STATE = /Error! App '(\d+)' state is (0x[0-9a-fA-F]+)/
+
+/**
+ * A wrong -betapassword and a branch that does not exist look identical from outside: steam
+ * reports both as the branch being unavailable, so the error names both.
+ */
+export async function downloadApp(config: RootConfig, opts: {
+  steamAppId: number
+  branch: string
+  depot?: 'linux' | 'windows' | 'macos'
+  password?: string
+  dataRoot: string
+}): Promise<AppDownload> {
+  const user = process.env.STEAM_USERNAME
+  if (user === undefined || user === '') {
+    throw new GamecrateError(
+      'a game download needs a steam account',
+      Exit.Environment,
+      'set STEAM_USERNAME, and run `gamecrate steam login` once to prime the session',
+    )
+  }
+  const runner = resolveSteamcmd(config)
+  const dir = appDownloadRoot(opts.dataRoot, opts.steamAppId, opts.branch, opts.depot)
+  // docker creates a missing bind source as root, and the --user process then cannot write it
+  mkdirSync(dir, { recursive: true })
+  const argv = [
+    ...runner.argv,
+    '+@ShutdownOnFailedCommand', '1',
+    '+@NoPromptForPassword', '1',
+    // before +login, or steamcmd applies them to nothing
+    '+force_install_dir', dir,
+    ...platformArgs(opts.depot),
+    '+login', user,
+    '+app_update', String(opts.steamAppId),
+    '-beta', opts.branch,
+    ...(opts.password === undefined ? [] : ['-betapassword', opts.password]),
+    '+quit',
+  ]
+
+  const release = await lockDir(steamHome(opts.dataRoot))
+  let output: string
+  try {
+    output = spawnSteamcmd(argv, runner)
+  } finally {
+    await release()
+  }
+
+  if (APP_OK.test(output)) return { dir, warnings: [] }
+  const state = APP_STATE.exec(output)
+  throw new GamecrateError(
+    `steamcmd did not install app ${opts.steamAppId} on branch "${opts.branch}"`,
+    Exit.Environment,
+    state === null
+      ? 'the branch may not exist, or the password may be wrong. steam reports both the same way'
+      : `steam left the app in state ${state[2]}. the branch may not exist, or the password may be wrong`,
+  )
+}
+
+/** A depot other than the host's needs steamcmd told which platform to fetch. */
+function platformArgs(depot?: string): string[] {
+  return depot === undefined ? [] : ['+@sSteamCmdForcePlatformType', depot]
+}
+
+/** null when steam reports no buildid for that branch. */
+export async function publishedBuildId(
+  config: RootConfig,
+  appId: number,
+  branch: string,
+): Promise<string | null> {
+  const user = process.env.STEAM_USERNAME
+  if (user === undefined || user === '') return null
+  const runner = resolveSteamcmd(config)
+  const output = spawnSteamcmd([
+    ...runner.argv,
+    '+@ShutdownOnFailedCommand', '1',
+    '+@NoPromptForPassword', '1',
+    '+login', user,
+    '+app_info_update', '1',
+    '+app_info_print', String(appId),
+    '+quit',
+  ], runner)
+  return buildIdFor(output, branch)
+}
+
+/**
+ * The buildid sits at depots -> branches -> <branch> -> buildid, and the branch name shows up
+ * elsewhere too, so anchor on "branches", then the branch key, then its first "buildid".
+ */
+export function buildIdFor(output: string, branch: string): string | null {
+  const key = `"${branch}"`
+  let inBranches = false
+  let inBranch = false
+  for (const line of output.split('\n')) {
+    if (line.includes('"branches"')) inBranches = true
+    if (inBranches && line.includes(key)) inBranch = true
+    if (inBranch && line.includes('"buildid"')) {
+      const digits = (line.split('"').at(-2) ?? '').replaceAll(/\D/g, '')
+      return digits === '' ? null : digits
+    }
+  }
+  return null
 }

@@ -233,11 +233,25 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
   }
   variants.forEach((variant, index) => {
     const v = variant as Bag | null
-    if (v?.['depot'] !== 'macos' || (v['base'] !== 'xvfb' && v['base'] !== 'proton')) return
+    const base = v?.['base']
+    if (base !== 'xvfb' && base !== 'proton') return
+    const depot = v?.['depot'] ?? 'linux'
+    if (depot === 'macos') {
+      push(
+        'a macos depot cannot be runnable',
+        ['variants', index, 'base'],
+        'set base to "none"; no macos container runtime exists',
+      )
+      return
+    }
+    const wants = depot === 'windows' ? 'proton' : 'xvfb'
+    if (base === wants) return
     push(
-      'a macos depot cannot be runnable',
+      `a ${String(depot)} depot cannot run on the "${base}" base`,
       ['variants', index, 'base'],
-      'set base to "none"; no macos container runtime exists',
+      depot === 'windows'
+        ? 'set base to "proton"; it is the only base with wine'
+        : 'set base to "xvfb", or set depot to "windows" if the image should run under wine',
     )
   })
 }

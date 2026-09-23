@@ -455,6 +455,57 @@ describe('validateConfig', () => {
     expect(find(problems, 'macos')).toBeUndefined()
   })
 
+  test('a windows depot on the xvfb base is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { variants: [
+        { name: 'win', depot: 'windows', base: 'xvfb', include: [] },
+      ] } } },
+    })
+    const p = find(problems, 'windows')
+    expect(p?.where).toBe('/games/atlas/steamBuild/variants/0/base')
+    expect(p?.suggestion).toContain('proton')
+  })
+
+  test('a forgotten depot on the proton base is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { variants: [
+        { name: 'win', base: 'proton', include: [] },
+      ] } } },
+    })
+    expect(find(problems, 'proton')?.where).toBe('/games/atlas/steamBuild/variants/0/base')
+  })
+
+  test('an explicit linux depot on the proton base is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { variants: [
+        { name: 'x', depot: 'linux', base: 'proton', include: [] },
+      ] } } },
+    })
+    expect(find(problems, 'proton')).toBeDefined()
+  })
+
+  test('every depot is allowed on the none base', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { variants: [
+        { name: 'a', depot: 'windows', base: 'none', include: ['x'] },
+        { name: 'b', depot: 'macos', base: 'none', include: ['x'] },
+        { name: 'c', depot: 'linux', base: 'none', include: ['x'] },
+      ] } } },
+    })
+    expect(problems).toHaveLength(0)
+  })
+
+  test("rimworld's own three variants still validate", () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { variants: [
+        { name: 'linux', base: 'xvfb', include: [] },
+        { name: 'windows', base: 'proton', depot: 'windows', include: [], executable: 'X.exe' },
+        { name: 'linux-ref', base: 'none', include: ['Managed'] },
+      ] } } },
+    })
+    expect(problems).toHaveLength(0)
+  })
+
   test('the second variant with a repeated name is the one reported', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: {
