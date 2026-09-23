@@ -7,11 +7,11 @@ import { PLUGIN_API_VERSION } from '../src/plugin'
 import { FIXTURE_DEFAULTS, fixtureGame, writePluginPackage } from './fixture-plugin'
 import {
   canonicalProfile,
-  deepMerge,
   findGlobalConfig,
   findProjectConfig,
   loadConfig,
   loadProjectDefaults,
+  mergeUserConfig,
   profileDataDir,
   profileDirs,
   resolveProfile,
@@ -44,8 +44,9 @@ function base(): RootConfig {
   }
 }
 
+/** The merge loadConfig runs: the fixture plugin's defaults underneath, the user's blocks over. */
 function merged(user: unknown): { config: RootConfig; problems: Problem[] } {
-  return validateConfig(deepMerge(base(), user))
+  return validateConfig(mergeUserConfig(base(), user))
 }
 
 /** A plugin file written outside the repo, so the loader is exercised the way a user hits it. */
@@ -469,18 +470,6 @@ describe('validateConfig', () => {
     expect(p?.where).toBe('/games/atlas/steamBuild/variants/1/name')
   })
 
-  test('a repeated branch name is refused', () => {
-    const { problems } = merged({
-      games: { atlas: { steamBuild: {
-        branches: [{ name: 'public' }, { name: 'public' }],
-        variants: [{ name: 'linux', base: 'xvfb', include: [] }],
-      } } },
-    })
-    const p = find(problems, 'duplicate')
-    expect(p?.message).toBe('duplicate branch name "public"')
-    expect(p?.where).toBe('/games/atlas/steamBuild/branches/1/name')
-  })
-
   test('an empty variants list is refused', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: { branches: [{ name: 'public' }], variants: [] } } },
@@ -506,6 +495,111 @@ describe('validateConfig', () => {
       } } },
     })
     expect(problems).toHaveLength(0)
+  })
+
+  // the merge keeps the plugin's branches, so only a config whose own list is empty can fire this
+  test('an empty branches list is refused', () => {
+    const cfg = base()
+    cfg.games.atlas!.steamBuild = {
+      branches: [],
+      variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+    }
+    const p = find(validateConfig(cfg).problems, 'branches')
+    expect(p?.message).toBe('steamBuild.branches cannot be empty')
+    expect(p?.where).toBe('/games/atlas/steamBuild/branches')
+  })
+
+  test('a user branches: [] still leaves the plugin list in place', () => {
+    const { config, problems } = merged({ games: { atlas: { steamBuild: { branches: [] } } } })
+    expect(config.games.atlas?.steamBuild.branches.map((b) => b.name)).toEqual(['public'])
+    expect(find(problems, 'branches')).toBeUndefined()
+  })
+
+  test('a variant name with a slash is refused before any download', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [{ name: 'a b/c', base: 'xvfb', include: [] }],
+      } } },
+    })
+    expect(find(problems, 'a b/c')?.where).toBe('/games/atlas/steamBuild/variants/0/name')
+  })
+
+  test('an empty variant name is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: {
+        branches: [{ name: 'public' }],
+        variants: [{ name: '', base: 'xvfb', include: [] }],
+      } } },
+    })
+    expect(find(problems, 'variants/0/name')).toBeDefined()
+  })
+
+  test('a user branch is added to the plugin list, not swapped for it', () => {
+    const { config } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'unstable', password: true }] } } },
+    })
+    expect(config.games.atlas?.steamBuild.branches.map((b) => b.name)).toEqual(['public', 'unstable'])
+  })
+
+  test('restating the plugin branch does not duplicate it, and the user fields win', () => {
+    const { config } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'public', password: true }, { name: '1.5' }] } } },
+    })
+    const branches = config.games.atlas!.steamBuild.branches
+    expect(branches.map((b) => b.name)).toEqual(['public', '1.5'])
+    expect(branches[0]?.password).toBe(true)
+  })
+
+  test('a user override cannot move which branch gets the bare latest tag', () => {
+    const { config } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'unstable' }, { name: 'public' }] } } },
+    })
+    expect(config.games.atlas?.steamBuild.branches[0]?.name).toBe('public')
+  })
+
+  // the merge only dedupes what a user adds, so a plugin's own list reaches validation as-is
+  test('a plugin declaring one branch twice is refused with no user config', () => {
+    const cfg = base()
+    cfg.games.atlas!.steamBuild.branches = [{ name: 'public' }, { name: 'public' }]
+    const p = find(validateConfig(cfg).problems, 'duplicate branch')
+    expect(p?.message).toBe('duplicate branch name "public"')
+    expect(p?.where).toBe('/games/atlas/steamBuild/branches/1/name')
+  })
+
+  test('a branch name with a space is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'my branch' }] } } },
+    })
+    expect(find(problems, 'my branch')?.where).toBe('/games/atlas/steamBuild/branches/1/name')
+  })
+
+  test('a branch name with a slash is refused', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: 'feature/x' }] } } },
+    })
+    expect(find(problems, 'feature/x')).toBeDefined()
+  })
+
+  test('a dot, a dash and an underscore stay legal in a branch name', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: '1.5-test' }, { name: 'beta_2' }] } } },
+    })
+    expect(problems).toHaveLength(0)
+  })
+
+  test('a branch name cannot start with a dot', () => {
+    const { problems } = merged({
+      games: { atlas: { steamBuild: { branches: [{ name: '.hidden' }] } } },
+    })
+    expect(find(problems, '.hidden')).toBeDefined()
+  })
+
+  test('variants still replace', () => {
+    const { config } = merged({
+      games: { atlas: { steamBuild: { variants: [{ name: 'only', base: 'none', include: [] }] } } },
+    })
+    expect(config.games.atlas?.steamBuild.variants.map((v) => v.name)).toEqual(['only'])
   })
 })
 

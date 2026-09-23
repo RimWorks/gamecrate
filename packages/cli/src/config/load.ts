@@ -13,6 +13,7 @@ import type {
   ProjectDefaults,
   RootConfig,
   Settings,
+  SteamBranch,
 } from '../types'
 import { loadPlugins } from '../plugin'
 import type { GamePlugin } from '../plugin'
@@ -222,7 +223,7 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
   }
   // an absent file and an empty one both mean no config. parseYaml('') is null, not undefined,
   // and deepMerge(base, null) returns null, which validateConfig then refuses.
-  const merged = user === undefined || user === null ? base : deepMerge(base, user)
+  const merged = user === undefined || user === null ? base : mergeUserConfig(base, user)
   const spliced = applyProject(merged, project)
   const { config, problems } = validateConfig(spliced)
   if (problems.length > 0) {
@@ -471,6 +472,51 @@ function entryIds(entry: ModEntry): string[] {
 export function globToRegExp(pattern: string): RegExp {
   const body = pattern.replaceAll(/[.+^${}()|[\]\\]/g, String.raw`\$&`).replaceAll('*', '.*').replaceAll('?', '.')
   return new RegExp(`^${body}$`, 'i')
+}
+
+/**
+ * deepMerge, then the one array that concatenates. `branches[0]` gets the bare tag, so a
+ * replacing override would move it silently and drop the plugin's other branches.
+ */
+export function mergeUserConfig(base: RootConfig, user: unknown): RootConfig {
+  const out = deepMerge(base, user)
+  const games = isObj(user) ? user['games'] : undefined
+  if (!isObj(games)) return out
+  for (const name of Object.keys(games)) {
+    const theirs = own(games, name)
+    const steamBuild = isObj(theirs) ? theirs['steamBuild'] : undefined
+    const added = isObj(steamBuild) ? steamBuild['branches'] : undefined
+    const declared = own(base.games, name)?.steamBuild?.branches
+    const target = own(out.games, name)
+    if (!Array.isArray(added) || !Array.isArray(declared) || target === undefined) continue
+    target.steamBuild.branches = concatBranches(declared, added)
+  }
+  return out
+}
+
+function branchName(entry: unknown): string | undefined {
+  return isObj(entry) && typeof entry['name'] === 'string' ? entry['name'] : undefined
+}
+
+/** The plugin's order holds, the user's fields win on a shared name, and new names append. */
+function concatBranches(declared: SteamBranch[], added: unknown[]): SteamBranch[] {
+  const out = [...declared]
+  const at = new Map<string, number>()
+  out.forEach((branch, index) => {
+    const name = branchName(branch)
+    if (name !== undefined && !at.has(name)) at.set(name, index)
+  })
+  for (const entry of added) {
+    const name = branchName(entry)
+    const index = name === undefined ? undefined : at.get(name)
+    if (index === undefined) {
+      if (name !== undefined) at.set(name, out.length)
+      out.push(entry as SteamBranch)
+      continue
+    }
+    out[index] = deepMerge(out[index] as SteamBranch, entry)
+  }
+  return out
 }
 
 /**

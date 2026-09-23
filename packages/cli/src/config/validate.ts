@@ -194,6 +194,12 @@ function repeats(entries: unknown[], key: string): { index: number; name: string
   return found
 }
 
+/**
+ * The docker tag charset, not gamecrate's own name rule: steam picks a branch name, and it
+ * lands in a tag as `<version>-<branch>-<variant>`, so a space or a slash is fatal there.
+ */
+const TAG_COMPONENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/
+
 function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): void {
   const push = (message: string, path: PropertyKey[], suggestion?: string): void => {
     ctx.issues.push({
@@ -211,9 +217,15 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
     push('steamBuild.variants cannot be empty', ['variants'])
   }
   if (Array.isArray(branches)) {
+    if (branches.length === 0) push('steamBuild.branches cannot be empty', ['branches'])
     for (const dup of repeats(branches, 'name')) {
       push(`duplicate branch name "${dup.name}"`, ['branches', dup.index, 'name'])
     }
+    branches.forEach((branch, index) => {
+      const name = (branch as Bag | null)?.['name']
+      if (typeof name !== 'string' || TAG_COMPONENT.test(name)) return
+      push(`branch name "${name}" must match ${TAG_COMPONENT.source}`, ['branches', index, 'name'])
+    })
   }
   if (!Array.isArray(variants)) return
   for (const dup of repeats(variants, 'name')) {
@@ -381,6 +393,7 @@ function crossReference(p: Problem[], games: Bag): void {
     const where = `/games/${esc(gameName)}`
     checkName(p, where, gameName, 'game')
     if (!isObj(game_)) continue
+    checkVariantNames(p, where, game_)
     const profiles = game_['profiles']
     if (!isObj(profiles)) continue
 
@@ -392,6 +405,18 @@ function crossReference(p: Problem[], games: Bag): void {
 
     checkCollisions(p, where, gameName, profiles, containers)
   }
+}
+
+/** A variant name becomes a docker tag suffix, so it gets the same check a profile name gets. */
+function checkVariantNames(p: Problem[], where: string, game_: Bag): void {
+  const steamBuild = game_['steamBuild']
+  const variants = isObj(steamBuild) ? steamBuild['variants'] : undefined
+  if (!Array.isArray(variants)) return
+  variants.forEach((variant, index) => {
+    const name = isObj(variant) ? variant['name'] : undefined
+    if (typeof name !== 'string') return
+    checkName(p, `${where}/steamBuild/variants/${index}/name`, name, 'variant')
+  })
 }
 
 function checkProfile(p: Problem[], w: string, name: string, prof: Bag, profiles: Bag): void {
