@@ -9,7 +9,7 @@ function parseVersion(text: string): { version: string; buildNumber: number } | 
 }
 
 const plugin: GamePlugin = {
-  apiVersion: 1,
+  apiVersion: 2,
   game: 'rimworld',
   // Only what is true of the game itself. The install path, workshop root, scan roots and
   // image belong to whoever is running it, so they stay in profiles.json.
@@ -28,6 +28,25 @@ const plugin: GamePlugin = {
     manifest: { file: 'About/About.xml' },
     modsConfig: { file: 'Config/ModsConfig.xml' },
     prefs: { file: 'Config/Prefs.xml' },
+    version: { file: 'Version.txt' },
+    steamBuild: {
+      branches: [{ name: 'public' }],
+      variants: [
+        { name: 'linux', base: 'xvfb', include: [] },
+        {
+          name: 'windows',
+          base: 'proton',
+          include: [],
+          depot: 'windows',
+          executable: 'RimWorldWin64.exe',
+        },
+        {
+          name: 'linux-ref',
+          base: 'none',
+          include: ['RimWorldLinux_Data/Managed', 'Version.txt'],
+        },
+      ],
+    },
     saveExtensions: ['rws'],
     core: 'ludeon.rimworld',
     dlc: [
