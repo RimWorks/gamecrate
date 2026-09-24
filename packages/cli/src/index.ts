@@ -243,7 +243,8 @@ async function run(
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
 
-  const gameConfig = config.games[game]!
+  const gameConfig = withImageOverride(config.games[game]!, args.image)
+  config.games[game] = gameConfig
   // --dry-run and --print-plan resolve without side effects, and a clone is a side effect.
   const allowFetch = !args.dryRun && !args.printPlan
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
@@ -252,6 +253,19 @@ async function run(
     return await resolved({ argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch })
   } finally {
     await sources.release()
+  }
+}
+
+/**
+ * `--image <ref>` launches one gamecrate-built image. The game lives inside such an image, so
+ * the host mount goes with it: a bind over /game would shadow what the image carries.
+ */
+function withImageOverride(game: GameConfig, ref?: string): GameConfig {
+  if (ref === undefined) return game
+  return {
+    ...game,
+    image: { ...game.image, ref, acquire: 'pull' },
+    gameFiles: { ...game.gameFiles, source: 'image' },
   }
 }
 

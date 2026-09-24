@@ -52,6 +52,7 @@ const RUN_FLAGS = [
   '--no-worktree',
   '--instance',
   '--use',
+  '--image',
 ] as const
 
 /** The subcommand table. `modless` is reserved as a built-in profile, not a verb. */
@@ -257,89 +258,263 @@ function enumOption(flags: string, summary: string, values: readonly string[]): 
  * Every flag, in the order help lists them. The only source of truth for what the CLI
  * accepts: help and completion read it back off the program.
  */
-export function buildProgram(): Command {
-  const program = new Command()
-  program
-    .name('gamecrate')
+/**
+ * Every flag, by long name. `SUBCOMMANDS` decides which verbs get which, so a flag
+ * registered here but listed nowhere is unreachable rather than quietly global.
+ */
+const OPTIONS: Readonly<Record<string, (cmd: Command) => void>> = {
+  '--mod': (cmd) => {
+    cmd.option('--mod <id>', 'add a mod to the profile set', collect, [])
+  },
+  '--without': (cmd) => {
+    cmd.option('--without <id>', 'drop a mod from the resolved set', collect, [])
+  },
+  '--only': (cmd) => {
+    cmd.option('--only <id>', 'restrict the resolved set to these mods', collect, [])
+  },
+  '--worktree': (cmd) => {
+    cmd.option(
+        '--worktree <path>',
+        'promote mods from this git worktree, in its own instance ($GAMECRATE_WORKTREE)',
+        collect,
+        [],
+      )
+  },
+  '--use': (cmd) => {
+    cmd.option('--use <packageId>=<path>', 'force one mod to load from this directory, whatever the profile pins', collect, [])
+  },
+  '--no-worktree': (cmd) => {
+    cmd.option('--no-worktree', 'ignore the current worktree and $GAMECRATE_WORKTREE')
+  },
+  '--instance': (cmd) => {
+    cmd.option('--instance <name>', 'run under a named sub-profile with its own saves, logs and container')
+  },
+  '--mode': (cmd) => {
+    cmd.addOption(enumOption(`--mode <${MODES.join('|')}>`, 'how the game is displayed', MODES))
+  },
+  '--marker': (cmd) => {
+    cmd.option('--marker <str>', 'exit 0 as soon as this string appears in the log')
+  },
+  '--timeout': (cmd) => {
+    cmd.option('--timeout <seconds>', 'bound a marker run, or a headless run with no marker', (v) => seconds('--timeout', v))
+  },
+  '--render-wait': (cmd) => {
+    cmd.option('--render-wait <seconds>', 'settle time before a screenshot is taken', (v) =>
+        seconds('--render-wait', v))
+  },
+  '--resolution': (cmd) => {
+    cmd.option('--resolution <width>x<height>', 'override the game resolution', parseResolution)
+      // host is what a mod's own server needs: it binds loopback inside the container, and
+      // -p only ever reaches the container's eth0.
+  },
+  '--network': (cmd) => {
+    cmd.addOption(
+        enumOption(`--network <${NETWORK_POLICIES.join('|')}>`, "the container's network mode", NETWORK_POLICIES),
+      )
+  },
+  '--log': (cmd) => {
+    cmd.option('--log <path>', 'route launch stdout and stderr to one file')
+  },
+  '--pull': (cmd) => {
+    cmd.addOption(
+        enumOption(`--pull <${PULL_POLICIES.join('|')}>`, 'when to pull the runtime image', PULL_POLICIES),
+      )
+  },
+  '--build': (cmd) => {
+    cmd.option('--build', 'build local C# mods before launching')
+  },
+  '--no-build': (cmd) => {
+    cmd.option('--no-build', 'never build, even when an assembly is stale')
+  },
+  '--no-stale-check': (cmd) => {
+    cmd.option('--no-stale-check', "do not warn when a mod's sources are newer than its assemblies")
+  },
+  '--replace': (cmd) => {
+    cmd.option('--replace', 'stop whatever is holding this profile and instance, then launch')
+  },
+  '--no-replace': (cmd) => {
+    cmd.option('--no-replace', 'refuse when this profile and instance are already running')
+  },
+  '--detach': (cmd) => {
+    cmd.option('--detach', 'start the run in the background and return the prompt')
+  },
+  '--no-detach': (cmd) => {
+    cmd.option('--no-detach', 'stay in the foreground, whatever the profile or project config asks for')
+      // the re-exec entry point. hidden, so help and completion never offer it.
+  },
+  '--supervised': (cmd) => {
+    cmd.addOption(new Option('--supervised <instanceDir>').hideHelp())
+  },
+  '--sort': (cmd) => {
+    cmd.addOption(
+        enumOption(`--sort <${SORTS.join('|')}>`, 'load order: the profile order, or a topological sort', SORTS),
+      )
+  },
+  '--docker-arg': (cmd) => {
+    cmd.option('--docker-arg <arg>', 'one extra argv element for docker run', collect, [])
+  },
+  '--dry-run': (cmd) => {
+    cmd.option('--dry-run', 'resolve and validate fully, write nothing')
+  },
+  '--print-plan': (cmd) => {
+    cmd.option('--print-plan', 'print the resolved launch plan instead of launching')
+  },
+  '--json': (cmd) => {
+    cmd.option('--json', 'machine-readable output')
+  },
+  '--root': (cmd) => {
+    cmd.option('--root', 'run as root instead of mapping the host uid')
+  },
+  '--staging': (cmd) => {
+    cmd.option('--staging', 'clean: wipe .stage only (the default)')
+  },
+  '--logs': (cmd) => {
+    cmd.option('--logs', 'clean: wipe the captured run logs')
+  },
+  '--all': (cmd) => {
+    cmd.option('--all', 'clean: wipe the whole profile and the game downloads (needs --yes)')
+  },
+  '--downloads': (cmd) => {
+    cmd.option('--downloads', 'clean: wipe this game\'s workshop downloads, keeping steamcmd')
+  },
+  '--follow': (cmd) => {
+    cmd.option('-f, --follow', 'keep printing as the run writes')
+  },
+  '--yes': (cmd) => {
+    cmd.option('-y, --yes', 'skip destructive-action confirmation')
+  },
+  '--path': (cmd) => {
+    cmd.option('--path <dir>', 'mods add: take the mod from this directory')
+  },
+  '--workshop': (cmd) => {
+    cmd.option('--workshop <id>', 'mods add: take the mod from this steam workshop item', workshopId)
+  },
+  '--git': (cmd) => {
+    cmd.option('--git <url>', 'mods add: clone the mod from this repository')
+  },
+  '--branch': (cmd) => {
+    cmd.option('--branch <name>', 'mods add: track this git branch')
+  },
+  '--tag': (cmd) => {
+    cmd.option('--tag <name>', 'mods add: pin this git tag')
+  },
+  '--commit': (cmd) => {
+    cmd.option('--commit <sha>', 'mods add: pin this git commit')
+  },
+  '--subdir': (cmd) => {
+    cmd.option('--subdir <path>', 'mods add: the mod folder inside the repository')
+  },
+  '--global': (cmd) => {
+    cmd.option('--global', 'write to the global config')
+  },
+  '--project': (cmd) => {
+    cmd.option('--project', 'write to the project config')
+  },
+  '--force': (cmd) => {
+    cmd.option('--force', 'mods add: overwrite an existing entry; steam build: rebuild even when the buildid matches')
+  },
+  '--variant': (cmd) => {
+    cmd.option('--variant <name>', 'steam build: only this image variant', collect, [])
+  },
+  '--beta': (cmd) => {
+    cmd.option('--beta <name>', 'steam build: only this steam branch', collect, [])
+  },
+  '--plugin': (cmd) => {
+    cmd.option('--plugin <spec>', 'steam build: an explicit plugin package', collect, [])
+  },
+  '--image': (cmd) => {
+    cmd.option('--image <ref>', 'run: launch this gamecrate-built image; steam build: the target repository')
+  },
+  '--load': (cmd) => {
+    cmd.option('--load', 'steam build: load the result into the local docker daemon')
+  },
+  '--push': (cmd) => {
+    cmd.option('--push', 'steam build: push the result to a registry')
+  },
+  '--base': (cmd) => {
+    cmd.option('--base <ref>', 'steam build: override the published runtime base')
+  },
+  '--platform': (cmd) => {
+    cmd.option('--platform <os/arch>', 'steam build: what the manifest claims', 'linux/amd64')
+  },
+  '--print': (cmd) => {
+    cmd.option('--print', 'steam login: also print the session as base64')
+  },
+  '--username': (cmd) => {
+    cmd.option('--username <name>', 'steam login: skip the account name prompt')
+  },
+  '--help': (cmd) => {
+    cmd.option('-h, --help', 'this help')
+  },
+}
+
+/** The settings every command needs: we own the output, the errors and the help. */
+function quiet(cmd: Command): Command {
+  return cmd
     .exitOverride()
     .helpOption(false)
     .allowExcessArguments(true)
     .showSuggestionAfterError(false)
     .configureOutput({ writeOut: () => {}, writeErr: () => {} })
-    .argument('[args...]')
-    .option('--mod <id>', 'add a mod to the profile set', collect, [])
-    .option('--without <id>', 'drop a mod from the resolved set', collect, [])
-    .option('--only <id>', 'restrict the resolved set to these mods', collect, [])
-    .option(
-      '--worktree <path>',
-      'promote mods from this git worktree, in its own instance ($GAMECRATE_WORKTREE)',
-      collect,
-      [],
-    )
-    .option('--use <packageId>=<path>', 'force one mod to load from this directory, whatever the profile pins', collect, [])
-    .option('--no-worktree', 'ignore the current worktree and $GAMECRATE_WORKTREE')
-    .option('--instance <name>', 'run under a named sub-profile with its own saves, logs and container')
-    .addOption(enumOption(`--mode <${MODES.join('|')}>`, 'how the game is displayed', MODES))
-    .option('--marker <str>', 'exit 0 as soon as this string appears in the log')
-    .option('--timeout <seconds>', 'bound a marker run, or a headless run with no marker', (v) => seconds('--timeout', v))
-    .option('--render-wait <seconds>', 'settle time before a screenshot is taken', (v) =>
-      seconds('--render-wait', v))
-    .option('--resolution <width>x<height>', 'override the game resolution', parseResolution)
-    // host is what a mod's own server needs: it binds loopback inside the container, and
-    // -p only ever reaches the container's eth0.
-    .addOption(
-      enumOption(`--network <${NETWORK_POLICIES.join('|')}>`, "the container's network mode", NETWORK_POLICIES),
-    )
-    .option('--log <path>', 'route launch stdout and stderr to one file')
-    .addOption(
-      enumOption(`--pull <${PULL_POLICIES.join('|')}>`, 'when to pull the runtime image', PULL_POLICIES),
-    )
-    .option('--build', 'build local C# mods before launching')
-    .option('--no-build', 'never build, even when an assembly is stale')
-    .option('--no-stale-check', "do not warn when a mod's sources are newer than its assemblies")
-    .option('--replace', 'stop whatever is holding this profile and instance, then launch')
-    .option('--no-replace', 'refuse when this profile and instance are already running')
-    .option('--detach', 'start the run in the background and return the prompt')
-    .option('--no-detach', 'stay in the foreground, whatever the profile or project config asks for')
-    // the re-exec entry point. hidden, so help and completion never offer it.
-    .addOption(new Option('--supervised <instanceDir>').hideHelp())
-    .addOption(
-      enumOption(`--sort <${SORTS.join('|')}>`, 'load order: the profile order, or a topological sort', SORTS),
-    )
-    .option('--docker-arg <arg>', 'one extra argv element for docker run', collect, [])
-    .option('--dry-run', 'resolve and validate fully, write nothing')
-    .option('--print-plan', 'print the resolved launch plan instead of launching')
-    .option('--json', 'machine-readable output')
-    .option('--root', 'run as root instead of mapping the host uid')
-    .option('--staging', 'clean: wipe .stage only (the default)')
-    .option('--logs', 'clean: wipe the captured run logs')
-    .option('--all', 'clean: wipe the whole profile and the game downloads (needs --yes)')
-    .option('--downloads', 'clean: wipe this game\'s workshop downloads, keeping steamcmd')
-    .option('-f, --follow', 'keep printing as the run writes')
-    .option('-y, --yes', 'skip destructive-action confirmation')
-    .option('--path <dir>', 'mods add: take the mod from this directory')
-    .option('--workshop <id>', 'mods add: take the mod from this steam workshop item', workshopId)
-    .option('--git <url>', 'mods add: clone the mod from this repository')
-    .option('--branch <name>', 'mods add: track this git branch')
-    .option('--tag <name>', 'mods add: pin this git tag')
-    .option('--commit <sha>', 'mods add: pin this git commit')
-    .option('--subdir <path>', 'mods add: the mod folder inside the repository')
-    .option('--global', 'write to the global config')
-    .option('--project', 'write to the project config')
-    .option('--force', 'mods add: overwrite an existing entry; steam build: rebuild even when the buildid matches')
-    .option('--variant <name>', 'steam build: only this image variant', collect, [])
-    .option('--beta <name>', 'steam build: only this steam branch', collect, [])
-    .option('--plugin <spec>', 'steam build: an explicit plugin package', collect, [])
-    .option('--image <ref>', 'steam build: the target repository, without a tag')
-    .option('--load', 'steam build: load the result into the local docker daemon')
-    .option('--push', 'steam build: push the result to a registry')
-    .option('--base <ref>', 'steam build: override the published runtime base')
-    .option('--platform <os/arch>', 'steam build: what the manifest claims', 'linux/amd64')
-    .option('--print', 'steam login: also print the session as base64')
-    .option('--username <name>', 'steam login: skip the account name prompt')
-    .option('-h, --help', 'this help')
+}
 
+function attach(cmd: Command, names: readonly string[]): Command {
+  for (const name of names) OPTIONS[name]?.(cmd)
+  return cmd
+}
+
+/**
+ * A root that carries the run flags, because a bare game name means run, plus one command per
+ * verb carrying only its own. enablePositionalOptions is what makes that a fence: without it
+ * commander hands a flag typed after a verb back to the root and accepts it.
+ */
+export function buildProgram(): Command {
+  const program = quiet(new Command()).name('gamecrate').enablePositionalOptions().argument('[args...]')
+  attach(program, [...RUN_FLAGS, ...GLOBAL_FLAGS, '--supervised'])
+  track(program)
+
+  for (const sub of SUBCOMMANDS) {
+    if (sub.name === 'run') continue
+    const cmd = quiet(program.command(sub.name)).argument('[args...]')
+    attach(cmd, [...sub.flags, ...GLOBAL_FLAGS])
+    track(cmd)
+  }
   return program
+}
+
+/** Which command commander matched. Its own opts and args are the ones that count. */
+const ACTIVE = new WeakMap<Command, Command>()
+
+function track(cmd: Command): void {
+  cmd.action((_args: string[], _opts: unknown, self: Command) => {
+    ACTIVE.set(self.parent ?? self, self)
+  })
+}
+
+/** The matched command, and the positional list as it was typed, verb word included. */
+function matched(program: Command): { cmd: Command; positional: string[]; values: Values } {
+  const cmd = ACTIVE.get(program) ?? program
+  const positional = cmd === program ? [...program.args] : [cmd.name(), ...cmd.args]
+  return { cmd, positional, values: { ...program.opts(), ...cmd.opts() } as Values }
+}
+
+/** Every command's options, for the checks that have to see the whole vocabulary. */
+export function allOptions(program: Command): Option[] {
+  return [...program.options, ...program.commands.flatMap((c) => c.options)]
+}
+
+/**
+ * A refusal worth more than "that verb does not take it", keyed "<verb> <flag>". Commander
+ * reports an out-of-scope flag as unknown, so a reason has to be reattached here.
+ */
+const REFUSALS: Readonly<Record<string, string>> = {
+  'shell --detach': 'shell cannot detach: a shell needs the terminal --detach gives up',
+}
+
+/** The verbs that declare a flag, for an error that says where it does belong. */
+function ownersOf(name: string): string[] {
+  const run = (RUN_FLAGS as readonly string[]).includes(name) ? ['run'] : []
+  return [...run, ...SUBCOMMANDS.filter((s) => s.name !== 'run' && s.flags.includes(name)).map((s) => s.name)]
 }
 
 /**
@@ -348,7 +523,7 @@ export function buildProgram(): Command {
  */
 function checkValueTokens(program: Command, head: string[]): void {
   const valued = (name: string): Option | undefined =>
-    program.options.find((o) => (o.long === name || o.short === name) && (o.required || o.optional))
+    allOptions(program).find((o) => (o.long === name || o.short === name) && (o.required || o.optional))
 
   for (let i = 0; i < head.length; i++) {
     const token = head[i]!
@@ -403,21 +578,21 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   try {
     program.parse(head, { from: 'user' })
   } catch (error) {
-    throw translate(error, program)
+    throw translate(error, program, SUBCOMMANDS.some((x) => x.name === head[0]) ? head[0] : undefined)
   }
 
   checkRepeats(program, counts)
   checkContradictions(seen)
 
-  const values = program.opts() as Values
-  const envBuild = applyEnv(program, seen, env, values)
+  const { cmd, positional, values } = matched(program)
+  const envBuild = applyEnv(cmd, seen, env, values)
 
   const out: ParsedArgs = {
     subcommand: 'run',
-    mods: values['mod'] as string[],
-    without: values['without'] as string[],
-    only: values['only'] as string[],
-    dockerArgs: values['dockerArg'] as string[],
+    mods: (values['mod'] as string[] | undefined) ?? [],
+    without: (values['without'] as string[] | undefined) ?? [],
+    only: (values['only'] as string[] | undefined) ?? [],
+    dockerArgs: (values['dockerArg'] as string[] | undefined) ?? [],
     gameArgs: sep === -1 ? [] : argv.slice(sep + 1),
     dryRun: values['dryRun'] === true,
     printPlan: values['printPlan'] === true,
@@ -435,7 +610,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     detach: values['detach'] === true,
     noDetach: seen.has('--no-detach'),
     supervised: typeof values['supervised'] === 'string',
-    use: values['use'] as string[],
+    use: (values['use'] as string[] | undefined) ?? [],
     rest: [],
   }
   out.mode = values['mode'] as ModeName | undefined
@@ -450,14 +625,14 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.instance = values['instance'] as string | undefined
   out.build = envBuild ?? policy(values['build'])
   out.cleanTier = log.cleanTier
-  out.variant = values['variant'] as string[]
-  out.branches = values['beta'] as string[]
-  out.plugin = values['plugin'] as string[]
+  out.variant = (values['variant'] as string[] | undefined) ?? []
+  out.branches = (values['beta'] as string[] | undefined) ?? []
+  out.plugin = (values['plugin'] as string[] | undefined) ?? []
   out.image = values['image'] as string | undefined
   out.load = values['load'] === true
   out.push = values['push'] === true
   out.base = values['base'] as string | undefined
-  out.platform = values['platform'] as string
+  out.platform = (values['platform'] as string | undefined) ?? 'linux/amd64'
   out.print = values['print'] === true
   out.username = values['username'] as string | undefined
 
@@ -465,17 +640,12 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
 
   // --help before completeness, everywhere: you cannot read the help for a verb you already
   // know how to type.
-  applyPositionals(out, program.args, opts.games, out.help)
+  applyPositionals(out, positional, opts.games, out.help)
   if (out.subcommand === 'mods' && out.subverb !== undefined && !out.help) {
     if (out.subverb === 'add') out.source = modSource(values)
     if (out.subverb !== 'sync') out.target = modTarget(seen, out.subverb)
   }
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
-  // the subcommand is only known once the positionals land. a config-level detach is not a
-  // typed flag, so it skips the fork in run() instead of failing here.
-  if (seen.has('--detach') && out.subcommand === 'shell') {
-    throw usage('shell cannot detach: a shell needs the terminal --detach gives up')
-  }
   return out
 }
 
@@ -492,9 +662,10 @@ interface FlagLog {
  */
 function recordFlags(program: Command): FlagLog {
   const log: FlagLog = { seen: new Set(), counts: new Map(), worktree: [] }
-  for (const option of program.options) {
+  for (const cmd of [program, ...program.commands]) {
+    for (const option of cmd.options) {
     const long = option.long ?? option.flags
-    program.on(`option:${option.name()}`, (value?: string) => {
+    cmd.on(`option:${option.name()}`, (value?: string) => {
       log.seen.add(long)
       log.counts.set(long, (log.counts.get(long) ?? 0) + 1)
       if (long === '--worktree' && value !== undefined) log.worktree.push(value)
@@ -502,12 +673,13 @@ function recordFlags(program: Command): FlagLog {
         log.cleanTier = long.slice(2) as ParsedArgs['cleanTier']
       }
     })
+    }
   }
   return log
 }
 
 function checkRepeats(program: Command, counts: Map<string, number>): void {
-  for (const option of program.options) {
+  for (const option of allOptions(program)) {
     const long = option.long ?? option.flags
     const repeatable = Array.isArray(option.defaultValue)
     if (option.required && !repeatable && (counts.get(long) ?? 0) > 1) {
@@ -532,14 +704,20 @@ function policy(value: unknown): BuildPolicy | undefined {
 }
 
 /** Commander's wording is its own; ours is the one the tests and the docs know. */
-function translate(error: unknown, program: Command): unknown {
+function translate(error: unknown, program: Command, verb?: string): unknown {
   if (!(error instanceof CommanderError)) return error
   const token = /'([^']+)'/.exec(error.message)?.[1] ?? ''
 
   if (error.code === 'commander.unknownOption') {
     const name = token.split('=')[0]!
-    const known = program.options.find((o) => o.long === name || o.short === name)
-    if (known !== undefined) return usage(`${name} takes no value`)
+    const here = (verb === undefined ? program : program.commands.find((c) => c.name() === verb))?.options
+    if (here?.some((o) => o.long === name || o.short === name)) return usage(`${name} takes no value`)
+    const bespoke = REFUSALS[`${verb ?? 'run'} ${name}`]
+    if (bespoke !== undefined) return usage(bespoke)
+    const owners = ownersOf(name)
+    if (owners.length > 0) {
+      return usage(`${verb ?? 'run'} does not take ${name}`, owners.map((o) => `gamecrate ${o}`).join(' or '))
+    }
     return usage(`unknown flag ${name}`, suggest(name, flagNames(program)))
   }
   if (error.code === 'commander.optionMissingArgument') {
@@ -646,6 +824,8 @@ function applyEnv(
   for (const [flag, name] of Object.entries(FLAG_ENV)) {
     if (seen.has(flag)) continue
     if (flag === '--build' && seen.has('--no-build')) continue
+    // a var set in the shell is not an instruction to the verb that happens to run next
+    if (!program.options.some((o) => o.long === flag)) continue
     const raw = env[name]
     if (raw === undefined || raw === '') continue
     seen.add(flag)
@@ -667,7 +847,8 @@ function envBuildPolicy(name: string, raw: string): BuildPolicy {
 }
 
 function applyEnvValue(program: Command, flag: string, name: string, raw: string, values: Values): void {
-  const option = program.options.find((o) => o.long === flag)!
+  const option = program.options.find((o) => o.long === flag)
+  if (option === undefined) return
   const key = option.attributeName()
   if (!option.required) {
     if (truthy(raw)) values[key] = true
@@ -757,7 +938,7 @@ function truthy(value: string): boolean {
 }
 
 function flagNames(program: Command): string[] {
-  return program.options.flatMap((o) => [o.long, o.short].filter((f): f is string => f !== undefined))
+  return allOptions(program).flatMap((o) => [o.long, o.short].filter((f): f is string => f !== undefined))
 }
 
 function seconds(flag: string, value: string): number {

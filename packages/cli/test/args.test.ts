@@ -297,11 +297,20 @@ describe('flag rejection', () => {
     ])
   })
 
-  test('a global flag is accepted by every subcommand, ignored or not', () => {
-    const args = parseArgs(['list', 'atlas', '--json', '--mode', 'headless'], NO_ENV)
+  test('a global flag is accepted by every subcommand', () => {
+    const args = parseArgs(['list', 'atlas', '--json'], NO_ENV)
     expect(args.subcommand).toBe('list')
     expect(args.json).toBe(true)
-    expect(args.mode).toBe('headless')
+  })
+
+  test('a flag another subcommand owns is refused, and named where it belongs', () => {
+    const error = fails(['list', 'atlas', '--mode', 'headless'])
+    expect(error.message).toBe('list does not take --mode')
+    expect(error.detail).toContain('gamecrate run')
+  })
+
+  test('a steam build flag is refused on a launch', () => {
+    expect(fails(['atlas', '--push']).message).toBe('run does not take --push')
   })
 })
 

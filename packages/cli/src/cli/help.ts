@@ -1,14 +1,20 @@
 import type { GameConfig, ProfileConfig, RootConfig } from '../types'
 import { GamecrateError, Exit, own } from '../types'
 import type { Option } from 'commander'
-import { FLAG_ENV, GLOBAL_FLAGS, SUBCOMMANDS, buildProgram, suggest } from './args'
+import { FLAG_ENV, GLOBAL_FLAGS, SUBCOMMANDS, allOptions, buildProgram, suggest } from './args'
 import type { SubcommandSpec } from './args'
 
 const NAME = 'gamecrate'
 
 /** Help and completion describe whatever the parser accepts, minus the hidden internals. */
 function flags(): readonly Option[] {
-  return buildProgram().options.filter((o) => !o.hidden)
+  const seen = new Set<string>()
+  return allOptions(buildProgram()).filter((o) => {
+    const long = o.long ?? o.flags
+    if (o.hidden || seen.has(long)) return false
+    seen.add(long)
+    return true
+  })
 }
 
 /**
