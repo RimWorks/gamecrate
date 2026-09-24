@@ -88,7 +88,11 @@ three entries under `dlc` and the game has three, not the plugin's five plus you
 same holds for `modes`, `scanRoots`, and `saveExtensions`. To add one DLC, copy the plugin's
 full list and append to it.
 
-The settings ladder is the one exception. `settings` merges through five layers: the top-level
+Two arrays are exceptions. `steamBuild.branches` concatenates, matched on `name`, so you
+add a private beta without copying the plugin's list. Your fields win on a name the plugin
+already declares, and a new name lands at the end.
+
+The settings ladder is the second. `settings` merges through five layers: the top-level
 `defaults`, then `games.<game>`, then the profile, then the instance, then the command line.
 Arrays inside `settings`, which means `gameArgs` and `dockerArgs`, concatenate at every layer,
 unlike the `dlc`, `modes` and `scanRoots` lists in the preceding section, which replace.
@@ -168,6 +172,23 @@ A profile can also carry a default for three flags, so you stop typing them:
 | `detach` | `--detach`. `--no-detach` overrides it. |
 | `replace` | `--replace`. `--no-replace` overrides it. |
 | `build` | `--build` and `--no-build`. Takes `auto`, `always`, or `never`. |
+
+A profile can pin the game version it runs against. `gameVersion` names a tag on the game's own
+image repository, so `"1.6"` resolves to `<your repo>:1.6`, and `steam build` writes that tag for
+you. `image` names a whole reference and gamecrate uses it as written. `image` beats
+`gameVersion`, and `--image` beats both.
+
+```json
+{
+  "profiles": {
+    "stable": { "gameVersion": "1.6", "mods": ["brrainz.harmony"] },
+    "scratch": { "image": "ghcr.io/me/other:sha-abc", "mods": [] }
+  }
+}
+```
+
+Either key switches the game files to the image, because the game lives inside one. A host mount
+over the same path would hide what the image carries.
 
 gamecrate ships one profile of its own, `modless`. It resolves to the core game plus its
 official DLC, and you cannot redefine it. Subcommand names are reserved the same way: a game or

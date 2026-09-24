@@ -27,6 +27,8 @@ The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
 | `ps` | Every live run: game, profile/instance, mode, pid, container, then uptime or status |
 | `stop <game> [profile]` | Stop a detached run and release its lock |
 | `build <game>` | Build or pull the runtime image, no launch |
+| `steam build <game>` | Download the game from Steam and append it onto a runtime base as an image |
+| `steam login` | Sign in to Steam once and store the session for `steam build` |
 | `shell <game> [profile]` | Same mounts, bash instead of the game |
 | `verify <game> [profile]` | What the running container bound, and whether it looks current |
 | `config edit` | Open the global config in `$VISUAL` or `$EDITOR`, validate on save |
@@ -40,6 +42,10 @@ and `gamecrate help completion zsh` print a shell completion script.
 Game arguments go after a bare `--` and nowhere else. A first word that is neither a game nor
 a subcommand fails with `<word> is not a game or a subcommand`, with a did-you-mean when one is
 close.
+
+Each flag belongs to the subcommands that list it below. A flag used elsewhere is a usage error
+that names the subcommand that does take it, so `gamecrate rimworld --push` fails with
+`run does not take --push`.
 
 ## Flags
 
@@ -102,6 +108,21 @@ Container and build:
 - `--detach` launches in the background. `--no-detach` stays in the foreground, whatever the
   profile or the repo config asks for.
 
+Steam images. `steam build` takes all of these, and `run` takes `--image`:
+
+- `--image <ref>` names the target repository for `steam build`, without a tag. On `run` it
+  launches that exact ref instead of the configured one, and reads the game out of the image.
+- `--beta <name>` builds only that Steam branch. Repeatable. Default: every branch the plugin
+  declares.
+- `--variant <name>` builds only that image variant. Repeatable. Default: every variant.
+- `--load` loads the result into the local Docker daemon. `--push` sends it to a registry.
+  Without either, `--load` is assumed.
+- `--base <ref>` overrides the published runtime base a variant appends onto.
+- `--platform <os/arch>` sets what the manifest claims. Default `linux/amd64`.
+- `--force` rebuilds even when the published build id already matches the image's label.
+- `--print` makes `steam login` also print the session as base64, for a CI secret.
+- `--username <name>` skips the username prompt on `steam login`.
+
 Output and dry runs:
 
 - `--dry-run` resolves and validates fully, then writes nothing.
@@ -136,6 +157,21 @@ flag, then variable, then file.
 
 `XDG_CONFIG_HOME` moves the config directory and `XDG_CACHE_HOME` moves the workshop scan
 cache. `VISUAL` and `EDITOR` name the editor `config edit` opens.
+
+`steam build` reads its credentials from the environment and never from a flag, because a flag
+value is readable in the process list on a shared machine:
+
+| Variable | What it holds |
+| --- | --- |
+| `STEAM_USERNAME` | The Steam account that owns the game |
+| `STEAM_CONFIG_VDF` | base64 of a logged-in `config.vdf`, for a runner with no session on disk |
+| `STEAM_BRANCH_PASSWORD_<BRANCH>` | The password for one private beta. The branch name goes uppercase, with dashes as underscores |
+| `STEAM_BRANCH_PASSWORD` | A fallback password, used only when you build a single branch |
+| `GAMECRATE_REGISTRY_USER` | The registry username for `--push` |
+| `GAMECRATE_REGISTRY_PASSWORD` | The registry token for `--push` |
+
+A beta password reaches `steamcmd` through a `+runscript` file at mode 0600, so it never appears
+in an argument list either.
 
 ## Exit codes
 

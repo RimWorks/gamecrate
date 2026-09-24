@@ -16,7 +16,11 @@ facts, so the core stays the same for every title.
 
 ## Install
 
-Neither package sits on npm yet, so build from a clone:
+```sh
+npm install -g @gamecrate/cli @gamecrate/rimworld
+```
+
+To run an unreleased change, build from a clone instead:
 
 ```sh
 git clone https://github.com/RimWorks/gamecrate.git
@@ -46,6 +50,7 @@ The [`@gamecrate/cli` README](packages/cli) has a config you can copy and links 
 | Library pins, git sources, which copy of a mod wins | [Mod sources](packages/cli/docs/mod-sources.md) |
 | `mods add`, `mods rm`, `mods sync` | [The `mods` commands](packages/cli/docs/mods-commands.md) |
 | Launching, detached runs, windows, cleanup | [Running](packages/cli/docs/running.md) |
+| Building a game image from Steam | [Game images](packages/cli/docs/images.md) |
 | Subcommands, flags, environment variables, exit codes | [Reference](packages/cli/docs/reference.md) |
 | Teaching gamecrate a new game | [Writing a plugin](packages/cli/docs/plugins.md) |
 

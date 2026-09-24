@@ -40,3 +40,6 @@ READMEs
 [Rr]etitles
 [Uu]ntrusted
 steamcmd
+[Ll]aunchable
+[Ss]ubpaths
+[Uu]nscoped

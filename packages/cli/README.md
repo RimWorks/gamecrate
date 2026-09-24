@@ -12,7 +12,11 @@ set, and launches the game. Without at least one plugin, it has no games to run.
 
 ## Install
 
-The package is not on npm yet, so build it from a clone of the monorepo:
+```sh
+npm install -g @gamecrate/cli @gamecrate/rimworld
+```
+
+To run an unreleased change, build it from a clone of the monorepo instead:
 
 ```sh
 git clone https://github.com/RimWorks/gamecrate.git
@@ -22,7 +26,7 @@ npm run build
 npm install -g ./packages/cli
 ```
 
-The build needs [bun](https://bun.sh) and Node 22 or newer.
+That build needs [bun](https://bun.sh) and Node 22 or newer.
 
 ## First launch
 
@@ -76,6 +80,7 @@ two mods, and starts the game.
 | [Mod sources](docs/mod-sources.md) | Pin a mod to a directory, a git repository, or a workshop item gamecrate downloads, and learn which copy wins |
 | [The `mods` commands](docs/mods-commands.md) | Add, remove, and sync library pins from the command line |
 | [Running](docs/running.md) | Launch, run in the background, read the result, close a window, and clean up |
+| [Game images](docs/images.md) | Build a launchable image from a game you own on Steam |
 | [Reference](docs/reference.md) | Every subcommand, flag, environment variable, and exit code |
 | [Writing a plugin](docs/plugins.md) | Teach gamecrate a new game |
 
