@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -267,6 +267,8 @@ describe('what the long calls say while they run', () => {
 
   test('a retrying push names the attempt and the registry complaint', async () => {
     const { argvFile } = await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'tok'
     process.env.FAKE_FAIL_FIRST = '1'
     const { text } = await onTerminal(() => cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871'))
     expect(text).toContain('ghcr.io/me/atlas:1.6.4871')
@@ -296,6 +298,8 @@ describe('what the long calls say while they run', () => {
 
   test('no docker on PATH is still an environment error, not a raw spawn reject', async () => {
     await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'tok'
     process.env.PATH = await mkdtemp(join(tmp, 'empty-'))
     let thrown: GamecrateError | undefined
     try {
@@ -480,6 +484,19 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
     expect(thrown?.detail).toContain('(pass)')
   })
 
+  // a fresh CI runner has no config.json, and the action Ka ships runs on one
+  test('no docker config at all refuses, rather than failing after the download', async () => {
+    await fakeDocker()
+    let thrown: GamecrateError | undefined
+    try {
+      checkRegistryAuthEarly('ghcr.io/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.message).toBe('no registry credentials for ghcr.io')
+    expect(thrown?.detail).toContain('GAMECRATE_REGISTRY_USER')
+  })
+
   test('an identitytoken counts as credentials', async () => {
     await fakeDocker()
     await dockerConfig({ auths: { 'ghcr.io': { identitytoken: 'tok' } }, credsStore: 'pass' })
@@ -556,6 +573,12 @@ describe('the login registry', () => {
 })
 
 describe('cranePush', () => {
+  // every push needs credentials now, the way a real one does
+  beforeEach(() => {
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'tok'
+  })
+
   test('sends push with the tar and the ref', async () => {
     const { argvFile } = await fakeDocker()
     await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')

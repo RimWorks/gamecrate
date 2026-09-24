@@ -96,7 +96,15 @@ function forRegistry<T>(table: Record<string, T> | undefined, registry: string):
 export function checkRegistryAuthEarly(ref: string): void {
   if (registryCreds() !== null) return
   const dir = dockerConfigDir()
-  if (dir === undefined) return
+  // no config.json at all is the clearest "no credentials" there is, and a fresh CI
+  // runner has none. failing here beats failing after a multi-gigabyte download
+  if (dir === undefined) {
+    throw new GamecrateError(
+      `no registry credentials for ${registryOf(ref)}`,
+      Exit.Environment,
+      `there is no docker config.json to read. set ${USER_VAR} and ${PASSWORD_VAR}`,
+    )
+  }
   const path = join(dir, 'config.json')
   let parsed: DockerConfig
   try {
