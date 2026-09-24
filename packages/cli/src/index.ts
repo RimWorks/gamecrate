@@ -29,6 +29,8 @@ import { buildRunSpec, containerName, refuseProtonHeaded, windowTitle } from './
 import { adoptNewWindow } from './docker/window'
 import { generateModsConfig, mergePrefs } from './launch/generate'
 import { imageFor, imageLaunch, imageProblem, markerProblem, readImageFacts, withImageOverride } from './launch/image'
+import type { ImageFacts } from './launch/image'
+import type { ImageLaunch } from './docker/spec'
 import {
   acquireImage,
   buildLocalMods,
@@ -389,7 +391,6 @@ interface ExecuteInputs {
 
 async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   const { plan, args, config, identity, asShell, profileSpec, runDir, releaseSources } = inputs
-  const game = plan.game
   await buildLocalMods(plan, buildPolicy(args, profileSpec))
   // the build writes into the clones, so their lock only comes off once it is done. it covers
   // fetch and build, not the session: stageMods bind-mounts a clone subdir into the container,
@@ -397,32 +398,7 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   // TODO(a session-long lock would serialize every launch): delete this when a clone is staged
   // by copy, or by a read-lock a resetting writer has to wait on.
   await releaseSources()
-  const ref = config.games[game]!.image.ref
-  try {
-    await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
-  } catch (error) {
-    // acquireImage only knows docker failed. imageProblem knows there is no image to run and
-    // that steam build is how you get one, so it wins when it has something to say.
-    const absent = imageProblem({ game, ref, mode: plan.mode, facts: await readImageFacts(ref) })
-    if (absent === null) throw error
-    throw new GamecrateError(absent.message, Exit.Environment, absent.suggestion)
-  }
-  // Before stageMods, which wipes the stage: a bad image costs a message, not a wiped tree.
-  const facts = await readImageFacts(ref)
-  const problem = imageProblem({ game, ref, mode: plan.mode, facts })
-  if (problem !== null) {
-    throw new GamecrateError(problem.message, Exit.Environment, problem.suggestion)
-  }
-  // A shell replaces the command with bash and never starts the game, so neither the mode
-  // refusal nor the marker gate applies to it.
-  const imageStart = asShell ? undefined : imageLaunch(facts)
-  // Mode first: the default mode is headed, so a marker-first order asks for a marker the
-  // person then has to keep while they fix the real problem.
-  refuseProtonHeaded(game, plan.mode, imageStart)
-  const needsMarker = asShell ? null : markerProblem({ game, facts, marker: plan.marker })
-  if (needsMarker !== null) {
-    throw new GamecrateError(needsMarker.message, Exit.Usage, needsMarker.suggestion)
-  }
+  const { facts, imageStart } = await readyImage(plan, config, args, asShell)
 
   const modMounts = await stageMods(plan)
   await generateModsConfig(plan)
@@ -441,43 +417,86 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   const trustExit = facts.launcher !== 'proton'
 
   try {
-    // Every path below hands the container to runContainer, which owns SIGINT/SIGTERM: its
-    // handler stops the container, returns 130, and still flushes the log.
-    if (plan.marker !== undefined && !asShell)
-      return await runWithMarker(spec, plan, runDir, trustExit)
-    if (plan.mode === 'screenshot' && !asShell)
-      return await runWithScreenshot(spec, plan, runDir, trustExit)
-    // An offscreen run has nobody to close the window, so --timeout bounds it even with no
-    // marker. Without this it runs forever and keeps the profile lock.
-    if (plan.mode !== 'headed' && !asShell) return await runBounded(spec, plan, runDir, trustExit)
-    // Only X11 lets us touch the window from out here; a wayland client owns its own caption
-    // and its own close button.
-    let windowClosed = false
-    const window =
-      asShell || plan.settings.display !== 'x11'
-        ? null
-        : await adoptNewWindow({
-            executable: plan.gameConfig.executable,
-            title: windowTitle(plan),
-            stripDelete: plan.gameConfig.ignoresWmDelete === true,
-            onClosed: () => {
-              windowClosed = true
-              void stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
-            },
-          })
-    try {
-      const code = await runContainer(spec, {
-        logDir: runDir,
-        stopTimeoutSeconds: STOP_TIMEOUT_SECONDS,
-      })
-      if (windowClosed) return { code: Exit.Ok, reason: 'window-closed' }
-      // asShell lands here too, and bash's code is its own, so this path keeps the raw code.
-      return { code: normalize(code), reason: reasonFor(code) }
-    } finally {
-      window?.stop()
-    }
+    return await dispatchRun(spec, plan, runDir, trustExit, asShell)
   } finally {
     await copyOutLogs(plan)
+  }
+}
+
+/**
+ * Acquire the image and clear every gate, before stageMods wipes anything. A bad image costs
+ * a message this way, not a wiped stage tree.
+ */
+async function readyImage(
+  plan: LaunchPlan,
+  config: RootConfig,
+  args: ParsedArgs,
+  asShell: boolean,
+): Promise<{ facts: ImageFacts; imageStart: ImageLaunch | undefined }> {
+  const game = plan.game
+  const ref = config.games[game]!.image.ref
+  try {
+    await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
+  } catch (error) {
+    // acquireImage only knows docker failed. imageProblem knows steam build is how you get one
+    const absent = imageProblem({ game, ref, mode: plan.mode, facts: await readImageFacts(ref) })
+    if (absent === null) throw error
+    throw new GamecrateError(absent.message, Exit.Environment, absent.suggestion)
+  }
+  const facts = await readImageFacts(ref)
+  const problem = imageProblem({ game, ref, mode: plan.mode, facts })
+  if (problem !== null) {
+    throw new GamecrateError(problem.message, Exit.Environment, problem.suggestion)
+  }
+  // a shell replaces the command with bash, so neither gate below applies to it
+  const imageStart = asShell ? undefined : imageLaunch(facts)
+  // mode first: headed is the default, so a marker-first order asks for a flag you then have to
+  // keep while you fix the real problem
+  refuseProtonHeaded(game, plan.mode, imageStart)
+  const needsMarker = asShell ? null : markerProblem({ game, facts, marker: plan.marker })
+  if (needsMarker !== null) {
+    throw new GamecrateError(needsMarker.message, Exit.Usage, needsMarker.suggestion)
+  }
+  return { facts, imageStart }
+}
+
+/**
+ * Which runner ends the container. Every branch hands it to runContainer, which owns
+ * SIGINT and SIGTERM: it stops the container, returns 130, and still flushes the log.
+ */
+async function dispatchRun(
+  spec: DockerRunSpec,
+  plan: LaunchPlan,
+  runDir: string,
+  trustExit: boolean,
+  asShell: boolean,
+): Promise<LaunchResult> {
+  if (plan.marker !== undefined && !asShell) return await runWithMarker(spec, plan, runDir, trustExit)
+  if (plan.mode === 'screenshot' && !asShell) return await runWithScreenshot(spec, plan, runDir, trustExit)
+  // an offscreen run has nobody to close the window, so --timeout is the only thing that ends it
+  if (plan.mode !== 'headed' && !asShell) return await runBounded(spec, plan, runDir, trustExit)
+
+  // only X11 lets us touch the window from out here; a wayland client owns its own caption
+  let windowClosed = false
+  const window =
+    asShell || plan.settings.display !== 'x11'
+      ? null
+      : await adoptNewWindow({
+          executable: plan.gameConfig.executable,
+          title: windowTitle(plan),
+          stripDelete: plan.gameConfig.ignoresWmDelete === true,
+          onClosed: () => {
+            windowClosed = true
+            void stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
+          },
+        })
+  try {
+    const code = await runContainer(spec, { logDir: runDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
+    if (windowClosed) return { code: Exit.Ok, reason: 'window-closed' }
+    // asShell lands here too, and bash's code is its own, so this path keeps the raw code
+    return { code: normalize(code), reason: reasonFor(code) }
+  } finally {
+    window?.stop()
   }
 }
 

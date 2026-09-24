@@ -80,16 +80,30 @@ describe('run wires the checks in before staging', () => {
     'utf8',
   )
 
-  test('imageProblem and markerProblem run before stageMods', () => {
-    const acquire = source.indexOf('await acquireImage(')
-    const image = source.indexOf('imageProblem({')
-    const marker = source.indexOf('markerProblem({')
-    const stage = source.indexOf('await stageMods(')
+  /** The body of one function, so an offset inside it means what it looks like. */
+  function body(name: string): string {
+    const start = source.indexOf(`async function ${name}(`)
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('\n}\n', start)
+    expect(end).toBeGreaterThan(start)
+    return source.slice(start, end)
+  }
+
+  test('both checks follow acquireImage inside readyImage', () => {
+    const ready = body('readyImage')
+    const acquire = ready.indexOf('await acquireImage(')
     expect(acquire).toBeGreaterThan(-1)
-    expect(image).toBeGreaterThan(acquire)
-    expect(marker).toBeGreaterThan(acquire)
-    expect(stage).toBeGreaterThan(image)
-    expect(stage).toBeGreaterThan(marker)
+    expect(ready.indexOf('imageProblem({', acquire)).toBeGreaterThan(acquire)
+    expect(ready.indexOf('markerProblem({')).toBeGreaterThan(acquire)
+    expect(ready).not.toContain('stageMods(')
+  })
+
+  test('execute readies the image before it stages anything', () => {
+    const run = body('execute')
+    const ready = run.indexOf('await readyImage(')
+    const stage = run.indexOf('await stageMods(')
+    expect(ready).toBeGreaterThan(-1)
+    expect(stage).toBeGreaterThan(ready)
   })
 
   test('the refusals carry the exit codes the table gives them', () => {
