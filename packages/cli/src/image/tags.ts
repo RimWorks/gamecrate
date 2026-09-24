@@ -6,6 +6,8 @@ export interface TagInput {
   defaultBranch: boolean
   /** True when this variant is the first entry of steamBuild.variants. */
   defaultVariant: boolean
+  /** Branch aliases, so a moving "2.0" can point at whatever beta is today. */
+  aliases?: string[]
 }
 
 /**
@@ -29,5 +31,9 @@ export function tagsFor(input: TagInput): string[] {
   }
   versioned.push(`${input.version}${scope}-${input.variant}`)
   latest.push(`latest${scope}-${input.variant}`)
+  for (const alias of input.aliases ?? []) {
+    if (input.defaultVariant) latest.push(alias)
+    latest.push(`${alias}-${input.variant}`)
+  }
   return [...versioned, ...latest]
 }

@@ -223,8 +223,16 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
     }
     branches.forEach((branch, index) => {
       const name = (branch as Bag | null)?.['name']
-      if (typeof name !== 'string' || TAG_COMPONENT.test(name)) return
-      push(`branch name "${name}" must match ${TAG_COMPONENT.source}`, ['branches', index, 'name'])
+      if (typeof name === 'string' && !TAG_COMPONENT.test(name)) {
+        push(`branch name "${name}" must match ${TAG_COMPONENT.source}`, ['branches', index, 'name'])
+      }
+      // an alias is a whole tag on its own, so it takes the same charset the name does
+      const tags = (branch as Bag | null)?.['tags']
+      if (!Array.isArray(tags)) return
+      tags.forEach((tag, at) => {
+        if (typeof tag !== 'string' || TAG_COMPONENT.test(tag)) return
+        push(`branch tag "${String(tag)}" must match ${TAG_COMPONENT.source}`, ['branches', index, 'tags', at])
+      })
     })
   }
   if (!Array.isArray(variants)) return
@@ -258,7 +266,9 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
 
 /** Exported so a config-less `steam build` gets the same refusals a config file would. */
 export const steamBuildSchema = obj({
-  branches: z.array(obj({ name: str, password: bool.optional() }), { error: 'expected an array' }),
+  branches: z.array(obj({ name: str, password: bool.optional(), tags: strArray.optional() }), {
+    error: 'expected an array',
+  }),
   variants: z.array(
     obj({
       name: str,

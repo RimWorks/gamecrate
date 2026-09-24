@@ -9,6 +9,8 @@ import picomatch from 'picomatch'
 import { expandHome } from '../config/load'
 import { GamecrateError, Exit, own } from '../types'
 import { installedItems, parseAcf } from './acf'
+import { capture } from '../docker/run'
+import { imageDigest } from '../launch/prepare'
 import { downloadRoot } from './steamcmd'
 import { contains } from './worktree'
 import type { GamePlugin } from '../plugin'
@@ -143,15 +145,62 @@ async function scanWorkshopRoot(
   }
 }
 
+
+/**
+ * Where Core and the official expansions can be read from. A mounted game has them on disk;
+ * an image-sourced one carries them inside the image, so their manifests are copied out once
+ * per image id. Only the manifests: stage.ts never binds an official mod, the image already
+ * has the files.
+ */
+async function gameDataDir(game: GameConfig): Promise<string | null> {
+  if (game.gameFiles.source === 'mount') {
+    const host = game.gameFiles.host
+    return host === undefined ? null : join(resolvePath(expandHome(host)), 'Data')
+  }
+  const ref = game.image?.ref
+  if (ref === undefined || ref === '') return null
+  const id = await imageDigest(ref)
+  if (id === null) return null
+  const out = join(cacheDir(), 'official', id.replace(/[^A-Za-z0-9]/g, '-'), 'Data')
+  if (!existsSync(out)) await copyOfficialManifests(game, ref, out)
+  return existsSync(out) ? out : null
+}
+
+const MARK = '@@gamecrate@@ '
+
+/** One `sh` and one `cat` per manifest, so a runtime base with nothing else still works. */
+async function copyOfficialManifests(game: GameConfig, ref: string, out: string): Promise<void> {
+  const script = [
+    'for d in ' + game.gameFiles.container + '/Data/*/; do',
+    '  f="${d}' + game.manifest.file + '"',
+    '  [ -f "$f" ] || continue',
+    '  echo "' + MARK + '$(basename "${d%/}")"',
+    '  cat "$f"',
+    'done',
+  ].join('\n')
+
+  const { code, stdout } = await capture(['docker', 'run', '--rm', '--entrypoint', 'sh', ref, '-c', script])
+  if (code !== 0) return
+
+  for (const block of stdout.split(MARK).slice(1)) {
+    const cut = block.indexOf('\n')
+    if (cut === -1) continue
+    const name = block.slice(0, cut).trim()
+    if (name === '' || name.includes('/')) continue
+    const file = join(out, name, game.manifest.file)
+    await mkdir(dirname(file), { recursive: true })
+    await writeFile(file, block.slice(cut + 1))
+  }
+}
+
 /** Core and the official expansions live inside the game install, one level under Data/. */
 async function scanGameData(
   game: GameConfig,
   rootIndex: number,
   found: Candidate[],
 ): Promise<void> {
-  const host = game.gameFiles.host
-  if (game.gameFiles.source !== 'mount' || host === undefined) return
-  const data = join(resolvePath(expandHome(host)), 'Data')
+  const data = await gameDataDir(game)
+  if (data === null) return
   let entries
   try {
     entries = await readdir(data, { withFileTypes: true })

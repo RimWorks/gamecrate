@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -525,6 +525,56 @@ describe('the workshop stamp', () => {
     } finally {
       await rm(data, { recursive: true, force: true })
       await rm(ws, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * An image-sourced game keeps Core and the DLC inside the image, so the index has to read
+ * them out of it. No test combined the two before, and a launch could not resolve its core.
+ */
+describe('official mods from an image', () => {
+  /** A payload file beats a heredoc: no quoting between the fake and what it prints. */
+  async function fakeDocker(out: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'dg-fakedocker-'))
+    const payload = join(dir, 'payload.txt')
+    await writeFile(payload, out)
+    const bin = join(dir, 'docker')
+    await writeFile(
+      bin,
+      ['#!/bin/sh', 'case "$*" in', '  *"image inspect"*) echo sha256:feedface ;;', // absolute: PATH is this dir alone, so cat is not on it
+      `  *) /bin/cat ${payload} ;;`, 'esac', ''].join('\n'),
+    )
+    await chmod(bin, 0o755)
+    return dir
+  }
+
+  const fromImage: GameConfig = {
+    ...(FIXTURE_DEFAULTS as GameConfig),
+    gameFiles: { source: 'image', container: '/game' },
+    image: { ref: 'ghcr.io/me/atlas:1', acquire: 'pull' },
+    core: 'test.core',
+  }
+
+  test('core is read out of the image when there is no host install', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'dg-cache-'))
+    const bin = await fakeDocker('@@gamecrate@@ Core\npackageId test.core\nname Core\n')
+    const path = process.env['PATH']
+    const home = process.env['XDG_CACHE_HOME']
+    process.env['PATH'] = bin
+    process.env['XDG_CACHE_HOME'] = cache
+    try {
+      const index = await buildIndex('atlas', fromImage, plugin)
+      expect(index.byPackageId.has('test.core')).toBe(true)
+      const [record] = index.byPackageId.get('test.core')!
+      expect(record!.kind).toBe('core')
+      expect(record!.dir).toContain('sha256-feedface')
+    } finally {
+      process.env['PATH'] = path
+      if (home === undefined) delete process.env['XDG_CACHE_HOME']
+      else process.env['XDG_CACHE_HOME'] = home
+      await rm(cache, { recursive: true, force: true })
+      await rm(bin, { recursive: true, force: true })
     }
   })
 })

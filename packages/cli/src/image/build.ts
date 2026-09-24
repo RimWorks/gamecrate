@@ -107,6 +107,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     variant: variant.name,
     defaultBranch: branch.name === ctx.defaultBranch,
     defaultVariant: variant.name === ctx.defaultVariant,
+    aliases: branch.tags,
   }
   // the version is unknown before the download, so the gate reads this cell's moving tag
   const probe = tagsFor({ version: '0', ...tagInput })

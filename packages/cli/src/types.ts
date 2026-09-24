@@ -203,6 +203,8 @@ export interface SteamVariant {
 export interface SteamBranch {
   name: string
   password?: boolean
+  /** Extra moving tags for this branch, beside the version and `latest` forms. */
+  tags?: string[]
 }
 
 /** How a plugin's game image gets built from steam. */

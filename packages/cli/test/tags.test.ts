@@ -86,3 +86,26 @@ describe('tagsFor', () => {
     expect(lastVersioned).toBeLessThan(firstLatest)
   })
 })
+
+describe('branch aliases', () => {
+  const base = { version: '2.0.5000', branch: 'beta', variant: 'linux', defaultBranch: false }
+
+  test('an alias adds moving tags beside latest, and never a versioned one', () => {
+    const tags = tagsFor({ ...base, defaultVariant: true, aliases: ['2.0'] })
+    expect(tags).toContain('2.0')
+    expect(tags).toContain('2.0-linux')
+    expect(tags).toContain('latest-beta')
+    expect(tags).not.toContain('2.0.5000-2.0')
+  })
+
+  test('a non-default variant gets the suffixed alias only', () => {
+    const tags = tagsFor({ ...base, variant: 'windows', defaultVariant: false, aliases: ['2.0'] })
+    expect(tags).toContain('2.0-windows')
+    expect(tags).not.toContain('2.0')
+  })
+
+  test('no aliases leaves the tag set alone', () => {
+    const plain = tagsFor({ ...base, defaultVariant: true })
+    expect(tagsFor({ ...base, defaultVariant: true, aliases: [] })).toEqual(plain)
+  })
+})
