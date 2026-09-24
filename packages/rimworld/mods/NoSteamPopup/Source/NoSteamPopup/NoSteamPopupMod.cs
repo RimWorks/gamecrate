@@ -1,4 +1,4 @@
-using System.Reflection;
+using Concord;
 using Verse;
 using Verse.Steam;
 
@@ -8,13 +8,13 @@ public class NoSteamPopupMod : Mod
 {
     public NoSteamPopupMod(ModContentPack content) : base(content)
     {
-        var field = typeof(SteamManager).GetField("initializedInt", BindingFlags.Static | BindingFlags.NonPublic);
-        if (field is null || field.FieldType != typeof(bool))
-        {
-            Log.Warning("[NoSteamPopup] SteamManager.initializedInt is gone; the Steam dialog will still appear.");
-            return;
-        }
-
-        field.SetValue(null, true);
+        Patcher.Apply(typeof(NoSteamPopupMod).Assembly);
     }
+}
+
+[Patch]
+internal abstract class UIRoot_Entry_Patch : UIRoot_Entry
+{
+    [Inject(nameof(UIRoot_Entry.Init), typeof(SteamManager), nameof(SteamManager.Initialized), At.Around)]
+    private bool AlwaysInitialized(Operation<bool> read) => true;
 }
