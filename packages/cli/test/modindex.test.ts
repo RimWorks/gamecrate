@@ -271,8 +271,6 @@ describe('source cache scanning', () => {
   })
 })
 
-// ------------------------------------------------------ the download tree
-
 /** Where downloads land. `run` pins it, so it is one layout whatever steamcmd is used. */
 function downloadTree(dataRoot: string): string {
   return downloadRoot(dataRoot, atlas)

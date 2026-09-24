@@ -5,8 +5,6 @@ import type { GamePlugin } from './plugin'
  * if a signature here is wrong, fix it here rather than working around it locally.
  */
 
-// ---------------------------------------------------------------- exit codes
-
 export const Exit = {
   Ok: 0,
   GameFailed: 1,
@@ -64,8 +62,6 @@ export interface Problem {
   /** Populated by did-you-mean matching where it applies. */
   suggestion?: string
 }
-
-// -------------------------------------------------------------------- config
 
 export type ModeName = 'headed' | 'headless' | 'screenshot'
 export type PullPolicy = 'always' | 'missing' | 'never'
@@ -260,8 +256,6 @@ export interface RootConfig {
   games: Record<string, GameConfig>
 }
 
-// ----------------------------------------------------------------- mod index
-
 export type ModSourceKind = 'local' | 'workshop' | 'official' | 'core'
 
 export interface ModManifest {
@@ -325,8 +319,6 @@ export interface ModIndex {
   problems: Problem[]
 }
 
-// ---------------------------------------------------------------- resolution
-
 /** Why a mod looks stale, in enough detail to name the file that says so. */
 export interface StaleReport {
   /** Mod-relative path of the newest .cs. */
@@ -385,8 +377,6 @@ export interface LaunchPlan {
   warnings: string[]
 }
 
-// -------------------------------------------------------------------- docker
-
 export interface Identity {
   uid: number
   gid: number
@@ -428,8 +418,6 @@ export interface DockerRunSpec {
   command: string[]
   extraArgs: string[]
 }
-
-// ----------------------------------------------------------------------- cli
 
 export interface ParsedArgs {
   subcommand: string

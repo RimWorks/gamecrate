@@ -42,8 +42,6 @@ function excluded(patterns: string[], relativePath: string): boolean {
   return patterns.some((p) => globMatch(p, relativePath) || globMatch(p, `${relativePath}/`))
 }
 
-// ---------------------------------------------------------------------- scan
-
 interface Candidate {
   dir: string
   kind: ModSourceKind
@@ -228,8 +226,6 @@ async function scanGameData(
     found.push({ dir, kind: 'official', rootIndex, linkedWorktree: false })
   }
 }
-
-// --------------------------------------------------------------------- index
 
 const CACHE_VERSION = 4
 
@@ -642,8 +638,6 @@ async function parseAll(
   )
   return records.filter((r): r is ModRecord => r !== null)
 }
-
-// ------------------------------------------------------------------- resolve
 
 /**
  * `path:` and `workshop:` are explicit; a bare string resolves as exact packageId, then the

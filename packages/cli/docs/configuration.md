@@ -206,7 +206,7 @@ Five keys are not flags:
 | Key | What it does |
 | --- | --- |
 | `game` | The game the rest of the file talks about. `profiles`, `settings` and `library` all need it. |
-| `defaultProfile` | The profile to use when you name none. Without it, the first key in `profiles` wins, and with neither, `modless` does. |
+| `defaultProfile` | The profile to use when you name none. Without it, the first key in `profiles` wins. With neither, a launch stops and lists the profiles it knows, rather than guessing. |
 | `profiles` | Profiles for `game`, written exactly like the ones in the global config. |
 | `settings` | A settings block merged into `games.<game>.settings` at load time. |
 | `library` | Mod pins for `game`. [Mod sources](mod-sources.md) explains the entries. |

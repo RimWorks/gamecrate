@@ -304,10 +304,9 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => void>> = {
   },
   '--resolution': (cmd) => {
     cmd.option('--resolution <width>x<height>', 'override the game resolution', parseResolution)
-      // host is what a mod's own server needs: it binds loopback inside the container, and
-      // -p only ever reaches the container's eth0.
   },
   '--network': (cmd) => {
+    // host is what a mod's own server needs: -p only ever reaches the container's eth0
     cmd.addOption(
         enumOption(`--network <${NETWORK_POLICIES.join('|')}>`, "the container's network mode", NETWORK_POLICIES),
       )
@@ -340,9 +339,9 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => void>> = {
   },
   '--no-detach': (cmd) => {
     cmd.option('--no-detach', 'stay in the foreground, whatever the profile or project config asks for')
-      // the re-exec entry point. hidden, so help and completion never offer it.
   },
   '--supervised': (cmd) => {
+    // the re-exec entry point. hidden, so help and completion never offer it
     cmd.addOption(new Option('--supervised <instanceDir>').hideHelp())
   },
   '--sort': (cmd) => {
