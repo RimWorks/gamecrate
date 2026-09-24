@@ -14,6 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        imagemagick \
         libasound2t64 \
         libgl1 \
         libglu1-mesa \
@@ -29,6 +30,7 @@ RUN apt-get update \
         libxrandr2 \
         libxrender1 \
         locales \
+        x11-apps \
         xdotool \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
