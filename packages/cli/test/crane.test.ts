@@ -240,6 +240,30 @@ describe('registry credentials', () => {
     expect(text).not.toContain('hunter2')
   })
 
+  test('an append never logs in, so its public base still pulls anonymously', async () => {
+    const { argvFile } = await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const base = 'ghcr.io/rimworks/gamecrate/runtime-base@sha256:abc'
+    await craneAppend({
+      gameDir,
+      include: [],
+      gamePath: '/game',
+      base,
+      platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1',
+      out: join(await mkdtemp(join(tmp, 'layers-')), 'x.tar'),
+    })
+    expect(await readFile(argvFile, 'utf8')).not.toContain("'crane' 'auth' 'login'")
+    expect(await readFile(argvFile, 'utf8')).toContain(`'-b' '${base}'`)
+
+    await cranePush('/layers/x.tar', 'registry.example.com/me/atlas:1')
+    expect(await readFile(argvFile, 'utf8')).toContain(
+      "'crane' 'auth' 'login' 'registry.example.com'",
+    )
+  })
+
   test('no variables and a plain config mount the config instead', async () => {
     const { argvFile } = await fakeDocker()
     const dir = await dockerConfig({ auths: { 'ghcr.io': { auth: 'x' } } })
@@ -309,6 +333,29 @@ describe('registry credentials', () => {
     expect(thrown?.message).toContain('GAMECRATE_REGISTRY_PASSWORD')
     expect((await runs(argvFile)).length).toBe(0)
   })
+})
+
+describe('the login registry', () => {
+  // proved against real crane: a hub short ref resolves to index.docker.io, not to its first path part
+  const cases: [string, string][] = [
+    ['ghcr.io/me/x', 'ghcr.io'],
+    ['myuser/rimworld', 'index.docker.io'],
+    ['rimworld', 'index.docker.io'],
+    ['localhost:5000/x', 'localhost:5000'],
+    ['localhost/x', 'localhost'],
+    ['registry.example.com:5000/me/x', 'registry.example.com:5000'],
+  ]
+  for (const [ref, registry] of cases) {
+    test(`${ref} logs in to ${registry}`, async () => {
+      const { argvFile } = await fakeDocker()
+      process.env.GAMECRATE_REGISTRY_USER = 'me'
+      process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+      await cranePush('/layers/x.tar', ref)
+      expect(await readFile(argvFile, 'utf8')).toContain(
+        `'crane' 'auth' 'login' '${registry}' '-u' 'me' '--password-stdin'`,
+      )
+    })
+  }
 })
 
 describe('cranePush', () => {

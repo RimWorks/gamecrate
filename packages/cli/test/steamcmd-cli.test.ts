@@ -122,6 +122,19 @@ describe('steamBuildCommand', () => {
     }
   })
 
+  test('copies a session out of the user own home into the paths steamcmd reads', async () => {
+    const { config } = tree('from-home')
+    process.env.STEAM_USERNAME = 'tester'
+
+    expect(await build(config)).toBe(Exit.Ok)
+    expect(built.count).toBe(1)
+    // steamcmd runs with HOME=steamHome and the docker runner mounts only that, so a session the
+    // check found in the real home is unusable unless it lands here
+    for (const seeded of sessionPaths(steamHome(config.dataRoot))) {
+      expect(readFileSync(seeded, 'utf8')).toBe('from-home')
+    }
+  })
+
   test('no session anywhere refuses the build instead of letting steamcmd fail', async () => {
     const { config } = tree()
     process.env.STEAM_USERNAME = 'tester'

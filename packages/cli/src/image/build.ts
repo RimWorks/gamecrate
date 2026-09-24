@@ -42,8 +42,8 @@ export interface SteamBuildOptions {
  * never a throw, because a throw would lose the rows for the cells that worked.
  */
 export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions): Promise<CellResult[]> {
-  const branches = narrow(input.branches, opts.onlyBranches, 'branch')
-  const variants = narrow(input.variants, opts.onlyVariants, 'variant')
+  const branches = narrow(input.branches, opts.onlyBranches, 'branch', 'branches')
+  const variants = narrow(input.variants, opts.onlyVariants, 'variant', 'variants')
   // before the first download, and only on a push: a --load build never talks to a registry
   if (opts.push) checkRegistryAuthEarly(input.image)
   // the declared first entry, not the first surviving one: --variant linux-ref never takes :latest
@@ -62,7 +62,12 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   return results
 }
 
-function narrow<T extends { name: string }>(all: T[], only: string[] | undefined, kind: string): T[] {
+function narrow<T extends { name: string }>(
+  all: T[],
+  only: string[] | undefined,
+  kind: string,
+  plural: string,
+): T[] {
   if (only === undefined || only.length === 0) return all
   const known = new Set(all.map((entry) => entry.name))
   const missing = only.filter((name) => !known.has(name))
@@ -70,7 +75,7 @@ function narrow<T extends { name: string }>(all: T[], only: string[] | undefined
     throw new GamecrateError(
       `unknown ${kind} ${missing.join(', ')}`,
       Exit.Usage,
-      `declared ${kind}s: ${all.map((entry) => entry.name).join(', ')}`,
+      `declared ${plural}: ${all.map((entry) => entry.name).join(', ')}`,
     )
   }
   return all.filter((entry) => only.includes(entry.name))
@@ -88,6 +93,11 @@ interface CellContext {
 async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellContext): Promise<CellResult> {
   const { branch, variant } = ctx
   const row = { branch: branch.name, variant: variant.name }
+  // a base: 'none' variant appends onto scratch, so its config carries no architecture and
+  // docker build --label refuses it. it is a registry artifact, and nothing local can run it
+  if (!opts.push && variant.base === 'none') {
+    return { ...row, status: 'skipped', reason: 'reference-only, use --push', tags: [] }
+  }
   const tagInput = {
     branch: branch.name,
     variant: variant.name,
@@ -136,7 +146,8 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
         // only now: a half-pushed build must not move latest
         for (const tag of tags.slice(1)) await craneTag(versioned, tag)
       }
-      if (opts.load) {
+      // base === null only reaches here on --push --load, which the skip above cannot take
+      if (opts.load && base !== null) {
         await dockerLoad(tar, versioned)
         await dockerLabel(versioned, labelsFor(input, ctx, base))
         // off the labelled ref, so a moving tag never points at an unlabelled image

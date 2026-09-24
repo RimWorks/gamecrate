@@ -235,7 +235,40 @@ describe('steamBuild', () => {
     const error = await fails(steamBuild(ONE, { ...opts, onlyVariants: ['macos'] }))
     expect(error.code).toBe(Exit.Usage)
     expect(error.message).toContain('macos')
-    expect(error.detail).toContain('linux, windows, linux-ref')
+    expect(error.detail).toBe('declared variants: linux, windows, linux-ref')
+  })
+
+  test('an unknown branch says branches, not branchs', async () => {
+    const error = await fails(steamBuild(TWO, { ...opts, onlyBranches: ['mybeta'] }))
+    expect(error.code).toBe(Exit.Usage)
+    expect(error.message).toContain('mybeta')
+    expect(error.detail).toBe('declared branches: public, 1.5')
+  })
+
+  test('the default --load run skips a base: none variant and loads the rest', async () => {
+    const results = await steamBuild(ONE, { ...opts, push: false, load: true })
+    expect(results.map((r) => `${r.variant} ${r.status}`)).toEqual([
+      'linux built',
+      'windows built',
+      'linux-ref skipped',
+    ])
+    const ref = byVariant(results, 'linux-ref')
+    expect(ref.reason).toBe('reference-only, use --push')
+    expect(ref.tags).toEqual([])
+    // nothing appended for it either: a tar it cannot load is a game-sized write for no one
+    expect(state.calls.filter((c) => c.startsWith('append'))).toHaveLength(2)
+    expect(state.calls.filter((c) => c === 'docker load')).toHaveLength(2)
+    expect(state.calls.filter((c) => c === 'docker build')).toHaveLength(2)
+    expect(state.local.has(`${IMAGE}:1.6.4871-linux-ref`)).toBe(false)
+  })
+
+  test('--push --load still pushes a base: none variant, and never loads it', async () => {
+    const results = await steamBuild(ONE, { ...opts, push: true, load: true, onlyVariants: ['linux-ref'] })
+    expect(byVariant(results, 'linux-ref').status).toBe('built')
+    expect(state.calls).toContain('push')
+    expect(state.calls).toContain('mutate')
+    expect(state.calls).not.toContain('docker load')
+    expect(state.calls).not.toContain('docker build')
   })
 
   test('--load labels the versioned tag, tags the rest off it, and never touches a registry', async () => {

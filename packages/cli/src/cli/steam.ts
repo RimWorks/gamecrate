@@ -35,6 +35,14 @@ export function findSession(home: string): string | undefined {
   return sessionPaths(home).find((path) => existsSync(path))
 }
 
+/** which layout steamcmd reads depends on which steamcmd runs, so seed all of them */
+function seedSession(home: string, body: Buffer): void {
+  for (const path of sessionPaths(home)) {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, body)
+  }
+}
+
 /**
  * STEAM_CONFIG_VDF, then the file `steam login` wrote, then a hand-primed session in the user's
  * own home. An expired session reports as a missing one: from out here the two files look identical.
@@ -43,18 +51,17 @@ export function resolveSession(config: RootConfig, env: Record<string, string | 
   const home = steamHome(config.dataRoot)
   const raw = env['STEAM_CONFIG_VDF']
   if (raw !== undefined && raw !== '') {
-    // which layout steamcmd reads depends on which steamcmd runs, so seed all of them
-    const body = Buffer.from(raw, 'base64')
-    for (const path of sessionPaths(home)) {
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, body)
-    }
+    seedSession(home, Buffer.from(raw, 'base64'))
     return sessionPaths(home)[0] as string
   }
   const mine = findSession(home)
   if (mine !== undefined) return mine
   const fallback = findSession(homedir())
-  if (fallback !== undefined) return fallback
+  if (fallback !== undefined) {
+    // steamcmd runs with HOME=steamHome, and the docker runner mounts only that
+    seedSession(home, readFileSync(fallback))
+    return fallback
+  }
   throw new GamecrateError(
     'no steam session found',
     Exit.Environment,
@@ -68,7 +75,7 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
 
   // both up front: steamcmd's own words for a missing session or account are far worse than these,
   // and by the time it says them a multi-gigabyte download has already started
-  resolveSession(ctx.config)
+  status(`steam session from ${resolveSession(ctx.config)}`)
   steamAccount(ctx.config.dataRoot)
 
   const push = args.push === true

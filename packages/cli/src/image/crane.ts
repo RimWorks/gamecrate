@@ -75,9 +75,19 @@ export function checkRegistryAuthEarly(ref: string): void {
   )
 }
 
-/** Everything before the first slash, which is the registry crane logs in to. */
+/** What crane resolves a ref carrying no registry to. `crane auth login` normalizes this. */
+const DOCKER_HUB = 'index.docker.io'
+
+/**
+ * The registry crane logs in to. A head is a hostname only with a '.' or ':' in it, or exactly
+ * 'localhost'; anything else is a hub short name, and `myuser/x` would log in to a host `myuser`.
+ */
 function registryOf(ref: string): string {
-  return ref.split('/')[0] as string
+  const slash = ref.indexOf('/')
+  if (slash === -1) return DOCKER_HUB
+  const head = ref.slice(0, slash)
+  if (head === 'localhost' || head.includes('.') || head.includes(':')) return head
+  return DOCKER_HUB
 }
 
 /** --user maps the host owner onto the bind, or the tar comes back root-owned. */
@@ -186,11 +196,13 @@ export async function craneAppend(opts: {
     '-o',
     opts.out,
   ]
-  const argv = craneArgv(
-    [`${opts.gameDir}:${stage}:ro`, `${outDir}:${outDir}`],
-    opts.base,
-    [tar, append, ['rm', '-f', layer]],
-  )
+  // null, never opts.base: this touches no push target, and a login here would write the push
+  // credentials into the base's registry and break the anonymous pull that follows
+  const argv = craneArgv([`${opts.gameDir}:${stage}:ro`, `${outDir}:${outDir}`], null, [
+    tar,
+    append,
+    ['rm', '-f', layer],
+  ])
   await runOnce(argv, `crane append for ${opts.out}`)
 }
 
