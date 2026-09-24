@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { capture } from '../docker/run'
+import { status, waitNotice, warn } from '../cli/output'
+import { capture, captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 
 /** The debug tag, because the default one has no shell and the tar step needs one. */
@@ -166,6 +167,45 @@ async function runOnce(argv: string[], what: string): Promise<void> {
   throw new GamecrateError(`${what} failed`, Exit.Environment, `${stdout}\n${stderr}`.trim())
 }
 
+const HEARTBEAT_MS = 1000
+
+/**
+ * Streamed, and ticking while it streams: crane prints nothing of its own, so on a two gigabyte
+ * tar the elapsed line is all that separates slow from stuck.
+ */
+async function live(argv: string[], what: string): Promise<{ code: number; text: string }> {
+  const since = Date.now()
+  let lastNotice = 0
+  const timer = setInterval(() => {
+    const waited = Date.now() - since
+    const notice = waitNotice(waited, lastNotice)
+    if (notice === undefined) return
+    lastNotice = waited
+    status(`${what} (${notice})`)
+  }, HEARTBEAT_MS)
+  try {
+    // captureLive rejects when the spawn itself fails, where capture answered 127
+    return await captureLive(argv).catch((error: unknown) => ({
+      code: 127,
+      text: error instanceof Error ? error.message : String(error),
+    }))
+  } finally {
+    clearInterval(timer)
+  }
+}
+
+/** For the calls that run for minutes. The output goes to the terminal and into the failure. */
+async function runLive(argv: string[], what: string): Promise<void> {
+  const { code, text } = await live(argv, what)
+  if (code === 0) return
+  throw new GamecrateError(`${what} failed`, Exit.Environment, text.trim())
+}
+
+/** The registry's own complaint, for a retry line that has to fit on one. */
+function lastLine(text: string): string {
+  return text.split('\n').map((l) => l.trim()).filter((l) => l !== '').at(-1) ?? 'no output'
+}
+
 export async function craneAppend(opts: {
   gameDir: string
   /** Subpaths to include. Empty means the whole game. */
@@ -230,7 +270,7 @@ export async function craneAppend(opts: {
     append,
     ['rm', '-f', layer],
   ])
-  await runOnce(argv, `crane append for ${opts.out}`)
+  await runLive(argv, `crane append for ${opts.out}`)
 }
 
 /** The one call that retries. A 502 from a registry should not cost a two gigabyte download. */
@@ -239,11 +279,15 @@ export async function cranePush(tar: string, ref: string): Promise<void> {
   checkRegistryAuthEarly(ref)
   const argv = craneArgv([`${dir}:${dir}:ro`], ref, [['crane', 'push', tar, ref]])
   let last = ''
+  status(`pushing ${tar} to ${ref}`)
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    const { code, stdout, stderr } = await capture(argv)
+    const { code, text } = await live(argv, `crane push ${ref}`)
     if (code === 0) return
-    last = `${stdout}\n${stderr}`.trim()
-    if (attempt + 1 < ATTEMPTS) await sleep(RETRY_DELAY_MS)
+    last = text.trim()
+    if (attempt + 1 < ATTEMPTS) {
+      warn(`push attempt ${attempt + 1} of ${ATTEMPTS} failed: ${lastLine(last)}. retrying`)
+      await sleep(RETRY_DELAY_MS)
+    }
   }
   throw new GamecrateError(`crane push failed for ${ref}`, Exit.Environment, last)
 }

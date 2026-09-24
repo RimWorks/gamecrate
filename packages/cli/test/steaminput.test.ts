@@ -71,6 +71,24 @@ describe('branchPassword', () => {
     expect(branchPassword({ name: 'public' })).toBeUndefined()
   })
 
+  test('a keyed variable answers for a branch that never declared password: true', () => {
+    process.env.STEAM_BRANCH_PASSWORD_BETA = 'keyed'
+    expect(branchPassword({ name: 'beta' })).toBe('keyed')
+  })
+
+  test('an empty keyed variable falls through to the bare one', () => {
+    process.env.STEAM_BRANCH_PASSWORD_UNSTABLE = ''
+    process.env.STEAM_BRANCH_PASSWORD = 'bare'
+    expect(branchPassword({ name: 'unstable', password: true })).toBe('bare')
+  })
+
+  // the bare variable applies to every branch in a build, so it stays behind password: true.
+  // the keyed one names its branch, so it cannot land on the wrong one.
+  test('the bare variable alone never answers for an undeclared branch', () => {
+    process.env.STEAM_BRANCH_PASSWORD = 'bare'
+    expect(branchPassword({ name: 'beta' })).toBeUndefined()
+  })
+
   test('the keyed variable wins over the bare one', () => {
     process.env.STEAM_BRANCH_PASSWORD_1_5_TEST = 'keyed'
     process.env.STEAM_BRANCH_PASSWORD = 'bare'

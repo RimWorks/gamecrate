@@ -57,11 +57,43 @@ async function fakeDocker(): Promise<{ argvFile: string }> {
   return { argvFile }
 }
 
+/** The fixture fake behind a pause, so the contract check still runs after a slow docker. */
+async function slowDocker(seconds: number): Promise<void> {
+  const dir = await mkdtemp(join(tmp, 'slow-'))
+  const path = join(dir, 'docker')
+  // absolute: PATH is this dir alone, so sleep is not on it
+  await writeFile(path, `#!/bin/sh\n/bin/sleep ${seconds}\nexec ${FAKE} "$@"\n`)
+  await chmod(path, 0o755)
+  process.env.PATH = dir
+}
+
 /** Writes a config.json into the DOCKER_CONFIG dir the current test is using. */
 async function dockerConfig(body: unknown): Promise<string> {
   const dir = process.env.DOCKER_CONFIG as string
   await writeFile(join(dir, 'config.json'), JSON.stringify(body))
   return dir
+}
+
+/**
+ * Everything the tool wrote to the terminal while fn ran, both streams. status() and warn() use
+ * stderr, and a streamed child writes wherever captureLive sends it.
+ */
+async function onTerminal<T>(fn: () => Promise<T>): Promise<{ result: T; text: string }> {
+  const chunks: string[] = []
+  const write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    return true
+  }) as typeof process.stdout.write
+  const stdout = process.stdout.write
+  const stderr = process.stderr.write
+  process.stdout.write = write
+  process.stderr.write = write
+  try {
+    return { result: await fn(), text: chunks.join('') }
+  } finally {
+    process.stdout.write = stdout
+    process.stderr.write = stderr
+  }
 }
 
 /** Each recorded run, split into argv. The script inside one argv folds into the same array. */
@@ -204,6 +236,83 @@ describe('craneAppend', () => {
     expect(script).toContain(`${a}.layer.tar`)
     expect(script).toContain(`${b}.layer.tar`)
     expect(script).not.toContain(join(outDir, '.layer.tar'))
+  })
+})
+
+describe('what the long calls say while they run', () => {
+  test('an append writes the container output to the terminal and still keeps it', async () => {
+    await fakeDocker()
+    process.env.FAKE_FAIL_FIRST = '1'
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const out = join(await mkdtemp(join(tmp, 'layers-')), 'x.tar')
+    const { result, text } = await onTerminal(async (): Promise<GamecrateError | undefined> => {
+      try {
+        await craneAppend({
+          gameDir,
+          include: [],
+          gamePath: '/game',
+          base: null,
+          platform: 'linux/amd64',
+          tag: 'ghcr.io/me/atlas:1',
+          out,
+        })
+        return undefined
+      } catch (error) {
+        return error as GamecrateError
+      }
+    })
+    expect(text).toContain('fake: 502 from the registry')
+    expect(result?.detail).toContain('fake: 502 from the registry')
+  })
+
+  test('a retrying push names the attempt and the registry complaint', async () => {
+    const { argvFile } = await fakeDocker()
+    process.env.FAKE_FAIL_FIRST = '1'
+    const { text } = await onTerminal(() => cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871'))
+    expect(text).toContain('ghcr.io/me/atlas:1.6.4871')
+    expect(text).toContain('push attempt 1 of 3 failed: fake: 502 from the registry')
+    expect(text).toContain('retrying')
+    expect((await runs(argvFile)).length).toBe(2)
+  })
+
+  test('an append with nothing to print still says how long it has been running', async () => {
+    await fakeDocker()
+    await slowDocker(2.5)
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const out = join(await mkdtemp(join(tmp, 'layers-')), 'slow.tar')
+    const { text } = await onTerminal(() =>
+      craneAppend({
+        gameDir,
+        include: [],
+        gamePath: '/game',
+        base: null,
+        platform: 'linux/amd64',
+        tag: 'ghcr.io/me/atlas:1',
+        out,
+      }),
+    )
+    expect(text).toContain(`crane append for ${out} (2s)`)
+  })
+
+  test('no docker on PATH is still an environment error, not a raw spawn reject', async () => {
+    await fakeDocker()
+    process.env.PATH = await mkdtemp(join(tmp, 'empty-'))
+    let thrown: GamecrateError | undefined
+    try {
+      await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Environment)
+    expect(thrown?.detail).toContain('ENOENT')
+  })
+
+  test('craneLabels keeps its json off the terminal, since a caller parses it', async () => {
+    await fakeDocker()
+    process.env.FAKE_CONFIG_JSON = '{"config":{"Labels":{"steam.buildid":"19283746"}}}'
+    const { result, text } = await onTerminal(() => craneLabels('ghcr.io/me/atlas:1.6.4871'))
+    expect(result).toEqual({ 'steam.buildid': '19283746' })
+    expect(text).not.toContain('19283746')
   })
 })
 

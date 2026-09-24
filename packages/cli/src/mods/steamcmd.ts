@@ -8,6 +8,7 @@ import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { expandHome } from '../config/load'
+import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig } from '../types'
 import { lockDir } from './source'
@@ -230,6 +231,24 @@ function run(runner: SteamcmdRunner, game: GameConfig, dataRoot: string, ids: st
   ], runner)
 }
 
+/**
+ * spawnSteamcmd, but the caller watches it work. A game download runs for twenty minutes and
+ * steamcmd prints a percentage the whole time, which a captured spawn swallows until it exits.
+ */
+async function spawnSteamcmdLive(argv: string[], runner: SteamcmdRunner): Promise<string> {
+  let text: string
+  try {
+    ({ text } = await captureLive(argv, { ...process.env, ...runner.env }))
+  } catch (error) {
+    throw new GamecrateError(
+      `could not run steamcmd: ${argv[0]}`,
+      Exit.Environment,
+      error instanceof Error ? error.message : String(error),
+    )
+  }
+  return text.replace(ANSI, '')
+}
+
 /** argv already carries runner.argv; the runner is here for its env. */
 function spawnSteamcmd(argv: string[], runner: SteamcmdRunner): string {
   const r = spawnSync(argv[0] as string, argv.slice(1), {
@@ -261,8 +280,11 @@ export interface AppDownload {
   warnings: string[]
 }
 
-const APP_OK = /Success! App '(\d+)' fully installed/
-const APP_STATE = /Error! App '(\d+)' state is (0x[0-9a-fA-F]+)/
+// a fresh download ends "fully installed", a current one "already up to date". measured
+// 2026-09-24 against app 1007: pinning the first message called the second a missing branch.
+// both are keyed to the requested app, because steamcmd reports the redistributables too
+const appOk = (id: number) => new RegExp(`Success! App '${id}'`)
+const appState = (id: number) => new RegExp(`Error! App '${id}' state is (0x[0-9a-fA-F]+)`)
 // steam's own strings. a stale session is the likeliest first-run failure, and it looks nothing
 // like a bad branch, so it is checked before the branch message
 const LOGIN_FAILED = /Login Failure|FAILED \(Invalid Password\)|Account Logon Denied|Two-factor/i
@@ -308,14 +330,14 @@ export async function downloadApp(config: RootConfig, opts: {
   const release = await lockDir(steamHome(opts.dataRoot))
   let output: string
   try {
-    output = spawnSteamcmd(argv, runner)
+    output = await spawnSteamcmdLive(argv, runner)
   } finally {
     // a failed download must not leave a password behind
     if (script !== undefined) rmSync(script, { force: true })
     await release()
   }
 
-  if (APP_OK.test(output)) return { dir, warnings: [] }
+  if (appOk(opts.steamAppId).test(output)) return { dir, warnings: [] }
   if (LOGIN_FAILED.test(output)) {
     throw new GamecrateError(
       `the steam login failed for ${user}`,
@@ -323,13 +345,13 @@ export async function downloadApp(config: RootConfig, opts: {
       'run `gamecrate steam login` to sign in again, including any steam guard code',
     )
   }
-  const state = APP_STATE.exec(output)
+  const state = appState(opts.steamAppId).exec(output)
   throw new GamecrateError(
     `steamcmd did not install app ${opts.steamAppId} on branch "${opts.branch}"`,
     Exit.Environment,
     state === null
       ? 'the branch may not exist, or the password may be wrong. steam reports both the same way'
-      : `steam left the app in state ${state[2]}. the branch may not exist, or the password may be wrong`,
+      : `steam left the app in state ${state[1]}. the branch may not exist, or the password may be wrong`,
   )
 }
 

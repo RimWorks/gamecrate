@@ -47,6 +47,27 @@ export async function capture(argv: string[]): Promise<{ code: number; stdout: s
   }
 }
 
+/**
+ * Streams a child's output while keeping it, for a caller that parses it too. Both streams as
+ * one string because the parse reads them as one, and to stderr because --json owns stdout.
+ */
+export async function captureLive(
+  argv: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<{ code: number; text: string }> {
+  const proc = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env })
+  const chunks: Buffer[] = []
+  const keep = async (stream: Readable): Promise<void> => {
+    for await (const chunk of stream) {
+      process.stderr.write(chunk as Buffer)
+      chunks.push(chunk as Buffer)
+    }
+  }
+  // awaited with the reads, as capture does: a spawn error rejects instead of going unhandled
+  const [, , code] = await Promise.all([keep(proc.stdout!), keep(proc.stderr!), exited(proc)])
+  return { code, text: Buffer.concat(chunks).toString('utf8') }
+}
+
 /** The tee'd combined stream, and what waitForMarker watches. */
 export const STDOUT_LOG = 'stdout.log'
 

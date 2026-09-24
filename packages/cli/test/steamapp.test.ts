@@ -29,8 +29,10 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.STEAM_USERNAME
   delete process.env.FAKE_APP_STATE
+  delete process.env.FAKE_UP_TO_DATE
   delete process.env.FAKE_LOGIN_FAIL
   delete process.env.FAKE_EXIT
+  delete process.env.FAKE_REDIST
 })
 
 /** A data root of its own, wired to the fake, so the tests never touch steam. */
@@ -47,6 +49,22 @@ async function recordedArgv(root: string): Promise<string[]> {
 /** Any runscript a call left behind. A password still on disk is the bug this all guards. */
 async function leftoverRunscripts(root: string): Promise<string[]> {
   return (await readdir(steamHome(root))).filter((name) => name.startsWith('runscript-'))
+}
+
+/** Everything the tool wrote to the terminal while fn ran. status() writes there too. */
+async function terminal(fn: () => Promise<unknown>): Promise<string> {
+  const written: string[] = []
+  const real = process.stderr.write.bind(process.stderr)
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    return true
+  }) as typeof process.stderr.write
+  try {
+    await fn()
+  } finally {
+    process.stderr.write = real
+  }
+  return written.join('')
 }
 
 describe('appDownloadRoot', () => {
@@ -193,6 +211,44 @@ describe('downloadApp', () => {
     expect(thrown?.message).toContain('login')
     expect(thrown?.message).not.toContain('unstable')
     expect(thrown?.detail).toContain('gamecrate steam login')
+  })
+
+  test('shows what steamcmd printed, and still parses it', async () => {
+    const { root, cfg } = await fake()
+    let out = ''
+    const shown = await terminal(async () => {
+      out = (await downloadApp(cfg, { steamAppId: 294100, branch: '1.5', dataRoot: root })).dir
+    })
+    // a 5GB download that prints only once it is finished is the defect this pins
+    expect(shown).toContain("Success! App '294100' fully installed")
+    expect(existsSync(join(out, 'Version.txt'))).toBe(true)
+  })
+
+  test('a tree that is already current is a success, not a missing branch', async () => {
+    const { root, cfg } = await fake()
+    const first = await downloadApp(cfg, { steamAppId: 294100, branch: '1.5', dataRoot: root })
+    process.env.FAKE_UP_TO_DATE = '1'
+    const again = await downloadApp(cfg, { steamAppId: 294100, branch: '1.5', dataRoot: root })
+    expect(again.dir).toBe(first.dir)
+    expect(existsSync(join(again.dir, 'Version.txt'))).toBe(true)
+  })
+
+  test('a redistributable succeeding does not cover the game failing', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_REDIST = '1'
+    process.env.FAKE_APP_STATE = '0x606'
+    await expect(downloadApp(cfg, { steamAppId: 294100, branch: 'unstable', dataRoot: root }))
+      .rejects.toThrow('steamcmd did not install app 294100')
+  })
+
+  test('shows what steamcmd printed when it fails', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_APP_STATE = '0x606'
+    const shown = await terminal(async () => {
+      await expect(downloadApp(cfg, { steamAppId: 294100, branch: 'unstable', dataRoot: root }))
+        .rejects.toThrow()
+    })
+    expect(shown).toContain("Error! App '294100' state is 0x606")
   })
 
   test('no STEAM_USERNAME names the login command', async () => {

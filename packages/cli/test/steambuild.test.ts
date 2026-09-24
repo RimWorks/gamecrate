@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   /** True when the host docker config uses a credential helper the crane container cannot run. */
   credsRefused: false,
   downloads: [] as string[],
+  /** Every status() line, in order. */
+  said: [] as string[],
   /** Every out tar craneAppend was asked for, so a test can prove each one is gone. */
   tars: [] as string[],
   /** The tag the last append wrote into the tar. docker load names the image after it. */
@@ -29,6 +31,18 @@ const state = vi.hoisted(() => ({
   loadedAs: (): string => state.appendTag,
   gameDir: '',
 }))
+
+vi.mock('../src/cli/output', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/cli/output')>()
+  return {
+    ...real,
+    status: (message: string) => {
+      state.said.push(message)
+      // into the same list as the collaborators, so a test can prove a line came first
+      state.calls.push(`say ${message}`)
+    },
+  }
+})
 
 vi.mock('../src/image/crane', () => ({
   CRANE_IMAGE: 'fake/crane',
@@ -76,6 +90,7 @@ vi.mock('../src/mods/steamcmd', async (importOriginal) => {
     publishedBuildId: () => Promise.resolve(state.published),
     downloadApp: (_config: unknown, opts: { branch: string; depot?: string }) => {
       state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
+      state.calls.push(`download ${opts.branch}/${opts.depot ?? 'default'}`)
       return Promise.resolve({ dir: state.gameDir, warnings: [] })
     },
   }
@@ -157,6 +172,7 @@ let opts: SteamBuildOptions
 
 beforeEach(() => {
   state.calls.length = 0
+  state.said.length = 0
   state.downloads.length = 0
   state.tars.length = 0
   state.appendTag = ''
@@ -375,6 +391,52 @@ describe('steamBuild', () => {
     expect(byVariant(results, 'linux').status).toBe('skipped')
     expect(byVariant(results, 'linux').reason).toBe('up-to-date')
     expect(state.calls.filter((c) => c.startsWith('append'))).toHaveLength(0)
+  })
+
+  test('a cell says what it is doing before it downloads, not only after', async () => {
+    await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+    const line = 'say public/linux  downloading 294100 (branch public, depot default)'
+    expect(state.calls).toContain(line)
+    expect(state.calls.indexOf(line)).toBeLessThan(state.calls.indexOf('download public/default'))
+    expect(state.said).toContain(`public/linux  pushing ${IMAGE}:1.6.4871`)
+  })
+
+  test('a skipped cell says its reason at once, not only in the table', async () => {
+    state.labels.set(`${IMAGE}:latest`, { 'steam.buildid': '9999' })
+    const results = await steamBuild(ONE, opts)
+    expect(byVariant(results, 'linux').status).toBe('skipped')
+    expect(state.said[0]).toBe('public/linux  skipped, up-to-date')
+    // before the next cell starts its own work, or it reads as that cell's line
+    expect(state.calls.indexOf('say public/linux  skipped, up-to-date')).toBeLessThan(
+      state.calls.indexOf('download public/windows'),
+    )
+  })
+
+  test('a reference-only skip says so under --load', async () => {
+    await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux-ref'] })
+    expect(state.said).toEqual(['public/linux-ref  skipped, reference-only, use --push'])
+  })
+
+  test('two variants sharing a depot report one download and one reuse', async () => {
+    await steamBuild(ONE, opts)
+    expect(state.said.filter((s) => s.includes('downloading'))).toEqual([
+      'public/linux  downloading 294100 (branch public, depot default)',
+      'public/windows  downloading 294100 (branch public, depot windows)',
+    ])
+    expect(state.said).toContain('public/linux-ref  reusing the public default download')
+    expect(state.downloads).toEqual(['public/default', 'public/windows'])
+  })
+
+  test('the per-cell lines do not replace the table', async () => {
+    const results = await steamBuild(TWO, opts)
+    expect(results.map((r) => `${r.branch}/${r.variant} ${r.status}`)).toEqual([
+      'public/linux built',
+      'public/windows built',
+      'public/linux-ref built',
+      '1.5/linux built',
+      '1.5/windows built',
+      '1.5/linux-ref built',
+    ])
   })
 
   test('the labels carry the buildid, the runtime and the launcher', async () => {

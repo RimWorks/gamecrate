@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { status } from '../cli/output'
 import { capture } from '../docker/run'
 import { downloadApp, publishedBuildId, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
@@ -93,9 +94,12 @@ interface CellContext {
 async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellContext): Promise<CellResult> {
   const { branch, variant } = ctx
   const row = { branch: branch.name, variant: variant.name }
+  // a cell can run for forty minutes, so every decision says itself as it is made
+  const say = (text: string): void => status(`${branch.name}/${variant.name}  ${text}`)
   // a base: 'none' variant appends onto scratch, so its config carries no architecture and
   // docker build --label refuses it. it is a registry artifact, and nothing local can run it
   if (!opts.push && variant.base === 'none') {
+    say('skipped, reference-only, use --push')
     return { ...row, status: 'skipped', reason: 'reference-only, use --push', tags: [] }
   }
   const tagInput = {
@@ -115,10 +119,13 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     labelled: found.buildid,
     force: opts.force,
   })
-  if (!decision.build) return { ...row, status: 'skipped', reason: decision.reason, tags: [] }
+  if (!decision.build) {
+    say(`skipped, ${decision.reason}`)
+    return { ...row, status: 'skipped', reason: decision.reason, tags: [] }
+  }
 
   try {
-    const dir = await download(input, opts, ctx)
+    const dir = await download(input, opts, ctx, say)
     const raw = await readFile(join(dir, input.versionFile), 'utf8')
     const version = sanitizeVersion(raw, ctx.published ?? 'unknown')
     const tags = tagsFor({ ...tagInput, version })
@@ -130,6 +137,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     const base = resolveBase(variant.base, opts.baseOverride)
     const versioned = `${input.image}:${tags[0]!}`
     try {
+      say(`appending onto ${base ?? 'scratch'}`)
       await craneAppend({
         gameDir: dir,
         include: variant.include,
@@ -141,6 +149,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       })
 
       if (opts.push) {
+        say(`pushing ${versioned}`)
         await cranePush(tar, versioned)
         await craneMutateLabels(versioned, labelsFor(input, ctx, base))
         // only now: a half-pushed build must not move latest
@@ -148,6 +157,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       }
       // base === null only reaches here on --push --load, which the skip above cannot take
       if (opts.load && base !== null) {
+        say(`loading ${versioned}`)
         await dockerLoad(tar, versioned)
         await dockerLabel(versioned, labelsFor(input, ctx, base))
         // off the labelled ref, so a moving tag never points at an unlabelled image
@@ -164,10 +174,16 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
 }
 
 /** The cached +app_update for this branch and depot. Two variants on one depot share it. */
-async function download(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellContext): Promise<string> {
+async function download(
+  input: SteamBuildInput,
+  opts: SteamBuildOptions,
+  ctx: CellContext,
+  say: (text: string) => void,
+): Promise<string> {
   const key = ctx.variant.depot ?? 'default'
   let pending = ctx.downloads.get(key)
   if (pending === undefined) {
+    say(`downloading ${input.steamAppId} (branch ${ctx.branch.name}, depot ${key})`)
     pending = downloadApp(opts.config, {
       steamAppId: input.steamAppId,
       branch: ctx.branch.name,
@@ -176,6 +192,8 @@ async function download(input: SteamBuildInput, opts: SteamBuildOptions, ctx: Ce
       dataRoot: opts.config.dataRoot,
     })
     ctx.downloads.set(key, pending)
+  } else {
+    say(`reusing the ${ctx.branch.name} ${key} download`)
   }
   return (await pending).dir
 }

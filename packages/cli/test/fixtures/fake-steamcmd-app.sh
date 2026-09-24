@@ -2,7 +2,7 @@
 # a fake steamcmd for the game-download tests. it records argv, honours +force_install_dir, and
 # answers +app_update or +app_info_print.
 #
-# FAKE_APP_STATE  a state code, which makes +app_update report an error instead of success
+# FAKE_APP_STATE an error state code. FAKE_UP_TO_DATE a tree that needs no transfer
 # FAKE_LOGIN_FAIL one of steam's login failure strings. FAKE_EXIT the exit code
 
 [ -n "$HOME" ] && mkdir -p "$HOME" && printf '%s\n' "$*" > "$HOME/argv.txt"
@@ -72,9 +72,18 @@ if [ -n "$update" ]; then
     printf 'FAKE: no +force_install_dir, refusing to guess a layout\n' >&2
     exit 64
   fi
+  if [ -n "$FAKE_REDIST" ]; then
+    # steamcmd reports the shared redistributables under their own appid, before the game's line
+    printf "Success! App '1007' fully installed.\n"
+  fi
   if [ -n "$FAKE_APP_STATE" ]; then
     printf "Error! App '%s' state is %s after update job.\n" "$appid" "$FAKE_APP_STATE"
     exit "${FAKE_EXIT:-1}"
+  fi
+  if [ -n "$FAKE_UP_TO_DATE" ]; then
+    # steam writes nothing when the tree is already current, it only says so
+    printf "Success! App '%s' already up to date.\n" "$appid"
+    exit "${FAKE_EXIT:-0}"
   fi
   mkdir -p "$install"
   printf '1.6.4871 rev598\n' > "$install/Version.txt"

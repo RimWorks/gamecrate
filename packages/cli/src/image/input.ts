@@ -32,21 +32,23 @@ export function branchPasswordKey(branch: string): string {
 }
 
 /**
- * undefined for a branch that needs no password. Throws Exit.Environment when one does and
- * neither variable is set, naming the exact variable it looked for.
+ * The keyed variable names its branch, so it answers whatever the config says. The bare one hits
+ * every branch in a build, so it stays behind `password: true`.
  */
 export function branchPassword(branch: SteamBranch): string | undefined {
-  if (branch.password !== true) return undefined
   const key = branchPasswordKey(branch.name)
-  const value = process.env[key] ?? process.env.STEAM_BRANCH_PASSWORD
-  if (value === undefined || value === '') {
+  const keyed = process.env[key]
+  if (keyed !== undefined && keyed !== '') return keyed
+  if (branch.password !== true) return undefined
+  const bare = process.env.STEAM_BRANCH_PASSWORD
+  if (bare === undefined || bare === '') {
     throw new GamecrateError(
       `branch "${branch.name}" needs a password and none is set`,
       Exit.Environment,
       `set ${key}, or STEAM_BRANCH_PASSWORD, when you build one branch`,
     )
   }
-  return value
+  return bare
 }
 
 /** A repo with no tag. A tag only exists after the last "/": before it a colon is a port. */
