@@ -21,9 +21,8 @@ if [ -z "${VK_ICD_FILENAMES:-}" ]; then
   export VK_ICD_FILENAMES
 fi
 
-# where a game under wine looks for ffmpeg. Z: is the unix root
-: "${WINEPATH:=Z:\\opt\\ffmpeg}"
-export WINEPATH
+# WINEPATH is the caller's. a mod that needs a windows tool under wine mounts it and passes
+# WINEPATH itself, which docker -e already exports.
 
 mkdir -p "$STEAM_COMPAT_DATA_PATH" "$STEAM_COMPAT_CLIENT_INSTALL_PATH"
 export STEAM_COMPAT_DATA_PATH STEAM_COMPAT_CLIENT_INSTALL_PATH PROTON_DIR DESKTOP

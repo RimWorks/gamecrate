@@ -7,6 +7,8 @@
 # Contains NO game files and is safe to publish publicly.
 FROM ubuntu:24.04
 
+LABEL org.opencontainers.image.source="https://github.com/RimWorks/gamecrate"
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
