@@ -397,6 +397,12 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
     expect(() => checkRegistryAuthEarly('myuser/rimworld:1')).not.toThrow()
   })
 
+  test('a fully-qualified docker.io push reads that same legacy url key', async () => {
+    await fakeDocker()
+    await dockerConfig({ auths: { 'https://index.docker.io/v1/': { auth: 'eDp5' } } })
+    expect(() => checkRegistryAuthEarly('docker.io/myuser/rimworld:1')).not.toThrow()
+  })
+
   test('one variable without the other is refused, not treated as anonymous', async () => {
     const { argvFile } = await fakeDocker()
     process.env.GAMECRATE_REGISTRY_USER = 'me'
@@ -421,6 +427,11 @@ describe('the login registry', () => {
     ['localhost:5000/x', 'localhost:5000'],
     ['localhost/x', 'localhost'],
     ['registry.example.com:5000/me/x', 'registry.example.com:5000'],
+    // `crane auth get docker.io` and `index.docker.io` both return the legacy hub key's creds
+    ['docker.io/me/x', 'index.docker.io'],
+    ['index.docker.io/me/x', 'index.docker.io'],
+    // `crane auth login registry-1.docker.io` writes its own key, so it is a separate registry
+    ['registry-1.docker.io/me/x', 'registry-1.docker.io'],
   ]
   for (const [ref, registry] of cases) {
     test(`${ref} logs in to ${registry}`, async () => {

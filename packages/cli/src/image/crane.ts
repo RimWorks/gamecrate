@@ -62,6 +62,8 @@ function registryOf(ref: string): string {
   const slash = ref.indexOf('/')
   if (slash === -1) return DOCKER_HUB
   const head = ref.slice(0, slash)
+  // crane reads `docker.io` off the hub's own `https://index.docker.io/v1/` key; registry-1 is not
+  if (head === 'docker.io') return DOCKER_HUB
   if (head === 'localhost' || head.includes('.') || head.includes(':')) return head
   return DOCKER_HUB
 }

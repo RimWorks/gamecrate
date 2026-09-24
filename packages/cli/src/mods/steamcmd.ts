@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import {
+  accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync,
+} from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -280,27 +283,35 @@ export async function downloadApp(config: RootConfig, opts: {
   const dir = appDownloadRoot(opts.dataRoot, opts.steamAppId, opts.branch, opts.depot)
   // docker creates a missing bind source as root, and the --user process then cannot write it
   mkdirSync(dir, { recursive: true })
-  const argv = [
-    ...runner.argv,
-    '+@ShutdownOnFailedCommand', '1',
-    '+@NoPromptForPassword', '1',
-    // before +login, or steamcmd applies them to nothing
-    '+force_install_dir', dir,
-    ...platformArgs(opts.depot),
-    '+login', user,
-    '+app_update', String(opts.steamAppId),
-    '-beta', opts.branch,
-    // steamcmd has no stdin or env form for this, so unlike the registry password in crane.ts it
-    // rides the argv and any local user can read it from `ps` while the download runs
-    ...(opts.password === undefined ? [] : ['-betapassword', opts.password]),
-    '+quit',
+  const commands: string[][] = [
+    ['@ShutdownOnFailedCommand', '1'],
+    ['@NoPromptForPassword', '1'],
+    // before login, or steamcmd applies them to nothing
+    ['force_install_dir', dir],
+    ...(opts.depot === undefined ? [] : [['@sSteamCmdForcePlatformType', opts.depot]]),
+    ['login', user],
+    [
+      'app_update', String(opts.steamAppId),
+      '-beta', opts.branch,
+      ...(opts.password === undefined ? [] : ['-betapassword', opts.password]),
+    ],
+    ['quit'],
   ]
+
+  // steamcmd has no stdin or env form for -betapassword, so the password path pays a 0600 file for
+  // the download rather than a line in `ps`. same reason crane.ts keeps one out of a docker argv
+  const script = opts.password === undefined ? undefined : writeRunscript(opts.dataRoot, commands)
+  const argv = script === undefined
+    ? [...runner.argv, ...commands.flatMap((c) => [`+${c[0] as string}`, ...c.slice(1)])]
+    : [...runner.argv, '+runscript', script]
 
   const release = await lockDir(steamHome(opts.dataRoot))
   let output: string
   try {
     output = spawnSteamcmd(argv, runner)
   } finally {
+    // a failed download must not leave a password behind
+    if (script !== undefined) rmSync(script, { force: true })
     await release()
   }
 
@@ -322,9 +333,24 @@ export async function downloadApp(config: RootConfig, opts: {
   )
 }
 
-/** A depot other than the host's needs steamcmd told which platform to fetch. */
-function platformArgs(depot?: string): string[] {
-  return depot === undefined ? [] : ['+@sSteamCmdForcePlatformType', depot]
+/**
+ * The same commands as a file for `+runscript`, created 0600 rather than chmod'd after, so it is
+ * never world-readable for a moment. A value with a space is quoted; steamcmd reads both forms.
+ */
+function writeRunscript(dataRoot: string, commands: string[][]): string {
+  // beside steamHome because the docker runner binds that path and nothing else, so os.tmpdir()
+  // would not exist inside the container
+  const home = steamHome(dataRoot)
+  mkdirSync(home, { recursive: true })
+  const path = join(home, `runscript-${randomBytes(9).toString('hex')}.txt`)
+  const body = commands.map((c) => c.map(quoteIfSpaced).join(' ')).join('\n')
+  writeFileSync(path, `${body}\n`, { mode: 0o600, flag: 'wx' })
+  return path
+}
+
+/** A runscript line splits on whitespace, so only a value holding one needs the quotes. */
+function quoteIfSpaced(arg: string): string {
+  return /\s/.test(arg) ? `"${arg}"` : arg
 }
 
 /** null when steam reports no buildid for that branch. A missing account throws, it is not a null. */

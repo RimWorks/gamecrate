@@ -12,6 +12,17 @@ if [ -n "$FAKE_LOGIN_FAIL" ]; then
   exit "${FAKE_EXIT:-1}"
 fi
 
+# +runscript replaces argv with the file's own lines, the way steamcmd does. the copy and the mode
+# are for the tests that prove a password never reaches the argv above
+script=""; prev=""
+for a in "$@"; do [ "$prev" = "+runscript" ] && script="$a"; prev="$a"; done
+if [ -n "$script" ]; then
+  [ -r "$script" ] || { printf 'FAKE: cannot read runscript %s\n' "$script" >&2; exit 64; }
+  cp "$script" "$HOME/runscript.txt"
+  stat -c %a "$script" > "$HOME/runscript.mode"
+  eval "set -- $(sed 's/^/+/' "$script" | tr '\n' ' ')"
+fi
+
 appid=""
 install=""
 update=""

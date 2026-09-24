@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +44,11 @@ async function recordedArgv(root: string): Promise<string[]> {
   return (await readFile(join(steamHome(root), 'argv.txt'), 'utf8')).trim().split(/\s+/)
 }
 
+/** Any runscript a call left behind. A password still on disk is the bug this all guards. */
+async function leftoverRunscripts(root: string): Promise<string[]> {
+  return (await readdir(steamHome(root))).filter((name) => name.startsWith('runscript-'))
+}
+
 describe('appDownloadRoot', () => {
   test('differs per branch and per depot', () => {
     const a = appDownloadRoot('/data', 294100, 'public', 'linux')
@@ -73,15 +78,51 @@ describe('downloadApp', () => {
     expect(argv[argv.indexOf('-beta') + 1]).toBe('1.5')
   })
 
-  test('sends -betapassword only when a password is given', async () => {
+  test('a branch with no password keeps a plain argv and writes no runscript', async () => {
     const { root, cfg } = await fake()
     await downloadApp(cfg, { steamAppId: 294100, branch: 'public', dataRoot: root })
-    const plain = await readFile(join(steamHome(root), 'argv.txt'), 'utf8')
-    expect(plain).not.toContain('-betapassword')
+    const argv = await readFile(join(steamHome(root), 'argv.txt'), 'utf8')
+    expect(argv).toContain('+app_update 294100')
+    expect(argv).not.toContain('+runscript')
+    expect(argv).not.toContain('-betapassword')
+    expect(await leftoverRunscripts(root)).toEqual([])
+  })
 
-    await downloadApp(cfg, { steamAppId: 294100, branch: 'unstable', password: 'hunter2', dataRoot: root })
-    const withPassword = await recordedArgv(root)
-    expect(withPassword[withPassword.indexOf('-betapassword') + 1]).toBe('hunter2')
+  test('a password rides a runscript, never the argv', async () => {
+    const { root, cfg } = await fake()
+    await downloadApp(cfg, {
+      steamAppId: 294100, branch: 'unstable', depot: 'windows', password: 'hunter2', dataRoot: root,
+    })
+    // `ps` reads this one, which is the whole reason the password is not in it
+    const argv = await readFile(join(steamHome(root), 'argv.txt'), 'utf8')
+    expect(argv).toContain('+runscript')
+    expect(argv).not.toContain('-betapassword')
+    expect(argv).not.toContain('hunter2')
+
+    const script = await readFile(join(steamHome(root), 'runscript.txt'), 'utf8')
+    expect(script).toContain('-beta unstable')
+    expect(script).toContain('-betapassword hunter2')
+    // a @ setting applies to whatever runs after it, here too
+    expect(script.indexOf('@sSteamCmdForcePlatformType')).toBeLessThan(script.indexOf('login'))
+  })
+
+  test('the runscript is 0600, and gone once the download succeeds', async () => {
+    const { root, cfg } = await fake()
+    const out = await downloadApp(cfg, {
+      steamAppId: 294100, branch: 'unstable', password: 'hunter2', dataRoot: root,
+    })
+    expect(existsSync(join(out.dir, 'Version.txt'))).toBe(true)
+    expect((await readFile(join(steamHome(root), 'runscript.mode'), 'utf8')).trim()).toBe('600')
+    expect(await leftoverRunscripts(root)).toEqual([])
+  })
+
+  test('the runscript is gone when steamcmd fails', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_APP_STATE = '0x606'
+    await expect(downloadApp(cfg, {
+      steamAppId: 294100, branch: 'unstable', password: 'hunter2', dataRoot: root,
+    })).rejects.toThrow()
+    expect(await leftoverRunscripts(root)).toEqual([])
   })
 
   test('pins the install dir and the platform before login', async () => {
