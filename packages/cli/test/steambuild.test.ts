@@ -319,7 +319,7 @@ describe('steamBuild', () => {
   })
 
   // a branch that ships a different engine ships a different launcher, and the variant alone
-  // cannot say so: 2.0 is ./RimWorld on linux and AltWin64.exe on windows
+  // cannot say so: the name differs per platform as well as per branch
   test('a branch can override the executable per variant', async () => {
     const renamed = {
       ...ONE,

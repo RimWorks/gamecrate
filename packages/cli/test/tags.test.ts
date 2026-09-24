@@ -154,9 +154,9 @@ describe('automatic version tags', () => {
       version: '2.0.5000', branch: 'beta', variant: 'linux',
       defaultBranch: false, defaultVariant: true,
     })
-    expect(tags).toEqual(expect.arrayContaining(['1-beta', '2.0-beta', '2.0-beta-linux']))
+    expect(tags).toEqual(expect.arrayContaining(['2-beta', '2.0-beta', '2.0-beta-linux']))
     expect(tags).not.toContain('2.0')
-    expect(tags).not.toContain('1')
+    expect(tags).not.toContain('2')
   })
 
   test('a non-default variant gets only the suffixed prefix', () => {
