@@ -20,7 +20,7 @@ import {
 } from '../src/config/load'
 import { parseArgs } from '../src/cli/args'
 import { list } from '../src/cli/list'
-import { profileOf } from '../src/cli/profile'
+import { launchProfile, profileOf } from '../src/cli/profile'
 import { parseJsonc } from '../src/config/jsonc'
 import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
@@ -1962,3 +1962,34 @@ function captureStdout(body: () => void): string {
   }
   return text
 }
+
+describe('launchProfile', () => {
+  const withProfiles = { profiles: { perf: {}, v16: {} } } as unknown as GameConfig
+  const bare = { profiles: {} } as unknown as GameConfig
+  const noFlag = { profile: undefined } as unknown as ParsedArgs
+
+  test('a typed profile wins', () => {
+    expect(launchProfile({ profile: 'typed' } as ParsedArgs, { defaultProfile: 'd' }, withProfiles)).toBe('typed')
+  })
+
+  test('defaultProfile answers when nothing was typed', () => {
+    expect(launchProfile(noFlag, { defaultProfile: 'd' }, withProfiles)).toBe('d')
+    expect(launchProfile(noFlag, { profileOrder: ['first'] }, withProfiles)).toBe('first')
+  })
+
+  // modless drops base and preCore, so falling back to it silently loses every mod
+  test('a game with profiles refuses to guess, and lists them', () => {
+    let thrown: GamecrateError | undefined
+    try {
+      launchProfile(noFlag, {}, withProfiles)
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Usage)
+    expect(thrown?.detail).toContain('perf, v16, modless')
+  })
+
+  test('a game with no profiles has nothing to be ambiguous about', () => {
+    expect(launchProfile(noFlag, {}, bare)).toBe('modless')
+  })
+})

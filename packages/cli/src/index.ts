@@ -9,7 +9,7 @@ import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from
 import { requireGame } from './cli/game'
 import { list } from './cli/list'
 import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
-import { profileOf } from './cli/profile'
+import { launchProfile, profileOf } from './cli/profile'
 import { steamBuildCommand, steamLogin } from './cli/steam'
 import { renderCompletion, renderHelp } from './cli/help'
 import { currentLog, openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, tailArgv, warn } from './cli/output'
@@ -241,7 +241,7 @@ async function run(
   asShell: boolean,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = launchProfile(args, defaults, config.games[game]!)
 
   const gameConfig = withImageOverride(config.games[game]!, imageFor(config.games[game]!, profile, args.image))
   config.games[game] = gameConfig
