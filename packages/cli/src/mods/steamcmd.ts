@@ -290,6 +290,8 @@ export async function downloadApp(config: RootConfig, opts: {
     '+login', user,
     '+app_update', String(opts.steamAppId),
     '-beta', opts.branch,
+    // steamcmd has no stdin or env form for this, so unlike the registry password in crane.ts it
+    // rides the argv and any local user can read it from `ps` while the download runs
     ...(opts.password === undefined ? [] : ['-betapassword', opts.password]),
     '+quit',
   ]

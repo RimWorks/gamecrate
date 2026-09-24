@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
   local: new Map<string, Record<string, string>>(),
   published: null as string | null,
   pushFails: (_ref: string): boolean => false,
+  /** What the registry said. undefined is the no-detail case: crane printed nothing. */
+  pushDetail: undefined as string | undefined,
   /** True when the host docker config uses a credential helper the crane container cannot run. */
   credsRefused: false,
   downloads: [] as string[],
@@ -49,7 +51,10 @@ vi.mock('../src/image/crane', () => ({
   },
   cranePush: (_tar: string, ref: string) => {
     state.calls.push('push')
-    if (state.pushFails(ref)) return Promise.reject(new Error(`the registry refused ${ref}`))
+    // the real one retries, then throws with the registry's own words in the detail
+    if (state.pushFails(ref)) {
+      return Promise.reject(new GamecrateError(`crane push refused ${ref}`, Exit.Environment, state.pushDetail))
+    }
     return Promise.resolve()
   },
   craneMutateLabels: (ref: string, labels: Record<string, string>) => {
@@ -162,6 +167,7 @@ beforeEach(() => {
   state.local.clear()
   state.published = '9999'
   state.pushFails = () => false
+  state.pushDetail = undefined
   opts = { config, push: true, load: false, platform: 'linux/amd64', force: false }
 })
 
@@ -323,6 +329,28 @@ describe('steamBuild', () => {
     expect(results.map((r) => r.status)).toEqual(['built', 'failed', 'built'])
     expect(state.tars).toHaveLength(3)
     expect(state.tars.filter((tar) => existsSync(tar))).toEqual([])
+  })
+
+  test('a failed cell reports the registry text, not only that the push failed', async () => {
+    state.pushFails = (ref) => ref.includes('windows')
+    state.pushDetail = 'UNAUTHORIZED: authentication required\nDENIED: requested access to the resource is denied'
+    const reason = byVariant(await steamBuild(ONE, opts), 'windows').reason
+    expect(reason).toContain('crane push refused')
+    expect(reason).toContain('UNAUTHORIZED: authentication required')
+    // the table is one line per row
+    expect(reason).not.toContain('\n')
+  })
+
+  test('a failure with no detail reads cleanly, with no trailing colon', async () => {
+    state.pushFails = (ref) => ref.includes('windows')
+    expect(byVariant(await steamBuild(ONE, opts), 'windows').reason).toBe(`crane push refused ${IMAGE}:1.6.4871-windows`)
+  })
+
+  test('a cell failing on a missing branch password names the variable to set', async () => {
+    const branches = [{ name: 'unstable', password: true }]
+    const reason = byVariant(await steamBuild({ ...ONE, branches }, opts), 'linux').reason
+    expect(reason).toContain('branch "unstable" needs a password')
+    expect(reason).toContain('STEAM_BRANCH_PASSWORD_UNSTABLE')
   })
 
   test('a credential-helper config refuses the push run before anything downloads', async () => {

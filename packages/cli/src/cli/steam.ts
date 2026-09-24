@@ -17,6 +17,8 @@ export interface SteamContext {
   plugins: Map<string, GamePlugin>
   /** Where a bare plugin specifier resolves from. Injectable so tests need no chdir. */
   cwd: string
+  /** The file loadConfig read, so config.plugins resolves here the way it does there. */
+  configFile?: string
 }
 
 /**
@@ -82,7 +84,13 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
   const load = args.load === true || !push
   // no --plugin has to read as unset, or the @gamecrate/<game> convention never gets a turn
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
-  const input = await resolveSteamBuildInput(game, ctx.config, { image: args.image, plugins, push }, ctx.cwd)
+  const input = await resolveSteamBuildInput(
+    game,
+    ctx.config,
+    { image: args.image, plugins, push },
+    ctx.cwd,
+    ctx.configFile,
+  )
 
   const results = await steamBuild(input, {
     config: ctx.config,

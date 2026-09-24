@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { imageProblem, markerProblem, readImageFacts } from '../launch/image'
+import type { ImageFacts } from '../launch/image'
+import { imageLaunch, imageProblem, markerProblem, readImageFacts } from '../launch/image'
 import type { LaunchPlan, Problem } from '../types'
 import { GamecrateError } from '../types'
 import { resolveIdentity } from './identity'
 import { capture } from './run'
-import { buildRunSpec, waylandSocket, x11Session } from './spec'
+import { buildRunSpec, refuseProtonHeaded, waylandSocket, x11Session } from './spec'
 
 const CDI_SPEC = '/etc/cdi/nvidia.yaml'
 
@@ -83,6 +84,13 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
   if (facts.present) {
     await checkImageRunnable(image.ref, where, plan.game, problems)
     if (problem) problems.push(problem)
+    // same order execute() uses: a marker-first answer asks for a flag the person then has to
+    // keep while they fix the mode, which is the real problem.
+    const mode = protonHeadedProblem(plan, facts, where)
+    if (mode) {
+      problems.push(mode)
+      return
+    }
     // a missing marker is a precondition like any other, and finding it here beats finding it
     // after buildLocalMods has spent minutes compiling assemblies.
     const marker = markerProblem({ game: plan.game, facts, marker: plan.marker })
@@ -122,6 +130,17 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
       ...problem,
       message: `${problem.message}: ${firstLine(remote.stderr) || exitCode(remote.code)}`,
     })
+  }
+}
+
+/** refuseProtonHeaded throws and preflight collects, so catching it keeps one copy of the text. */
+function protonHeadedProblem(plan: LaunchPlan, facts: ImageFacts, where: string): Problem | null {
+  try {
+    refuseProtonHeaded(plan.game, plan.mode, imageLaunch(facts))
+    return null
+  } catch (error) {
+    if (!(error instanceof GamecrateError)) throw error
+    return { where, message: error.message, suggestion: error.detail }
   }
 }
 

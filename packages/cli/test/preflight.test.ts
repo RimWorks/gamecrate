@@ -173,9 +173,25 @@ describe('preflight reports the proton marker refusal', () => {
     })
   })
 
+  // a marker-first order asks for a flag the person then has to keep while they fix the mode.
+  test('a headed proton image names the mode, and says nothing about a marker', async () => {
+    await withImage({ labels: PROTON }, async () => {
+      const problems = await preflight(plan('headed'))
+      expect(problems.some((p) => p.message.includes('only runs offscreen'))).toBe(true)
+      expect(problems.some((p) => p.suggestion?.includes('--marker'))).toBe(false)
+    })
+  })
+
   test('a direct-launcher image with no marker is not a problem', async () => {
     await withImage({ labels: { ...BUILT, 'gamecrate.launcher': 'direct' } }, async () => {
       const problems = await preflight(plan('headless'))
+      expect(problems.some((p) => p.message.includes('proton'))).toBe(false)
+    })
+  })
+
+  test('a headed direct image reports neither the mode nor the marker', async () => {
+    await withImage({ labels: { ...BUILT, 'gamecrate.launcher': 'direct' } }, async () => {
+      const problems = await preflight(plan('headed'))
       expect(problems.some((p) => p.message.includes('proton'))).toBe(false)
     })
   })

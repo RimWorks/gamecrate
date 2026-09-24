@@ -141,7 +141,8 @@ async function dispatch(
       return mods(args, config, plugins, defaults)
     }
     case 'steam': {
-      const ctx = { config, plugins, cwd: process.cwd() }
+      // the same path loadConfig read, so a relative plugin spec resolves the way doctor resolves it
+      const ctx = { config, plugins, cwd: process.cwd(), configFile: await globalConfigPath() }
       if (args.subverb === 'login') return steamLogin(args, ctx)
       return steamBuildCommand(args, ctx)
     }
@@ -538,7 +539,7 @@ async function runWithScreenshot(
 
 async function grabFrame(container: string, plan: LaunchPlan): Promise<string | null> {
   const path = await captureScreenshot(container, plan)
-  if (path === null) warn('screenshot capture failed; is imagemagick in the image?')
+  if (path === null) warn('screenshot capture failed; the capture command printed the reason above')
   else status(`screenshot: ${path}`)
   return path
 }

@@ -51,30 +51,6 @@ function authArgs(): string[] {
   return ['-v', `${dir}:/dockercfg:ro`, '-e', 'DOCKER_CONFIG=/dockercfg']
 }
 
-/**
- * Runs before the first download. A credsStore or credHelpers config holds no credentials and the
- * helper is not in the container, so every crane call goes out anonymous for no visible reason.
- */
-export function checkRegistryAuthEarly(ref: string): void {
-  if (registryCreds() !== null) return
-  const dir = dockerConfigDir()
-  if (dir === undefined) return
-  let parsed: { credsStore?: string; credHelpers?: Record<string, string> }
-  try {
-    parsed = JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')) as typeof parsed
-  } catch {
-    return
-  }
-  const store = parsed.credsStore ?? ''
-  const helpers = Object.keys(parsed.credHelpers ?? {})
-  if (store === '' && helpers.length === 0) return
-  throw new GamecrateError(
-    `no registry credentials for ${ref}`,
-    Exit.Environment,
-    `${join(dir, 'config.json')} stores its credentials in a helper (${store === '' ? helpers.join(', ') : store}) the crane container cannot run. set ${USER_VAR} and ${PASSWORD_VAR}`,
-  )
-}
-
 /** What crane resolves a ref carrying no registry to. `crane auth login` normalizes this. */
 const DOCKER_HUB = 'index.docker.io'
 
@@ -88,6 +64,55 @@ function registryOf(ref: string): string {
   const head = ref.slice(0, slash)
   if (head === 'localhost' || head.includes('.') || head.includes(':')) return head
   return DOCKER_HUB
+}
+
+type AuthEntry = { auth?: string; identitytoken?: string } | null
+
+type DockerConfig = {
+  auths?: Record<string, AuthEntry>
+  credsStore?: string
+  credHelpers?: Record<string, string>
+}
+
+/** docker keys the hub as `https://index.docker.io/v1/`, so a bare host compare misses it. */
+function keyHost(key: string): string {
+  return key.replace(/^https?:\/\//, '').split('/')[0] ?? key
+}
+
+function forRegistry<T>(table: Record<string, T> | undefined, registry: string): T | undefined {
+  for (const [key, value] of Object.entries(table ?? {})) {
+    if (keyHost(key) === registry) return value
+  }
+  return undefined
+}
+
+/**
+ * Runs before the first download. Only a helper covering the push target is a problem: its binary
+ * is not in the crane container, so the push would go out anonymous for no visible reason.
+ */
+export function checkRegistryAuthEarly(ref: string): void {
+  if (registryCreds() !== null) return
+  const dir = dockerConfigDir()
+  if (dir === undefined) return
+  const path = join(dir, 'config.json')
+  let parsed: DockerConfig
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as DockerConfig
+  } catch {
+    return
+  }
+  const registry = registryOf(ref)
+  const entry = forRegistry(parsed.auths, registry)
+  // docker leaves an empty `{}` beside a helper entry, so only a filled field counts
+  if ((entry?.auth ?? entry?.identitytoken ?? '') !== '') return
+  const helper = forRegistry(parsed.credHelpers, registry) ?? parsed.credsStore ?? ''
+  throw new GamecrateError(
+    `no registry credentials for ${registry}`,
+    Exit.Environment,
+    helper === ''
+      ? `${path} has no auths entry for ${registry}. set ${USER_VAR} and ${PASSWORD_VAR}`
+      : `${path} stores ${registry} credentials in a helper (${helper}) the crane container cannot run. set ${USER_VAR} and ${PASSWORD_VAR}`,
+  )
 }
 
 /** --user maps the host owner onto the bind, or the tar comes back root-owned. */

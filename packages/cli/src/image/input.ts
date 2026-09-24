@@ -96,10 +96,14 @@ export async function resolveSteamBuildInput(
   config: RootConfig | null,
   overrides: SteamBuildOverrides,
   cwd: string,
+  configFile?: string,
 ): Promise<SteamBuildInput> {
+  const fromConfig = overrides.plugins === undefined && config?.plugins !== undefined
   const specs = overrides.plugins ?? config?.plugins ?? [`@gamecrate/${game}`]
-  // dirname of this path is cwd, which is where a bare package spec resolves from
-  const plugins = await loadPlugins(specs, join(cwd, '.gamecrate.yaml'))
+  // a config's specs resolve against that config, or doctor and steam build read one line two ways.
+  // --plugin and the convention get cwd: dirname of this path is where a bare package resolves from.
+  const from = fromConfig && configFile !== undefined ? configFile : join(cwd, '.gamecrate.yaml')
+  const plugins = await loadPlugins(specs, from)
   const plugin = plugins.get(game)
   if (plugin === undefined) {
     throw new GamecrateError(

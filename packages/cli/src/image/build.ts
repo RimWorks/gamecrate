@@ -247,6 +247,12 @@ async function dockerTag(from: string, ref: string): Promise<void> {
   }
 }
 
+/**
+ * The detail carries the fix, and without it an auth failure and a 502 read the same. The results
+ * table is one line per row, so a multi-line detail such as crane's own output collapses into one.
+ */
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  const head = error instanceof Error ? error.message : String(error)
+  const detail = error instanceof GamecrateError ? error.detail?.replaceAll(/\s+/g, ' ').trim() : undefined
+  return detail ? `${head}: ${detail}` : head
 }

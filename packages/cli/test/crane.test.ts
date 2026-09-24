@@ -305,7 +305,7 @@ describe('registry credentials', () => {
     expect((await runs(argvFile)).length).toBe(0)
   })
 
-  test('a credHelpers config is refused the same way', async () => {
+  test('a credHelpers entry for the target registry is refused the same way', async () => {
     await fakeDocker()
     await dockerConfig({ credHelpers: { 'ghcr.io': 'pass' } })
     await expect(cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1')).rejects.toThrow(/credentials/)
@@ -318,6 +318,83 @@ describe('registry credentials', () => {
     process.env.GAMECRATE_REGISTRY_USER = 'me'
     process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
     expect(() => checkRegistryAuthEarly('ghcr.io/me/atlas:1')).not.toThrow()
+  })
+})
+
+// Ka's own config: a gcloud helper for an unrelated registry beside a working ghcr.io entry.
+// real crane in the crane image answers `crane auth get ghcr.io` with the token, rc=0.
+const KA_CONFIG = {
+  auths: { 'ghcr.io': { auth: 'YWVxdWFzaTpnaG9fdG9rZW4=' }, 'https://index.docker.io/v1/': {} },
+  credHelpers: { 'us-central1-docker.pkg.dev': 'gcloud' },
+}
+
+describe('checkRegistryAuthEarly picks the target registry, not any helper', () => {
+  test('env vars beat any helper, covered or not', async () => {
+    await fakeDocker()
+    await dockerConfig({ ...KA_CONFIG, credsStore: 'pass' })
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+    expect(() => checkRegistryAuthEarly('ghcr.io/me/atlas:1')).not.toThrow()
+  })
+
+  test('an auths entry passes while a helper for another registry sits beside it', async () => {
+    const { argvFile } = await fakeDocker()
+    await dockerConfig(KA_CONFIG)
+    expect(() => checkRegistryAuthEarly('ghcr.io/rimworks/gamecrate/rimworld:1')).not.toThrow()
+    await cranePush('/layers/x.tar', 'ghcr.io/rimworks/gamecrate/rimworld:1')
+    expect((await runs(argvFile)).length).toBe(1)
+  })
+
+  test('that same config still refuses the registry the helper does cover', async () => {
+    await fakeDocker()
+    await dockerConfig(KA_CONFIG)
+    let thrown: GamecrateError | undefined
+    try {
+      checkRegistryAuthEarly('us-central1-docker.pkg.dev/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.message).toContain('us-central1-docker.pkg.dev')
+    expect(thrown?.message).not.toContain('ghcr.io')
+    expect(thrown?.detail).toContain('gcloud')
+  })
+
+  test('an empty auths entry is not credentials, so the store still refuses', async () => {
+    await fakeDocker()
+    await dockerConfig({ auths: { 'ghcr.io': {} }, credsStore: 'pass' })
+    let thrown: GamecrateError | undefined
+    try {
+      checkRegistryAuthEarly('ghcr.io/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.detail).toContain('(pass)')
+  })
+
+  test('an identitytoken counts as credentials', async () => {
+    await fakeDocker()
+    await dockerConfig({ auths: { 'ghcr.io': { identitytoken: 'tok' } }, credsStore: 'pass' })
+    expect(() => checkRegistryAuthEarly('ghcr.io/me/atlas:1')).not.toThrow()
+  })
+
+  test('an empty config refuses and names the target registry', async () => {
+    await fakeDocker()
+    await dockerConfig({})
+    let thrown: GamecrateError | undefined
+    try {
+      checkRegistryAuthEarly('ghcr.io/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Environment)
+    expect(thrown?.message).toBe('no registry credentials for ghcr.io')
+    expect(thrown?.detail).toContain('no auths entry')
+  })
+
+  test('a hub push reads the legacy url key docker writes', async () => {
+    await fakeDocker()
+    await dockerConfig({ auths: { 'https://index.docker.io/v1/': { auth: 'eDp5' } } })
+    expect(() => checkRegistryAuthEarly('myuser/rimworld:1')).not.toThrow()
   })
 
   test('one variable without the other is refused, not treated as anonymous', async () => {

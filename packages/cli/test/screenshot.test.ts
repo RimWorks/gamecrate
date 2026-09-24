@@ -1,8 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
-import { chmod, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { StdioOptions } from 'node:child_process'
+import { capture } from '../src/docker/run'
+import { CONTAINER_LOG_DIR } from '../src/docker/spec'
+import { RUNTIME_BASE } from '../src/image/base'
 import type { LaunchPlan } from '../src/types'
 
 const shell = vi.hoisted(() => ({ bin: '', out: '', argv: [] as string[] }))
@@ -16,6 +19,8 @@ vi.mock('../src/docker/run', async (importOriginal) => {
     // the fakes, so a binary the image does not ship is genuinely missing.
     spawnArgv: (argv: string[], stdio: StdioOptions) => {
       shell.argv = argv
+      // an empty bin dir means the live test wants a real `docker exec`, not the fakes.
+      if (shell.bin === '') return real.spawnArgv(argv, stdio)
       return spawn('/bin/sh', ['-c', argv[5] ?? ''], {
         stdio,
         env: { PATH: shell.bin, OUT_DIR: shell.out },
@@ -118,4 +123,57 @@ describe('the screenshot fallback', () => {
     }
     expect(errs.join('')).toContain('no imagemagick in the container')
   })
+})
+
+/** Opt-in: the standard suite must never start a container on someone else's machine. */
+const DOCKER_OK = process.env['GAMECRATE_TEST_DOCKER'] === '1'
+
+/** False when docker is missing or the command failed, which skips the container test. */
+async function docker(argv: string[]): Promise<boolean> {
+  return (await capture(['docker', ...argv])).code === 0
+}
+
+/**
+ * The one test in this repo that starts a container, and it is here because --mode screenshot
+ * broke three separate ways with no runnable proof at any point: the packages were missing, then
+ * the fallback called a binary ubuntu does not ship, then xvfb-run's cookie was out of reach.
+ * Every one of those passed the fake-PATH tests above.
+ */
+describe('a real xvfb display', () => {
+  test.skipIf(!DOCKER_OK)('gives up a frame to a plain docker exec', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-shot-live-'))
+    const name = `gamecrate-screenshot-test-${process.pid}`
+    const started = await docker([
+      'run',
+      '--rm',
+      '--detach',
+      '--name',
+      name,
+      '--volume',
+      `${dir}:${CONTAINER_LOG_DIR}`,
+      RUNTIME_BASE.xvfb,
+      'sh',
+      '-c',
+      // xvfb-run must not be pid 1: Xvfb's SIGUSR1 readiness signal never lands if it is.
+      'xvfb-run -a -s "-screen 0 320x240x24" sleep 120 & wait',
+    ])
+    if (!started) return
+
+    try {
+      for (let tries = 0; tries < 30; tries++) {
+        if (await docker(['exec', name, 'sh', '-c', 'ls /tmp/.X11-unix/X*'])) break
+        await new Promise((done) => setTimeout(done, 200))
+      }
+      shell.bin = ''
+      const plan = { game: 'atlas', runDirHost: dir } as unknown as LaunchPlan
+
+      const host = await captureScreenshot(name, plan)
+
+      expect(host).toBe(join(dir, 'atlas.png'))
+      expect((await stat(host!)).size).toBeGreaterThan(0)
+      expect((await readFile(host!)).subarray(1, 4).toString()).toBe('PNG')
+    } finally {
+      await docker(['rm', '--force', name])
+    }
+  }, 60_000)
 })

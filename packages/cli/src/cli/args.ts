@@ -326,7 +326,7 @@ export function buildProgram(): Command {
     .option('--subdir <path>', 'mods add: the mod folder inside the repository')
     .option('--global', 'write to the global config')
     .option('--project', 'write to the project config')
-    .option('--force', 'overwrite an entry that is already there')
+    .option('--force', 'mods add: overwrite an existing entry; steam build: rebuild even when the buildid matches')
     .option('--variant <name>', 'steam build: only this image variant', collect, [])
     .option('--beta <name>', 'steam build: only this steam branch', collect, [])
     .option('--plugin <spec>', 'steam build: an explicit plugin package', collect, [])

@@ -376,6 +376,10 @@ export async function captureScreenshot(container: string, plan: LaunchPlan): Pr
   const script =
     'D=":$(ls /tmp/.X11-unix 2>/dev/null | head -1 | tr -d X)";' +
     ' [ "$D" = ":" ] && { echo "no X socket in the container" >&2; exit 1; };' +
+    // xvfb-run keeps the display's cookie in its own temp dir and exports XAUTHORITY only to
+    // its child. docker exec is not that child, so without this every client is refused.
+    ' X=$(ls -d /tmp/xvfb-run.*/Xauthority 2>/dev/null | head -1);' +
+    ' [ -n "$X" ] && export XAUTHORITY="$X";' +
     // ImageMagick 6 calls it convert, 7 calls it magick. both runtime bases are ubuntu 24.04,
     // which ships 6, but someone can point gamecrate at a base with 7.
     ' M=$(command -v magick || command -v convert);' +

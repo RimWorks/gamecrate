@@ -151,6 +151,44 @@ describe('resolveSteamBuildInput', () => {
     expect(thrown?.code).toBe(Exit.Usage)
   })
 
+  test('a relative spec in a config resolves against the config, not the cwd', async () => {
+    const home = await mkdtemp(join(tmp, 'cfghome-'))
+    const configFile = join(home, 'profiles.json')
+    await writeFile(configFile, JSON.stringify({ plugins: ['./fakeplugin'] }))
+    await writeSteamPlugin(join(home, 'fakeplugin'), 'atlas')
+    // a directory with no plugin anywhere under it, standing in for "run it from somewhere else"
+    const cwd = await mkdtemp(join(tmp, 'elsewhere-'))
+    const config = { dataRoot: join(home, 'data'), plugins: ['./fakeplugin'], games: {} } as unknown as RootConfig
+
+    const input = await resolveSteamBuildInput('atlas', config, {}, cwd, configFile)
+    expect(input.steamAppId).toBe(294100)
+  })
+
+  test('the config-less path still resolves @gamecrate/<game> from the cwd', async () => {
+    const home = await mkdtemp(join(tmp, 'cfgonly-'))
+    const configFile = join(home, 'profiles.json')
+    const cwd = await mkdtemp(join(tmp, 'convention-'))
+    await writeSteamPlugin(join(cwd, 'node_modules', '@gamecrate', 'atlas'), 'atlas')
+    const config = { dataRoot: join(home, 'data'), games: {} } as unknown as RootConfig
+
+    // no plugins key, so the specs came from the convention and belong to where you are standing
+    const input = await resolveSteamBuildInput('atlas', config, {}, cwd, configFile)
+    expect(input.steamAppId).toBe(294100)
+  })
+
+  test('--plugin still resolves from the cwd even when a config lists its own', async () => {
+    const home = await mkdtemp(join(tmp, 'cfgflag-'))
+    const configFile = join(home, 'profiles.json')
+    // the config's plugin declares a different appid, to prove the flag is not resolved against it
+    await writeSteamPlugin(join(home, 'fakeplugin'), 'atlas', 1)
+    const cwd = await mkdtemp(join(tmp, 'flag-'))
+    await writeSteamPlugin(join(cwd, 'fakeplugin'), 'atlas', 294100)
+    const config = { dataRoot: join(home, 'data'), plugins: ['./fakeplugin'], games: {} } as unknown as RootConfig
+
+    const input = await resolveSteamBuildInput('atlas', config, { plugins: ['./fakeplugin'] }, cwd, configFile)
+    expect(input.steamAppId).toBe(294100)
+  })
+
   test('a user branch concatenates here exactly as it does for run', async () => {
     const cwd = await mkdtemp(join(tmp, 'concat-'))
     await writeSteamPlugin(join(cwd, 'node_modules', '@gamecrate', 'atlas'), 'atlas')
