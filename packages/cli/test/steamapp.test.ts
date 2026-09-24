@@ -1,11 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { appDownloadRoot, buildIdFor, downloadApp, publishedBuildId, steamHome } from '../src/mods/steamcmd'
+import {
+  accountFile, appDownloadRoot, buildIdFor, downloadApp, publishedBuildId, steamHome,
+} from '../src/mods/steamcmd'
 import { Exit } from '../src/types'
 import type { GamecrateError, RootConfig } from '../src/types'
 
@@ -27,6 +29,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.STEAM_USERNAME
   delete process.env.FAKE_APP_STATE
+  delete process.env.FAKE_LOGIN_FAIL
   delete process.env.FAKE_EXIT
 })
 
@@ -131,6 +134,26 @@ describe('downloadApp', () => {
     expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
   })
 
+  test.each([
+    'Login Failure',
+    'FAILED (Invalid Password)',
+    'Account Logon Denied',
+    'Two-factor code mismatch',
+  ])('a login failure saying %s blames the login, not the branch', async (line) => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_LOGIN_FAIL = line
+    let thrown: GamecrateError | undefined
+    try {
+      await downloadApp(cfg, { steamAppId: 294100, branch: 'unstable', password: 'x', dataRoot: root })
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Environment)
+    expect(thrown?.message).toContain('login')
+    expect(thrown?.message).not.toContain('unstable')
+    expect(thrown?.detail).toContain('gamecrate steam login')
+  })
+
   test('no STEAM_USERNAME names the login command', async () => {
     const { root, cfg } = await fake()
     delete process.env.STEAM_USERNAME
@@ -160,10 +183,30 @@ describe('publishedBuildId', () => {
     expect(await publishedBuildId(cfg, 294100, 'nosuch')).toBeNull()
   })
 
-  test('no STEAM_USERNAME is null, not a throw', async () => {
+  test('no account anywhere throws what the download throws, never a null', async () => {
     const { cfg } = await fake()
     delete process.env.STEAM_USERNAME
-    expect(await publishedBuildId(cfg, 294100, 'public')).toBeNull()
+    // a null here reads as "steam reported no buildid", which builds and hides the real cause
+    await expect(publishedBuildId(cfg, 294100, 'public'))
+      .rejects.toThrow(/needs a steam account/)
+  })
+
+  test('the account file steam login wrote stands in for STEAM_USERNAME', async () => {
+    const { root, cfg } = await fake()
+    delete process.env.STEAM_USERNAME
+    await mkdir(steamHome(root), { recursive: true })
+    await writeFile(accountFile(root), 'from-login\n')
+    expect(await publishedBuildId(cfg, 294100, 'public')).toBe('111')
+    expect(await recordedArgv(root)).toContain('from-login')
+  })
+
+  test('releases the lock when the spawn fails', async () => {
+    const { root, cfg } = await fake()
+    const broken = join(root, 'broken-steamcmd.sh')
+    await writeFile(broken, '#!/nonexistent/interp\n', { mode: 0o755 })
+    await expect(publishedBuildId({ ...cfg, steamcmd: { path: broken } }, 294100, 'public'))
+      .rejects.toThrow(/could not run steamcmd/)
+    expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
   })
 })
 

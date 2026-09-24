@@ -150,6 +150,21 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     flags: ['--pull'],
   },
   {
+    name: 'steam',
+    summary: 'build a game image from steam, or prime a steam session',
+    usage: 'build <game> | login',
+    positionals: ['game'],
+    subverbs: {
+      build: ['game'],
+      login: [],
+    },
+    flags: [
+      '--variant', '--beta', '--image', '--plugin',
+      '--load', '--push', '--base', '--platform', '--force',
+      '--print', '--username',
+    ],
+  },
+  {
     name: 'shell',
     summary: 'same mounts, bash instead of the game',
     usage: '<game> [profile]',
@@ -312,6 +327,16 @@ export function buildProgram(): Command {
     .option('--global', 'write to the global config')
     .option('--project', 'write to the project config')
     .option('--force', 'overwrite an entry that is already there')
+    .option('--variant <name>', 'steam build: only this image variant', collect, [])
+    .option('--beta <name>', 'steam build: only this steam branch', collect, [])
+    .option('--plugin <spec>', 'steam build: an explicit plugin package', collect, [])
+    .option('--image <ref>', 'steam build: the target repository, without a tag')
+    .option('--load', 'steam build: load the result into the local docker daemon')
+    .option('--push', 'steam build: push the result to a registry')
+    .option('--base <ref>', 'steam build: override the published runtime base')
+    .option('--platform <os/arch>', 'steam build: what the manifest claims', 'linux/amd64')
+    .option('--print', 'steam login: also print the session as base64')
+    .option('--username <name>', 'steam login: skip the account name prompt')
     .option('-h, --help', 'this help')
 
   return program
@@ -425,13 +450,23 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.instance = values['instance'] as string | undefined
   out.build = envBuild ?? policy(values['build'])
   out.cleanTier = log.cleanTier
+  out.variant = values['variant'] as string[]
+  out.branches = values['beta'] as string[]
+  out.plugin = values['plugin'] as string[]
+  out.image = values['image'] as string | undefined
+  out.load = values['load'] === true
+  out.push = values['push'] === true
+  out.base = values['base'] as string | undefined
+  out.platform = values['platform'] as string
+  out.print = values['print'] === true
+  out.username = values['username'] as string | undefined
 
   if (opts.defaults?.game !== undefined) out.game = opts.defaults.game
 
   // --help before completeness, everywhere: you cannot read the help for a verb you already
   // know how to type.
   applyPositionals(out, program.args, opts.games, out.help)
-  if (out.subverb !== undefined && !out.help) {
+  if (out.subcommand === 'mods' && out.subverb !== undefined && !out.help) {
     if (out.subverb === 'add') out.source = modSource(values)
     if (out.subverb !== 'sync') out.target = modTarget(seen, out.subverb)
   }
@@ -529,6 +564,15 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
   if (!help && (out.subverb === 'add' || out.subverb === 'rm')) {
     if (out.game === undefined) throw usage(`mods ${out.subverb} needs a game`)
     if (out.subverb === 'rm' && out.rest.length === 0) throw usage('mods rm needs at least one mod id')
+  }
+
+  // routePositionals falls back to the subcommand's own slots, so an unknown steam subverb would
+  // land in the game slot and fail much later.
+  if (!help && out.subcommand === 'steam') {
+    if (out.subverb === undefined) {
+      throw usage('steam needs a subverb', 'gamecrate steam build <game>, or gamecrate steam login')
+    }
+    if (out.subverb === 'build' && out.game === undefined) throw usage('steam build needs a game')
   }
 
   if (left.length > 0) {

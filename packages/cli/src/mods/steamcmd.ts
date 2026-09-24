@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, mkdirSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -22,6 +22,28 @@ export type SteamcmdRunner =
 /** HOME for steamcmd. Everything it writes hangs off here, so it is per-dataRoot, not the user's. */
 export function steamHome(dataRoot: string): string {
   return join(dataRoot, 'steam')
+}
+
+/** Where `steam login` records the account it signed in with, so a build needs no variable. */
+export function accountFile(dataRoot: string): string {
+  return join(steamHome(dataRoot), 'account')
+}
+
+/**
+ * One answer to "who is logging in": STEAM_USERNAME for CI, else the name `steam login` wrote.
+ * Neither is an error rather than a null, because a null reads downstream as "steam said nothing".
+ */
+export function steamAccount(dataRoot: string): string {
+  const fromEnv = process.env.STEAM_USERNAME
+  if (fromEnv !== undefined && fromEnv !== '') return fromEnv
+  const file = accountFile(dataRoot)
+  const saved = existsSync(file) ? readFileSync(file, 'utf8').trim() : ''
+  if (saved !== '') return saved
+  throw new GamecrateError(
+    'a game download needs a steam account',
+    Exit.Environment,
+    `set STEAM_USERNAME, or run \`gamecrate steam login\` once to record one at ${file}`,
+  )
 }
 
 /**
@@ -238,6 +260,9 @@ export interface AppDownload {
 
 const APP_OK = /Success! App '(\d+)' fully installed/
 const APP_STATE = /Error! App '(\d+)' state is (0x[0-9a-fA-F]+)/
+// steam's own strings. a stale session is the likeliest first-run failure, and it looks nothing
+// like a bad branch, so it is checked before the branch message
+const LOGIN_FAILED = /Login Failure|FAILED \(Invalid Password\)|Account Logon Denied|Two-factor/i
 
 /**
  * A wrong -betapassword and a branch that does not exist look identical from outside: steam
@@ -250,14 +275,7 @@ export async function downloadApp(config: RootConfig, opts: {
   password?: string
   dataRoot: string
 }): Promise<AppDownload> {
-  const user = process.env.STEAM_USERNAME
-  if (user === undefined || user === '') {
-    throw new GamecrateError(
-      'a game download needs a steam account',
-      Exit.Environment,
-      'set STEAM_USERNAME, and run `gamecrate steam login` once to prime the session',
-    )
-  }
+  const user = steamAccount(opts.dataRoot)
   const runner = resolveSteamcmd(config)
   const dir = appDownloadRoot(opts.dataRoot, opts.steamAppId, opts.branch, opts.depot)
   // docker creates a missing bind source as root, and the --user process then cannot write it
@@ -285,6 +303,13 @@ export async function downloadApp(config: RootConfig, opts: {
   }
 
   if (APP_OK.test(output)) return { dir, warnings: [] }
+  if (LOGIN_FAILED.test(output)) {
+    throw new GamecrateError(
+      `the steam login failed for ${user}`,
+      Exit.Environment,
+      'run `gamecrate steam login` to sign in again, including any steam guard code',
+    )
+  }
   const state = APP_STATE.exec(output)
   throw new GamecrateError(
     `steamcmd did not install app ${opts.steamAppId} on branch "${opts.branch}"`,
@@ -300,24 +325,31 @@ function platformArgs(depot?: string): string[] {
   return depot === undefined ? [] : ['+@sSteamCmdForcePlatformType', depot]
 }
 
-/** null when steam reports no buildid for that branch. */
+/** null when steam reports no buildid for that branch. A missing account throws, it is not a null. */
 export async function publishedBuildId(
   config: RootConfig,
   appId: number,
   branch: string,
 ): Promise<string | null> {
-  const user = process.env.STEAM_USERNAME
-  if (user === undefined || user === '') return null
-  const runner = resolveSteamcmd(config)
-  const output = spawnSteamcmd([
-    ...runner.argv,
-    '+@ShutdownOnFailedCommand', '1',
-    '+@NoPromptForPassword', '1',
-    '+login', user,
-    '+app_info_update', '1',
-    '+app_info_print', String(appId),
-    '+quit',
-  ], runner)
+  const user = steamAccount(config.dataRoot)
+  // docker creates a missing bind source as root, and the --user process then cannot write it
+  mkdirSync(steamHome(config.dataRoot), { recursive: true })
+  const release = await lockDir(steamHome(config.dataRoot))
+  let output: string
+  try {
+    const runner = resolveSteamcmd(config)
+    output = spawnSteamcmd([
+      ...runner.argv,
+      '+@ShutdownOnFailedCommand', '1',
+      '+@NoPromptForPassword', '1',
+      '+login', user,
+      '+app_info_update', '1',
+      '+app_info_print', String(appId),
+      '+quit',
+    ], runner)
+  } finally {
+    await release()
+  }
   return buildIdFor(output, branch)
 }
 

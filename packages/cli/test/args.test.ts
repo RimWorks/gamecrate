@@ -1026,3 +1026,54 @@ describe('mods subverbs', () => {
     expect(both.message).toContain('a write lands in one config')
   })
 })
+
+describe('steam', () => {
+  test('build takes a game', () => {
+    const args = parseArgs(['steam', 'build', 'rimworld'], NO_ENV)
+    expect(args.subcommand).toBe('steam')
+    expect(args.subverb).toBe('build')
+    expect(args.game).toBe('rimworld')
+  })
+
+  test('login takes no positional', () => {
+    const args = parseArgs(['steam', 'login'], NO_ENV)
+    expect(args.subverb).toBe('login')
+    expect(args.game).toBeUndefined()
+  })
+
+  test('an unknown subverb lists the ones that exist', () => {
+    const error = fails(['steam', 'frobnify'])
+    expect(error.code).toBe(Exit.Usage)
+    expect(`${error.message} ${error.detail}`).toContain('steam build')
+    expect(`${error.message} ${error.detail}`).toContain('steam login')
+  })
+
+  test('steam build with no game is a usage error', () => {
+    const error = fails(['steam', 'build'])
+    expect(error.code).toBe(Exit.Usage)
+    expect(error.message).toContain('steam build needs a game')
+  })
+
+  test('--variant, --beta and --plugin all repeat', () => {
+    const args = parseArgs(
+      ['steam', 'build', 'rimworld', '--variant', 'linux', '--variant', 'windows',
+       '--beta', 'public', '--beta', '1.5', '--plugin', '@gamecrate/rimworld'],
+      NO_ENV,
+    )
+    expect(args.variant).toEqual(['linux', 'windows'])
+    expect(args.branches).toEqual(['public', '1.5'])
+    expect(args.plugin).toEqual(['@gamecrate/rimworld'])
+  })
+
+  test('--beta leaves the git --branch of mods add alone', () => {
+    const args = parseArgs(
+      ['mods', 'add', 'rimworld', '--git', 'https://x/y.git', '--branch', 'main', '--global'],
+      NO_ENV,
+    )
+    expect(args.source).toEqual({ kind: 'git', url: 'https://x/y.git', ref: { kind: 'branch', value: 'main' } })
+  })
+
+  test('--platform defaults to linux/amd64', () => {
+    expect(parseArgs(['steam', 'build', 'rimworld'], NO_ENV).platform).toBe('linux/amd64')
+  })
+})

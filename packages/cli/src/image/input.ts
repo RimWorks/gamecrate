@@ -58,6 +58,26 @@ function repoOf(ref: string): string {
 }
 
 /**
+ * `configured` is --image if given, else the config's ref. --load gets a default because a local
+ * build has no registry to name; --push refuses, because a guessed path pushes to the wrong account.
+ */
+export function resolveImage(
+  flags: { load: boolean; push: boolean },
+  game: string,
+  configured: string | undefined,
+): string {
+  if (configured !== undefined) return repoOf(configured)
+  if (flags.push) {
+    throw new GamecrateError(
+      '--push needs a target repository',
+      Exit.Usage,
+      `pass --image <repo>, or set games.${game}.image.ref in a config file`,
+    )
+  }
+  return `gamecrate/${game}-game`
+}
+
+/**
  * The loader's merge, over one game. `steamBuild.branches` concatenates there and replaces in
  * deepMerge, so calling deepMerge here would give `steam build` a different branch set than `run`.
  */
@@ -102,16 +122,8 @@ export async function resolveSteamBuildInput(
     return value
   }
 
-  const configured = merged.image?.ref === undefined ? undefined : repoOf(merged.image.ref)
-  const image =
-    overrides.image ?? configured ?? (overrides.push === true ? undefined : `gamecrate/${game}-game`)
-  if (image === undefined) {
-    throw new GamecrateError(
-      '--push needs a target repo',
-      Exit.Usage,
-      `pass --image <repo>, or set games.${game}.image.ref in a config`,
-    )
-  }
+  const push = overrides.push === true
+  const image = resolveImage({ load: !push, push }, game, overrides.image ?? merged.image?.ref)
 
   return {
     game,

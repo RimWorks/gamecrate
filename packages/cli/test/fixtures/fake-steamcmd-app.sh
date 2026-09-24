@@ -3,9 +3,14 @@
 # answers +app_update or +app_info_print.
 #
 # FAKE_APP_STATE  a state code, which makes +app_update report an error instead of success
-# FAKE_EXIT       exit code
+# FAKE_LOGIN_FAIL one of steam's login failure strings. FAKE_EXIT the exit code
 
 [ -n "$HOME" ] && mkdir -p "$HOME" && printf '%s\n' "$*" > "$HOME/argv.txt"
+
+if [ -n "$FAKE_LOGIN_FAIL" ]; then
+  printf 'Logging in user "tester" to Steam Public...\n%s\n' "$FAKE_LOGIN_FAIL"
+  exit "${FAKE_EXIT:-1}"
+fi
 
 appid=""
 install=""

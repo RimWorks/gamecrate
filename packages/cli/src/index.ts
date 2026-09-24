@@ -10,6 +10,7 @@ import { requireGame } from './cli/game'
 import { list } from './cli/list'
 import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
 import { profileOf } from './cli/profile'
+import { steamBuildCommand, steamLogin } from './cli/steam'
 import { renderCompletion, renderHelp } from './cli/help'
 import { currentLog, openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, tailArgv, warn } from './cli/output'
 import {
@@ -138,6 +139,11 @@ async function dispatch(
       if (args.subverb === 'rm') return modsRm(args, ctx)
       if (args.subverb === 'sync') return modsSync(args, ctx)
       return mods(args, config, plugins, defaults)
+    }
+    case 'steam': {
+      const ctx = { config, plugins, cwd: process.cwd() }
+      if (args.subverb === 'login') return steamLogin(args, ctx)
+      return steamBuildCommand(args, ctx)
     }
     case 'doctor':
       return doctor(config, plugins)

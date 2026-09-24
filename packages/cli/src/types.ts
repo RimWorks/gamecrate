@@ -471,8 +471,20 @@ export interface ParsedArgs {
   supervised: boolean
   /** `-f`: keep printing as the run writes, instead of dumping what is there. */
   follow: boolean
-  /** The write verb under `mods`. Unset means the read verb. */
-  subverb?: 'add' | 'rm' | 'sync'
+  /** The write verb under `mods`, or the verb under `steam`. Unset means the read verb. */
+  subverb?: 'add' | 'rm' | 'sync' | 'build' | 'login'
+  /** `steam build`: repeatable filters on the two axes. */
+  variant?: string[]
+  branches?: string[]
+  /** Repeatable plugin package specifiers. */
+  plugin?: string[]
+  image?: string
+  load?: boolean
+  push?: boolean
+  base?: string
+  platform?: string
+  print?: boolean
+  username?: string
   /** Where `mods add` pulls the mod from. */
   source?:
     | { kind: 'path'; value: string }
@@ -495,6 +507,8 @@ export type ProjectDefaults = Partial<
     ParsedArgs,
     | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
     | 'noDetach' | 'noReplace' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
+    | 'variant' | 'branches' | 'plugin' | 'image' | 'load' | 'push' | 'base'
+    | 'platform' | 'print' | 'username'
   >
 > & {
   /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
@@ -514,7 +528,7 @@ export type ProjectDefaults = Partial<
 export const RESERVED_NAMES: readonly string[] = [
   'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
-  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync',
+  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login',
 ]
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

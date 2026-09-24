@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { capture } from '../src/docker/run'
 import {
   CRANE_IMAGE,
+  checkRegistryAuthEarly,
   craneAppend,
   craneLabels,
   craneMutateLabels,
@@ -34,9 +36,15 @@ afterEach(() => {
   delete process.env.FAKE_CONFIG_JSON
   delete process.env.FAKE_FAIL_FIRST
   delete process.env.FAKE_EXIT
+  delete process.env.DOCKER_CONFIG
+  delete process.env.GAMECRATE_REGISTRY_USER
+  delete process.env.GAMECRATE_REGISTRY_PASSWORD
 })
 
-/** The fake on PATH under the name docker, plus the file it records into. */
+/**
+ * The fake on PATH under the name docker, plus the file it records into. DOCKER_CONFIG points
+ * at an empty dir, so the run's own docker login never changes what these tests see.
+ */
 async function fakeDocker(): Promise<{ argvFile: string }> {
   const dir = await mkdtemp(join(tmp, 'bin-'))
   await copyFile(FAKE, join(dir, 'docker'))
@@ -45,20 +53,29 @@ async function fakeDocker(): Promise<{ argvFile: string }> {
   await writeFile(argvFile, '')
   process.env.FAKE_ARGV_FILE = argvFile
   process.env.PATH = dir
+  process.env.DOCKER_CONFIG = await mkdtemp(join(tmp, 'dockercfg-'))
   return { argvFile }
 }
 
-/** Each recorded run, split into argv. */
+/** Writes a config.json into the DOCKER_CONFIG dir the current test is using. */
+async function dockerConfig(body: unknown): Promise<string> {
+  const dir = process.env.DOCKER_CONFIG as string
+  await writeFile(join(dir, 'config.json'), JSON.stringify(body))
+  return dir
+}
+
+/** Each recorded run, split into argv. The script inside one argv folds into the same array. */
 async function runs(argvFile: string): Promise<string[][]> {
   const text = await readFile(argvFile, 'utf8')
   return text
-    .split('\n')
-    .filter((l) => l !== '')
-    .map((l) => l.split(/\s+/))
+    .split('@@RUN@@')
+    .map((run) => run.trim())
+    .filter((run) => run !== '')
+    .map((run) => run.split(/\s+/))
 }
 
 describe('craneAppend', () => {
-  test('the whole-game case carries both excludes and the dot transform', async () => {
+  test('the whole-game case carries both excludes and tars the staged prefix', async () => {
     const { argvFile } = await fakeDocker()
     const gameDir = await mkdtemp(join(tmp, 'game-'))
     const out = join(await mkdtemp(join(tmp, 'layers-')), 'linux-1.6.4871.tar')
@@ -71,9 +88,10 @@ describe('craneAppend', () => {
       out,
     })
     const script = await readFile(argvFile, 'utf8')
-    expect(script).toContain('--exclude=./steamapps')
-    expect(script).toContain('--exclude=./lost+found')
-    expect(script).toContain('--transform=s,^\\.,game,')
+    expect(script).toContain('--exclude=game/steamapps')
+    expect(script).toContain('--exclude=game/lost+found')
+    expect(script).not.toContain('--transform')
+    expect(script).toContain("'-C' '/stage'")
     expect(script).toContain('-b')
     expect(script).toContain('--platform')
     expect(script).toContain('linux/amd64')
@@ -81,7 +99,7 @@ describe('craneAppend', () => {
     expect(script).toContain(out)
   })
 
-  test('an include list uses the other transform and no excludes', async () => {
+  test('an include list is prefixed by hand and carries no excludes', async () => {
     const { argvFile } = await fakeDocker()
     const gameDir = await mkdtemp(join(tmp, 'game-'))
     await mkdir(join(gameDir, 'Managed'), { recursive: true })
@@ -97,8 +115,9 @@ describe('craneAppend', () => {
       out,
     })
     const script = await readFile(argvFile, 'utf8')
-    expect(script).toContain('--transform=s,^,game/,')
-    expect(script).toContain("'Player Log.txt'")
+    expect(script).not.toContain('--transform')
+    expect(script).toContain("'game/Player Log.txt'")
+    expect(script).toContain("'game/Managed'")
     expect(script).not.toContain('--exclude')
     expect(script).not.toContain("'-b'")
   })
@@ -137,10 +156,125 @@ describe('craneAppend', () => {
       out: join(outDir, 'x.tar'),
     })
     const [argv] = await runs(argvFile)
-    expect(argv).toContain(`${gameDir}:${gameDir}:ro`)
+    expect(argv).toContain(`${gameDir}:/stage/game:ro`)
     expect(argv).toContain(`${outDir}:${outDir}`)
     expect(argv).toContain(CRANE_IMAGE)
     expect(argv![argv!.indexOf(CRANE_IMAGE) - 1]).toBe('sh')
+  })
+
+  test('two appends into one directory use two intermediate tars', async () => {
+    const { argvFile } = await fakeDocker()
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const outDir = await mkdtemp(join(tmp, 'layers-'))
+    const a = join(outDir, 'linux.tar')
+    const b = join(outDir, 'windows.tar')
+    for (const out of [a, b]) {
+      await craneAppend({
+        gameDir,
+        include: [],
+        gamePath: '/game',
+        base: null,
+        platform: 'linux/amd64',
+        out,
+      })
+    }
+    const script = await readFile(argvFile, 'utf8')
+    expect(script).toContain(`${a}.layer.tar`)
+    expect(script).toContain(`${b}.layer.tar`)
+    expect(script).not.toContain(join(outDir, '.layer.tar'))
+  })
+})
+
+describe('the fake docker', () => {
+  test('refuses --transform, so a tar busybox would reject cannot pass here', async () => {
+    await fakeDocker()
+    const { code, stderr } = await capture(['docker', 'run', 'sh', '-c', 'tar --transform=s,x,y,'])
+    expect(code).toBe(1)
+    expect(stderr).toContain('unrecognized option')
+  })
+})
+
+describe('registry credentials', () => {
+  test('both variables set log in on stdin, and the password is in no argv', async () => {
+    const { argvFile } = await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+    await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')
+    const text = await readFile(argvFile, 'utf8')
+    expect(text).toContain("'crane' 'auth' 'login' 'ghcr.io' '-u' 'me' '--password-stdin'")
+    expect(text).toContain('"$GAMECRATE_REGISTRY_PASSWORD"')
+    expect(text).toContain('-e GAMECRATE_REGISTRY_PASSWORD')
+    expect(text).not.toContain('hunter2')
+  })
+
+  test('no variables and a plain config mount the config instead', async () => {
+    const { argvFile } = await fakeDocker()
+    const dir = await dockerConfig({ auths: { 'ghcr.io': { auth: 'x' } } })
+    await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')
+    const [argv] = await runs(argvFile)
+    expect(argv).toContain(`${dir}:/dockercfg:ro`)
+    expect(argv).toContain('DOCKER_CONFIG=/dockercfg')
+    expect(await readFile(argvFile, 'utf8')).not.toContain('auth')
+  })
+
+  test('the login runs for tag, mutate and config too, not just the push', async () => {
+    const { argvFile } = await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+    await craneTag('ghcr.io/me/atlas:1.6.4871', 'latest')
+    await craneMutateLabels('ghcr.io/me/atlas:1.6.4871', { 'steam.buildid': '1' })
+    await craneLabels('ghcr.io/me/atlas:1.6.4871')
+    const recorded = await runs(argvFile)
+    expect(recorded.length).toBe(3)
+    for (const argv of recorded) {
+      expect(argv.join(' ')).toContain("'crane' 'auth' 'login' 'ghcr.io' '-u' 'me'")
+      expect(argv).toContain('DOCKER_CONFIG=/tmp/gamecrate-docker')
+    }
+  })
+
+  test('a credsStore config with no variables is refused before the push', async () => {
+    const { argvFile } = await fakeDocker()
+    await dockerConfig({ credsStore: 'pass' })
+    let thrown: GamecrateError | undefined
+    try {
+      await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Environment)
+    expect(thrown?.detail).toContain('pass')
+    expect(thrown?.detail).toContain('GAMECRATE_REGISTRY_USER')
+    expect(thrown?.detail).toContain('GAMECRATE_REGISTRY_PASSWORD')
+    expect((await runs(argvFile)).length).toBe(0)
+  })
+
+  test('a credHelpers config is refused the same way', async () => {
+    await fakeDocker()
+    await dockerConfig({ credHelpers: { 'ghcr.io': 'pass' } })
+    await expect(cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1')).rejects.toThrow(/credentials/)
+  })
+
+  test('the early check refuses a helper config and passes on real credentials', async () => {
+    await fakeDocker()
+    await dockerConfig({ credsStore: 'pass' })
+    expect(() => checkRegistryAuthEarly('ghcr.io/me/atlas:1')).toThrow(/credentials/)
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    process.env.GAMECRATE_REGISTRY_PASSWORD = 'hunter2'
+    expect(() => checkRegistryAuthEarly('ghcr.io/me/atlas:1')).not.toThrow()
+  })
+
+  test('one variable without the other is refused, not treated as anonymous', async () => {
+    const { argvFile } = await fakeDocker()
+    process.env.GAMECRATE_REGISTRY_USER = 'me'
+    let thrown: GamecrateError | undefined
+    try {
+      await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Environment)
+    expect(thrown?.message).toContain('GAMECRATE_REGISTRY_PASSWORD')
+    expect((await runs(argvFile)).length).toBe(0)
   })
 })
 
@@ -149,8 +283,9 @@ describe('cranePush', () => {
     const { argvFile } = await fakeDocker()
     await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')
     const [argv] = await runs(argvFile)
-    const at = argv!.indexOf('push')
-    expect(argv!.slice(at)).toEqual(['push', '/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871'])
+    expect(argv!.join(' ')).toContain(
+      "'crane' 'push' '/layers/x.tar' 'ghcr.io/me/atlas:1.6.4871'",
+    )
     expect(argv).toContain('/layers:/layers:ro')
   })
 
@@ -181,11 +316,7 @@ describe('craneTag and craneMutateLabels', () => {
     const { argvFile } = await fakeDocker()
     await craneTag('ghcr.io/me/atlas:1.6.4871', 'latest')
     const [argv] = await runs(argvFile)
-    expect(argv!.slice(argv!.indexOf('tag'))).toEqual([
-      'tag',
-      'ghcr.io/me/atlas:1.6.4871',
-      'latest',
-    ])
+    expect(argv!.join(' ')).toContain("'crane' 'tag' 'ghcr.io/me/atlas:1.6.4871' 'latest'")
   })
 
   test('mutate sends one --label per entry and retags in place', async () => {
@@ -196,18 +327,13 @@ describe('craneTag and craneMutateLabels', () => {
       'gamecrate.launcher': 'direct',
     })
     const [argv] = await runs(argvFile)
-    expect(argv!.slice(argv!.indexOf('mutate'))).toEqual([
-      'mutate',
-      'ghcr.io/me/atlas:1.6.4871',
-      '--label',
-      'steam.buildid=19283746',
-      '--label',
-      'gamecrate.variant=linux',
-      '--label',
-      'gamecrate.launcher=direct',
-      '-t',
-      'ghcr.io/me/atlas:1.6.4871',
-    ])
+    expect(argv!.join(' ')).toContain(
+      "'crane' 'mutate' 'ghcr.io/me/atlas:1.6.4871' " +
+        "'--label' 'steam.buildid=19283746' " +
+        "'--label' 'gamecrate.variant=linux' " +
+        "'--label' 'gamecrate.launcher=direct' " +
+        "'-t' 'ghcr.io/me/atlas:1.6.4871'",
+    )
   })
 })
 
