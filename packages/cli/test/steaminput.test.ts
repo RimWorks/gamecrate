@@ -25,7 +25,7 @@ afterEach(() => {
 })
 
 /** A loadable v2 plugin package, with the two keys steam build needs. */
-async function writeSteamPlugin(dir: string, game: string, appId = 294100): Promise<void> {
+async function writeSteamPlugin(dir: string, game: string, appId = 294100, steamBuild?: string): Promise<void> {
   await mkdir(join(dir, 'dist'), { recursive: true })
   await writeFile(
     join(dir, 'package.json'),
@@ -41,9 +41,12 @@ async function writeSteamPlugin(dir: string, game: string, appId = 294100): Prom
       executable: './AtlasLinux',
       gameFiles: { source: 'image', container: '/game' },
       version: { file: 'Version.txt' },
-      steamBuild: {
+      steamBuild: ${
+        steamBuild ??
+        `{
         branches: [{ name: 'public' }],
         variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+      }`
       },
     },
     parseManifest: () => null,
@@ -137,6 +140,32 @@ describe('resolveSteamBuildInput', () => {
 
     const input = await resolveSteamBuildInput('atlas', null, { plugins: ['./checkout'] }, cwd)
     expect(input.steamAppId).toBe(294100)
+  })
+
+  // a CI runner has no config file, so validateConfig never sees the plugin's own declarations
+  test('a plugin with a bad variant is refused with no config file present', async () => {
+    const cwd = await mkdtemp(join(tmp, 'badvariant-'))
+    await writeSteamPlugin(
+      join(cwd, 'node_modules', '@gamecrate', 'atlas'),
+      'atlas',
+      294100,
+      `{
+        branches: [{ name: 'public' }],
+        variants: [{ name: 'windows', depot: 'windows', base: 'xvfb', include: [] }],
+      }`,
+    )
+    await expect(resolveSteamBuildInput('atlas', null, {}, cwd)).rejects.toThrow(/steamBuild is wrong/)
+  })
+
+  test('an empty branch list is refused before it indexes past the end', async () => {
+    const cwd = await mkdtemp(join(tmp, 'nobranch-'))
+    await writeSteamPlugin(
+      join(cwd, 'node_modules', '@gamecrate', 'atlas'),
+      'atlas',
+      294100,
+      `{ branches: [], variants: [{ name: 'linux', base: 'xvfb', include: [] }] }`,
+    )
+    await expect(resolveSteamBuildInput('atlas', null, {}, cwd)).rejects.toThrow(/steamBuild is wrong/)
   })
 
   test('an unresolvable game names what it tried', async () => {

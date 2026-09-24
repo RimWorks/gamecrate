@@ -166,6 +166,18 @@ describe('preflight reports the proton marker refusal', () => {
     })
   })
 
+  // execute() exempts a shell from both gates. preflight runs first, so it has to agree, or the
+  // exemption never gets reached.
+  test('a shell is exempt from the mode refusal and the marker gate', async () => {
+    await withImage({ labels: PROTON }, async () => {
+      for (const mode of ['headed', 'headless'] as ModeName[]) {
+        const problems = await preflight(plan(mode), true)
+        expect(problems.some((p) => p.message.includes('proton'))).toBe(false)
+        expect(problems.some((p) => p.suggestion?.includes('--marker'))).toBe(false)
+      }
+    })
+  })
+
   test('headed does not excuse it, because the exit code is lost either way', async () => {
     await withImage({ labels: PROTON }, async () => {
       const problems = await preflight(plan('headed'))

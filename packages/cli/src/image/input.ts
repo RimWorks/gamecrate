@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 
 import { mergeUserConfig } from '../config/load'
+import { steamBuildSchema } from '../config/validate'
 import { loadPlugins } from '../plugin'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig, SteamBranch, SteamVariant } from '../types'
@@ -128,6 +129,18 @@ export async function resolveSteamBuildInput(
     return value
   }
 
+  // a config-less build never reaches validateConfig, so the same refusals run here instead
+  const steamBuild = want(merged.steamBuild, 'steamBuild')
+  const checked = steamBuildSchema.safeParse(steamBuild)
+  if (!checked.success) {
+    const first = checked.error.issues[0]!
+    throw new GamecrateError(
+      `${game} steamBuild is wrong: ${first.message}`,
+      Exit.Config,
+      `at steamBuild.${first.path.join('.')}, declared by ${specs.join(', ')}`,
+    )
+  }
+
   const push = overrides.push === true
   const image = resolveImage({ load: !push, push }, game, overrides.image ?? merged.image?.ref)
 
@@ -137,8 +150,8 @@ export async function resolveSteamBuildInput(
     versionFile: want(merged.version, 'version.file').file,
     gamePath: want(merged.gameFiles, 'gameFiles').container,
     executable: want(merged.executable, 'executable'),
-    branches: want(merged.steamBuild, 'steamBuild').branches,
-    variants: want(merged.steamBuild, 'steamBuild').variants,
+    branches: steamBuild.branches,
+    variants: steamBuild.variants,
     // OCI references are lowercase. A registry owner or repo can be mixed case on the web.
     image: image.toLowerCase(),
   }

@@ -256,6 +256,21 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
   })
 }
 
+/** Exported so a config-less `steam build` gets the same refusals a config file would. */
+export const steamBuildSchema = obj({
+  branches: z.array(obj({ name: str, password: bool.optional() }), { error: 'expected an array' }),
+  variants: z.array(
+    obj({
+      name: str,
+      depot: oneOf(['linux', 'windows', 'macos']).optional(),
+      base: oneOf(['xvfb', 'proton', 'none']),
+      include: strArray,
+      executable: str.optional(),
+    }),
+    { error: 'expected an array' },
+  ),
+}).check(steamBuildRules)
+
 const game = obj({
   gameFiles: obj({ source: oneOf(['mount', 'image']), host: str.optional(), container: str }).check(
     requiredWhen('host', (v) => v['source'] === 'mount'),
@@ -287,19 +302,7 @@ const game = obj({
   modsConfig: obj({ file: str }),
   prefs: obj({ file: str }),
   version: obj({ file: str }),
-  steamBuild: obj({
-    branches: z.array(obj({ name: str, password: bool.optional() }), { error: 'expected an array' }),
-    variants: z.array(
-      obj({
-        name: str,
-        depot: oneOf(['linux', 'windows', 'macos']).optional(),
-        base: oneOf(['xvfb', 'proton', 'none']),
-        include: strArray,
-        executable: str.optional(),
-      }),
-      { error: 'expected an array' },
-    ),
-  }).check(steamBuildRules),
+  steamBuild: steamBuildSchema,
   saveExtensions: strArray,
   core: str,
   dlc: strArray,

@@ -12,13 +12,13 @@ import { buildRunSpec, refuseProtonHeaded, waylandSocket, x11Session } from './s
 const CDI_SPEC = '/etc/cdi/nvidia.yaml'
 
 /** Every check the launch depends on, collected so one run reports all of them at once. */
-export async function preflight(plan: LaunchPlan): Promise<Problem[]> {
+export async function preflight(plan: LaunchPlan, asShell = false): Promise<Problem[]> {
   const problems: Problem[] = []
   const game = plan.gameConfig
 
   const dockerOk = await checkDocker(problems)
   if (dockerOk) {
-    await checkImage(plan, problems)
+    await checkImage(plan, problems, asShell)
   }
 
   if (plan.settings.gpu) checkCdi(problems)
@@ -74,7 +74,7 @@ async function checkImageRunnable(
   })
 }
 
-async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> {
+async function checkImage(plan: LaunchPlan, problems: Problem[], asShell: boolean): Promise<void> {
   const image = plan.gameConfig.image
   const where = `/games/${plan.game}/image/ref`
 
@@ -84,6 +84,9 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
   if (facts.present) {
     await checkImageRunnable(image.ref, where, plan.game, problems)
     if (problem) problems.push(problem)
+    // a shell replaces the command with bash and never starts the game, so execute() exempts it
+    // from both gates. preflight runs first, so it has to exempt the same two.
+    if (asShell) return
     // same order execute() uses: a marker-first answer asks for a flag the person then has to
     // keep while they fix the mode, which is the real problem.
     const mode = protonHeadedProblem(plan, facts, where)

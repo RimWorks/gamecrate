@@ -164,8 +164,10 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
         for (const tag of tags.slice(1)) await dockerTag(versioned, `${input.image}:${tag}`)
       }
     } finally {
-      // a whole game per cell, so it goes as soon as push and load are done reading it
+      // a whole game per cell, so it goes as soon as push and load are done reading it. the
+      // intermediate is removed here too: the script's own rm is skipped when set -e trips
       rmSync(tar, { force: true })
+      rmSync(`${tar}.layer.tar`, { force: true })
     }
     return { ...row, status: 'built', reason: decision.reason, tags }
   } catch (error) {
@@ -211,10 +213,18 @@ function labelsFor(input: SteamBuildInput, ctx: CellContext, base: string | null
   return labels
 }
 
-/** Presence and the label stay apart, or a missing label reads as a missing image. */
+/**
+ * Presence and the label stay apart, or a missing label reads as a missing image. With both
+ * --push and --load the older of the two destinations decides: a current registry says nothing
+ * about the local daemon, and skipping on it leaves `run` with no image to start.
+ */
 async function readGate(ref: string, opts: SteamBuildOptions): Promise<{ present: boolean; buildid: string | null }> {
-  const labels = opts.push ? await craneLabels(ref) : await inspectLabels(ref)
-  return { present: labels !== null, buildid: labels?.['steam.buildid'] ?? null }
+  const reads: (Record<string, string> | null)[] = []
+  if (opts.push) reads.push(await craneLabels(ref))
+  if (opts.load) reads.push(await inspectLabels(ref))
+  if (reads.some((labels) => labels === null)) return { present: false, buildid: null }
+  const ids = reads.map((labels) => labels?.['steam.buildid'] ?? null)
+  return { present: reads.length > 0, buildid: ids.every((id) => id === ids[0]) ? (ids[0] ?? null) : null }
 }
 
 /** The --load gate. null when the local daemon has no such image. */

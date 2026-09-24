@@ -300,9 +300,9 @@ async function resolved(inputs: ResolveInputs): Promise<number> {
 
   const identity = resolveIdentity(args.root)
 
-  if (args.printPlan || args.dryRun) return await reportPlanOnly(plan, args, profile, identity)
+  if (args.printPlan || args.dryRun) return await reportPlanOnly(plan, args, profile, identity, asShell)
 
-  const environment = await preflight(plan)
+  const environment = await preflight(plan, asShell)
   if (environment.length > 0) reportEnvironment(environment)
 
   await ensureProfileTree(plan)
@@ -327,8 +327,9 @@ async function reportPlanOnly(
   args: ParsedArgs,
   profile: string,
   identity: Identity,
+  asShell: boolean,
 ): Promise<number> {
-  const environment = await preflight(plan)
+  const environment = await preflight(plan, asShell)
   // buildRunSpec is a validation gate of its own: the "=" landmine throws here.
   buildRunSpec(plan, [], identity)
   if (args.printPlan) printPlan(plan, args.json)
