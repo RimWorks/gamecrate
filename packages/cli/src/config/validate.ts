@@ -134,6 +134,8 @@ const profile = obj({
   alias: str.optional(),
   aliases: strArray.optional(),
   description: str.optional(),
+  gameVersion: str.optional(),
+  image: str.optional(),
   detach: bool.optional(),
   replace: bool.optional(),
   build: oneOf(['auto', 'always', 'never']).optional(),

@@ -1,6 +1,8 @@
 import type { ImageLaunch } from '../docker/spec'
 import type { ModeName, Problem } from '../types'
+import { resolveProfile } from '../config/load'
 import { imageDigest, imageLabel } from './prepare'
+import type { GameConfig } from '../types'
 
 /** What an image says about itself. Every field is null for an image gamecrate did not build. */
 export interface ImageFacts {
@@ -87,3 +89,35 @@ export function markerProblem(input: {
     suggestion: 'pass --marker <text>: a log line is the only success signal this image has',
   }
 }
+
+/**
+ * The flag wins, then the profile's own ref, then its version tag on the game's repository.
+ * A profile that names neither leaves the configured ref alone.
+ */
+export function imageFor(game: GameConfig, profile: string, flag?: string): string | undefined {
+  if (flag !== undefined) return flag
+  const spec = resolveProfile(game, profile)
+  if (spec.image !== undefined) return spec.image
+  if (spec.gameVersion === undefined) return undefined
+  return `${repoOf(game.image.ref)}:${spec.gameVersion}`
+}
+
+/** The ref without its tag. A colon after the last slash is a tag; before it, a registry port. */
+export function repoOf(ref: string): string {
+  const colon = ref.lastIndexOf(':')
+  return colon === -1 || ref.includes('/', colon) ? ref : ref.slice(0, colon)
+}
+
+/**
+ * `--image <ref>` launches one gamecrate-built image. The game lives inside such an image, so
+ * the host mount goes with it: a bind over /game would shadow what the image carries.
+ */
+export function withImageOverride(game: GameConfig, ref?: string): GameConfig {
+  if (ref === undefined) return game
+  return {
+    ...game,
+    image: { ...game.image, ref, acquire: 'pull' },
+    gameFiles: { ...game.gameFiles, source: 'image' },
+  }
+}
+

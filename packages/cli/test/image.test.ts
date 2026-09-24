@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { imageLaunch, imageProblem, markerProblem } from '../src/launch/image'
+import { imageFor, imageLaunch, imageProblem, markerProblem, repoOf, withImageOverride } from '../src/launch/image'
+import type { GameConfig } from '../src/types'
 import type { ImageFacts } from '../src/launch/image'
 
 const built: ImageFacts = {
@@ -98,5 +99,65 @@ describe('run wires the checks in before staging', () => {
 
   test('the runtime layer build is gone', () => {
     expect(source).not.toContain('ensureRuntimeLayer')
+  })
+})
+
+describe('imageFor', () => {
+  const game = {
+    image: { ref: 'dsd-rimworld:latest', acquire: 'pull' as const },
+    profiles: {
+      plain: { mods: [] },
+      pinned: { mods: [], gameVersion: '2.0' },
+      literal: { mods: [], image: 'ghcr.io/me/other:sha-abc' },
+      both: { mods: [], gameVersion: '2.0', image: 'ghcr.io/me/other:sha-abc' },
+    },
+  } as unknown as GameConfig
+
+  test('a profile that names neither leaves the configured ref alone', () => {
+    expect(imageFor(game, 'plain')).toBeUndefined()
+  })
+
+  test('a version tag resolves against the game repository', () => {
+    expect(imageFor(game, 'pinned')).toBe('dsd-rimworld:2.0')
+  })
+
+  test('a whole ref is used verbatim', () => {
+    expect(imageFor(game, 'literal')).toBe('ghcr.io/me/other:sha-abc')
+  })
+
+  test('image beats gameVersion, and the flag beats both', () => {
+    expect(imageFor(game, 'both')).toBe('ghcr.io/me/other:sha-abc')
+    expect(imageFor(game, 'both', 'local:1')).toBe('local:1')
+    expect(imageFor(game, 'pinned', 'local:1')).toBe('local:1')
+  })
+})
+
+describe('repoOf', () => {
+  // a colon after the last slash is a tag; before it, a registry port
+  test('a port is not a tag', () => {
+    expect(repoOf('localhost:5000/me/atlas')).toBe('localhost:5000/me/atlas')
+    expect(repoOf('localhost:5000/me/atlas:2.0')).toBe('localhost:5000/me/atlas')
+  })
+
+  test('a bare name with no tag stays whole', () => {
+    expect(repoOf('dsd-rimworld')).toBe('dsd-rimworld')
+    expect(repoOf('ghcr.io/me/atlas:latest')).toBe('ghcr.io/me/atlas')
+  })
+})
+
+describe('withImageOverride', () => {
+  const mounted = {
+    image: { ref: 'a:1', acquire: 'build' as const, context: '/ctx' },
+    gameFiles: { source: 'mount' as const, host: '/games/atlas', container: '/game' },
+  } as unknown as GameConfig
+
+  test('an override switches the game files to the image, so no bind shadows it', () => {
+    const out = withImageOverride(mounted, 'b:2')
+    expect(out.image).toEqual({ ref: 'b:2', acquire: 'pull', context: '/ctx' })
+    expect(out.gameFiles.source).toBe('image')
+  })
+
+  test('no override changes nothing', () => {
+    expect(withImageOverride(mounted, undefined)).toBe(mounted)
   })
 })

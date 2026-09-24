@@ -198,9 +198,23 @@ async function scanGameData(
   game: GameConfig,
   rootIndex: number,
   found: Candidate[],
+  problems: Problem[],
+  gameName: string,
 ): Promise<void> {
   const data = await gameDataDir(game)
-  if (data === null) return
+  if (data === null) {
+    // without this the launch fails as "no mod matches <core>", which blames the mod set for
+    // an image that is not there
+    const ref = game.image?.ref
+    if (game.gameFiles.source !== 'mount' && ref !== undefined && ref !== '') {
+      problems.push({
+        where: `/games/${gameName}/image/ref`,
+        message: `${ref} is not present, so ${gameName} has no core or expansions to load`,
+        suggestion: `gamecrate steam build ${gameName}, or docker pull ${ref}`,
+      })
+    }
+    return
+  }
   let entries
   try {
     entries = await readdir(data, { withFileTypes: true })
@@ -529,7 +543,7 @@ async function indexLocal(
   cacheIndex: number,
 ): Promise<void> {
   const local: Candidate[] = []
-  await scanGameData(config, -1, local)
+  await scanGameData(config, -1, local, index.problems, index.game)
   for (const [i, root] of config.scanRoots.entries()) {
     await scanLocalRoot(root, i, config.manifest.file, local)
   }

@@ -228,7 +228,12 @@ describe('steamBuild', () => {
 
   test('narrowing to one variant does not promote it to the bare latest tag', async () => {
     const results = await steamBuild(ONE, { ...opts, onlyVariants: ['linux-ref'] })
-    expect(byVariant(results, 'linux-ref').tags).toEqual(['1.6.4871-linux-ref', 'latest-linux-ref'])
+    expect(byVariant(results, 'linux-ref').tags).toEqual([
+      '1.6.4871-linux-ref',
+      'latest-linux-ref',
+      '1-linux-ref',
+      '1.6-linux-ref',
+    ])
   })
 
   test('crane tag runs only after a successful push', async () => {
@@ -297,8 +302,8 @@ describe('steamBuild', () => {
     const results = await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(byVariant(results, 'linux').status).toBe('built')
     expect(state.calls.filter((c) => c === 'docker build')).toHaveLength(1)
-    // the tar already carries the versioned tag, so only the three moving tags are tagged
-    expect(state.calls.filter((c) => c === 'docker tag')).toHaveLength(3)
+    // the tar already carries the versioned tag, so only the moving ones are tagged
+    expect(state.calls.filter((c) => c === 'docker tag')).toHaveLength(7)
     expect(state.calls.indexOf('docker build')).toBeLessThan(state.calls.lastIndexOf('docker tag'))
     expect(state.calls).not.toContain('push')
     // the same six a --push cell mutates on, so the two paths cannot drift

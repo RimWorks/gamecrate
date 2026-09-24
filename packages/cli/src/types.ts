@@ -184,6 +184,10 @@ export interface ProfileConfig {
   aliases?: string[]
   /** A one-line note for `gamecrate list`. Never read by the launcher. */
   description?: string
+  /** A tag on the game's own image repository, e.g. "2.0". `image` and --image beat it. */
+  gameVersion?: string
+  /** A whole image ref, used verbatim. Beaten only by --image. */
+  image?: string
   /** Launch defaults for this profile. The matching --no-* flag overrides each one. */
   detach?: boolean
   replace?: boolean

@@ -203,10 +203,30 @@ describe('resolveProfile', () => {
       lightweave: { mods: ['Kitted.LightweaveRimBridge'], extends: 'kitted' },
       trimmed: { extends: 'lightweave', exclude: ['Kitted.Roshar', 'patchlib.*'] },
       vanilla: { alias: 'modless' },
+      pinned: { mods: [], detach: true, replace: true, build: 'always' as const, gameVersion: '2.0' },
+      inherits: { extends: 'pinned' },
+      restated: { extends: 'pinned', detach: false, gameVersion: '1.6' },
       loop: { extends: 'knot' },
       knot: { extends: 'loop' },
     },
   }
+
+  // every one of these is read off the resolved profile at launch, so dropping it here is the
+  // same as the option never existing
+  test('the scalar launch options survive resolution', () => {
+    const p = resolveProfile(game, 'pinned')
+    expect(p.detach).toBe(true)
+    expect(p.replace).toBe(true)
+    expect(p.build).toBe('always')
+    expect(p.gameVersion).toBe('2.0')
+  })
+
+  test('a child inherits them, and may restate one', () => {
+    expect(resolveProfile(game, 'inherits').detach).toBe(true)
+    expect(resolveProfile(game, 'restated').detach).toBe(false)
+    expect(resolveProfile(game, 'restated').gameVersion).toBe('1.6')
+    expect(resolveProfile(game, 'restated').replace).toBe(true)
+  })
 
   test('extends prepends the parent mods in order', () => {
     expect(resolveProfile(game, 'lightweave').mods).toEqual([
