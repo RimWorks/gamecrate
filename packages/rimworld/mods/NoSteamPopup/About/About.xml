@@ -6,17 +6,9 @@
     <supportedVersions>
         <li>1.6</li>
     </supportedVersions>
-    <modDependencies>
-        <li>
-            <packageId>concordlib.concord</packageId>
-            <displayName>Concord</displayName>
-            <steamWorkshopUrl>steam://url/CommunityFilePage/3758333473</steamWorkshopUrl>
-        </li>
-    </modDependencies>
-    <loadAfter>
-        <li>concordlib.concord</li>
-    </loadAfter>
     <description>Drops the "Could not initialize Steam API" dialog that RimWorld shows on the main menu when no Steam client is reachable.
 
-Built for gamecrate containers, where there is never a Steam client and the dialog is only ever in the way. Nothing else about Steam changes: workshop, stats and the overlay stay exactly as broken or working as they were.</description>
+Built for gamecrate containers, where there is never a Steam client and the dialog is only ever in the way. No dependencies: it sets one private field by reflection.
+
+That field is what every Steam call checks, so the whole game now believes Steam started. In a container nothing reachable cares. On a desktop with Steam already running the field is true anyway and this changes nothing. The one case to know about is a desktop with Steam missing: opening the in-game Workshop screen would attempt Steam calls instead of greying out.</description>
 </ModMetaData>

@@ -1,4 +1,4 @@
-using Concord;
+using System.Reflection;
 using Verse;
 using Verse.Steam;
 
@@ -8,15 +8,13 @@ public class NoSteamPopupMod : Mod
 {
     public NoSteamPopupMod(ModContentPack content) : base(content)
     {
-        Patcher.Apply(typeof(NoSteamPopupMod).Assembly);
-    }
-}
+        var field = typeof(SteamManager).GetField("initializedInt", BindingFlags.Static | BindingFlags.NonPublic);
+        if (field is null || field.FieldType != typeof(bool))
+        {
+            Log.Warning("[NoSteamPopup] SteamManager.initializedInt is gone; the Steam dialog will still appear.");
+            return;
+        }
 
-/// Reads SteamManager.Initialized as true inside this one method, so the "Steam client
-/// missing" dialog is never built. Every other Steam call still sees the real value.
-[Patch]
-internal abstract class UIRoot_Entry_Patch : UIRoot_Entry
-{
-    [Inject(nameof(UIRoot_Entry.Init), typeof(SteamManager), nameof(SteamManager.Initialized), At.Around)]
-    private bool AlwaysInitialized(Operation<bool> read) => true;
+        field.SetValue(null, true);
+    }
 }
