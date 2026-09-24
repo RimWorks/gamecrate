@@ -25,14 +25,14 @@ import {
 import { resolveIdentity } from './docker/identity'
 import { preflight } from './docker/preflight'
 import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
-import { buildRunSpec, containerName, windowTitle } from './docker/spec'
+import { buildRunSpec, containerName, refuseProtonHeaded, windowTitle } from './docker/spec'
 import { adoptNewWindow } from './docker/window'
 import { generateModsConfig, mergePrefs } from './launch/generate'
+import { imageLaunch, imageProblem, markerProblem, readImageFacts } from './launch/image'
 import {
   acquireImage,
   buildLocalMods,
   captureScreenshot,
-  ensureRuntimeLayer,
   heldLock,
   isRunning,
   readLock,
@@ -394,34 +394,59 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   // TODO(a session-long lock would serialize every launch): delete this when a clone is staged
   // by copy, or by a read-lock a resetting writer has to wait on.
   await releaseSources()
-  await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
-  // Offscreen modes need an X server the published images do not ship; add it once, on top.
-  const runtimeImage =
-    plan.mode === 'headed'
-      ? config.games[game]!.image.ref
-      : await ensureRuntimeLayer(config.games[game]!.image.ref)
+  const ref = config.games[game]!.image.ref
+  try {
+    await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
+  } catch (error) {
+    // acquireImage only knows docker failed. imageProblem knows there is no image to run and
+    // that steam build is how you get one, so it wins when it has something to say.
+    const absent = imageProblem({ game, ref, mode: plan.mode, facts: await readImageFacts(ref) })
+    if (absent === null) throw error
+    throw new GamecrateError(absent.message, Exit.Environment, absent.suggestion)
+  }
+  // Before stageMods, which wipes the stage: a bad image costs a message, not a wiped tree.
+  const facts = await readImageFacts(ref)
+  const problem = imageProblem({ game, ref, mode: plan.mode, facts })
+  if (problem !== null) {
+    throw new GamecrateError(problem.message, Exit.Environment, problem.suggestion)
+  }
+  // A shell replaces the command with bash and never starts the game, so neither the mode
+  // refusal nor the marker gate applies to it.
+  const imageStart = asShell ? undefined : imageLaunch(facts)
+  // Mode first: the default mode is headed, so a marker-first order asks for a marker the
+  // person then has to keep while they fix the real problem.
+  refuseProtonHeaded(game, plan.mode, imageStart)
+  const needsMarker = asShell ? null : markerProblem({ game, facts, marker: plan.marker })
+  if (needsMarker !== null) {
+    throw new GamecrateError(needsMarker.message, Exit.Usage, needsMarker.suggestion)
+  }
 
   const modMounts = await stageMods(plan)
   await generateModsConfig(plan)
   await mergePrefs(plan)
   for (const warning of planWarnings(plan)) warn(warning)
 
-  const spec = buildRunSpec(plan, modMounts, identity)
-  spec.image = runtimeImage
+  const spec = buildRunSpec(plan, modMounts, identity, imageStart)
   if (asShell) {
     spec.command = ['/bin/bash']
     spec.extraArgs = [...spec.extraArgs, '--interactive', '--tty']
   }
   await writeLaunchRecord(plan, spec.image)
 
+  // wine's exit code is wineserver's, not the game's, so a proton container that dies on boot
+  // still exits 0. Only the marker can call a proton run a success.
+  const trustExit = facts.launcher !== 'proton'
+
   try {
     // Every path below hands the container to runContainer, which owns SIGINT/SIGTERM: its
     // handler stops the container, returns 130, and still flushes the log.
-    if (plan.marker !== undefined && !asShell) return await runWithMarker(spec, plan, runDir)
-    if (plan.mode === 'screenshot' && !asShell) return await runWithScreenshot(spec, plan, runDir)
+    if (plan.marker !== undefined && !asShell)
+      return await runWithMarker(spec, plan, runDir, trustExit)
+    if (plan.mode === 'screenshot' && !asShell)
+      return await runWithScreenshot(spec, plan, runDir, trustExit)
     // An offscreen run has nobody to close the window, so --timeout bounds it even with no
     // marker. Without this it runs forever and keeps the profile lock.
-    if (plan.mode !== 'headed' && !asShell) return await runBounded(spec, plan, runDir)
+    if (plan.mode !== 'headed' && !asShell) return await runBounded(spec, plan, runDir, trustExit)
     // Only X11 lets us touch the window from out here; a wayland client owns its own caption
     // and its own close button.
     let windowClosed = false
@@ -443,6 +468,7 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
         stopTimeoutSeconds: STOP_TIMEOUT_SECONDS,
       })
       if (windowClosed) return { code: Exit.Ok, reason: 'window-closed' }
+      // asShell lands here too, and bash's code is its own, so this path keeps the raw code.
       return { code: normalize(code), reason: reasonFor(code) }
     } finally {
       window?.stop()
@@ -469,13 +495,14 @@ async function runBounded(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
+  trustExit: boolean,
 ): Promise<LaunchResult> {
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
   const winner = await Promise.race([
     container.then((code) => ({ kind: 'exit' as const, code })),
     sleep(plan.timeoutSeconds * 1000).then(() => ({ kind: 'timeout' as const })),
   ])
-  if (winner.kind === 'exit') return { code: normalize(winner.code), reason: reasonFor(winner.code) }
+  if (winner.kind === 'exit') return exitResult(winner.code, trustExit)
 
   status(`no marker given; stopping after ${plan.timeoutSeconds}s`)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
@@ -488,6 +515,7 @@ async function runWithScreenshot(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
+  trustExit: boolean,
 ): Promise<LaunchResult> {
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
   const settled = sleep(plan.renderWaitSeconds * 1000).then(() => 'ready' as const)
@@ -498,7 +526,7 @@ async function runWithScreenshot(
   ])
   if (winner.kind === 'exit') {
     status(`game exited before the ${plan.renderWaitSeconds}s render wait finished; no frame captured`)
-    return { code: normalize(winner.code), reason: reasonFor(winner.code) }
+    return exitResult(winner.code, trustExit)
   }
 
   const shot = await grabFrame(spec.name, plan)
@@ -514,21 +542,45 @@ async function grabFrame(container: string, plan: LaunchPlan): Promise<string | 
   else status(`screenshot: ${path}`)
   return path
 }
+/** How long a dead container waits for the marker watch to catch up on its last poll. */
+const MARKER_GRACE_MS = 1000
+
 /** The marker races the container; whichever finishes first decides the exit code. */
 async function runWithMarker(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   logDir: string,
+  trustExit: boolean,
 ): Promise<LaunchResult> {
   const marker = plan.marker!
   const container = runContainer(spec, { logDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
-  const seen = waitForMarker(markerSources(plan, logDir), marker, plan.timeoutSeconds)
+  let waited: boolean | undefined
+  const seen = waitForMarker(markerSources(plan, logDir), marker, plan.timeoutSeconds).then(
+    (hit) => {
+      waited = hit
+      return hit
+    },
+  )
 
   const winner = await Promise.race([
     container.then((code) => ({ kind: 'exit' as const, code })),
     seen.then((hit) => ({ kind: 'marker' as const, hit })),
   ])
-  if (winner.kind === 'exit') return { code: normalize(winner.code), reason: reasonFor(winner.code) }
+  if (winner.kind === 'exit') {
+    if (trustExit || winner.code === Exit.Interrupted) return exitResult(winner.code, trustExit)
+    // the watch polls, so a marker written right before the container died can still be unseen.
+    const hit = await Promise.race([seen, sleep(MARKER_GRACE_MS).then(() => false)])
+    if (hit) {
+      status(`marker seen: ${marker}`)
+      return { code: Exit.Ok, reason: 'marker' }
+    }
+    status(`container exited before the marker "${marker}" appeared`)
+    // waited === false is the watch's full timeout elapsing; undefined means it is still
+    // polling, so the container stopped first and that is the game failing.
+    return waited === false
+      ? { code: Exit.MarkerTimeout, reason: 'marker-timeout' }
+      : { code: Exit.GameFailed, reason: 'exited' }
+  }
 
   if (plan.mode === 'screenshot') await grabFrame(spec.name, plan)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
@@ -539,6 +591,14 @@ async function runWithMarker(
   }
   status(`marker "${marker}" not seen within ${plan.timeoutSeconds}s`)
   return { code: Exit.MarkerTimeout, reason: 'marker-timeout' }
+}
+
+/** An untrusted exit code can only mean failure: under proton a 0 says wineserver drained. */
+function exitResult(code: number, trustExit: boolean): LaunchResult {
+  if (trustExit || code === Exit.Interrupted) {
+    return { code: normalize(code), reason: reasonFor(code) }
+  }
+  return { code: Exit.GameFailed, reason: 'exited' }
 }
 
 function normalize(code: number): number {

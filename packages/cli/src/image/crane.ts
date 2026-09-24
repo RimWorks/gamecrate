@@ -138,6 +138,8 @@ export async function craneAppend(opts: {
   /** null appends onto an empty base, which is what a reference image wants. */
   base: string | null
   platform: string
+  /** The name the tar carries. crane refuses an append without one, and docker load reads it. */
+  tag: string
   out: string
 }): Promise<void> {
   for (const p of opts.include) {
@@ -176,6 +178,9 @@ export async function craneAppend(opts: {
     '--platform',
     opts.platform,
     ...(opts.base === null ? [] : ['-b', opts.base]),
+    // required even with -o: crane exits with 'required flag(s) "new_tag" not set' without it
+    '-t',
+    opts.tag,
     '-f',
     layer,
     '-o',

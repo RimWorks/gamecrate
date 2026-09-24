@@ -7,9 +7,9 @@ export type BaseKind = 'xvfb' | 'proton' | 'none'
  * These are the linux/amd64 manifests, not the index a push reports. See landmines.md.
  */
 export const RUNTIME_BASE: Readonly<Record<'xvfb' | 'proton', string>> = {
-  xvfb: 'ghcr.io/rimworks/gamecrate/runtime-base@sha256:454f107523fbea816cce2f403855ae9afb0d8e458aa0e83534c06ad7731d04fe',
+  xvfb: 'ghcr.io/rimworks/gamecrate/runtime-base@sha256:bb56228089823908bc3f6452ba3eb10f35f395813b2358758080452201ee4792',
   proton:
-    'ghcr.io/rimworks/gamecrate/runtime-base-proton@sha256:17f9d6962a55fdb621b0a0e63a601110dd20ea1caf4afcdf01e1bc2dea1bfab9',
+    'ghcr.io/rimworks/gamecrate/runtime-base-proton@sha256:55ee5e995a88207074ac455fc1932adb57239da66536bed26041436cb7f44fea',
 } as const
 
 /**

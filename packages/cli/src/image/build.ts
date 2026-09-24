@@ -118,6 +118,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     mkdirSync(layers, { recursive: true })
     const tar = join(layers, `${branch.name}-${variant.name}-${version}.tar`)
     const base = resolveBase(variant.base, opts.baseOverride)
+    const versioned = `${input.image}:${tags[0]!}`
     try {
       await craneAppend({
         gameDir: dir,
@@ -125,24 +126,21 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
         gamePath: input.gamePath,
         base,
         platform: opts.platform,
+        tag: versioned,
         out: tar,
       })
 
       if (opts.push) {
-        const versioned = `${input.image}:${tags[0]!}`
         await cranePush(tar, versioned)
         await craneMutateLabels(versioned, labelsFor(input, ctx, base))
         // only now: a half-pushed build must not move latest
         for (const tag of tags.slice(1)) await craneTag(versioned, tag)
       }
       if (opts.load) {
-        const id = await dockerLoad(tar)
-        const first = `${input.image}:${tags[0]!}`
-        // buildkit cannot resolve a bare image id in FROM, so the tag has to exist first
-        await dockerTag(id, first)
-        await dockerLabel(first, labelsFor(input, ctx, base))
+        await dockerLoad(tar, versioned)
+        await dockerLabel(versioned, labelsFor(input, ctx, base))
         // off the labelled ref, so a moving tag never points at an unlabelled image
-        for (const tag of tags.slice(1)) await dockerTag(first, `${input.image}:${tag}`)
+        for (const tag of tags.slice(1)) await dockerTag(versioned, `${input.image}:${tag}`)
       }
     } finally {
       // a whole game per cell, so it goes as soon as push and load are done reading it
@@ -201,18 +199,16 @@ async function inspectLabels(ref: string): Promise<Record<string, string> | null
   }
 }
 
-/** The loaded id, because a crane tar carries no tag of its own. */
-async function dockerLoad(tar: string): Promise<string> {
+/** The tar carries its own tag, so docker names the loaded image and nothing parses an id. */
+async function dockerLoad(tar: string, ref: string): Promise<void> {
   const { code, stdout, stderr } = await capture(['docker', 'load', '-i', tar])
-  const id = /Loaded image(?: ID)?: (\S+)/.exec(stdout)?.[1]
-  if (code !== 0 || id === undefined) {
+  if (code !== 0 || !stdout.includes(`Loaded image: ${ref}`)) {
     throw new GamecrateError(
       `docker load failed for ${tar}`,
       Exit.Environment,
-      `${stdout}\n${stderr}`.trim() || 'docker printed no loaded image',
+      `expected "Loaded image: ${ref}", got: ${`${stdout}\n${stderr}`.trim() || '(no output)'}`,
     )
   }
-  return id
 }
 
 /**
@@ -233,8 +229,8 @@ async function dockerLabel(ref: string, labels: Record<string, string>): Promise
   }
 }
 
-async function dockerTag(id: string, ref: string): Promise<void> {
-  const { code, stdout, stderr } = await capture(['docker', 'tag', id, ref])
+async function dockerTag(from: string, ref: string): Promise<void> {
+  const { code, stdout, stderr } = await capture(['docker', 'tag', from, ref])
   if (code !== 0) {
     throw new GamecrateError(`docker tag ${ref} failed`, Exit.Environment, `${stdout}\n${stderr}`.trim())
   }

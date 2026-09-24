@@ -2,13 +2,13 @@ import { describe, expect, test } from 'vitest'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir, hostname } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
-import { buildRunSpec, toDockerArgs, windowTitle } from '../src/docker/spec'
+import { buildRunSpec, refuseProtonHeaded, toDockerArgs, windowTitle } from '../src/docker/spec'
 import { resolveIdentity } from '../src/docker/identity'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { capture, waitForMarker } from '../src/docker/run'
-import { runtimeLayerRef } from '../src/launch/prepare'
 import { isPeerClaim, newMatches, parseAtoms, parseWindowPid } from '../src/docker/window'
 import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { deadPid } from './pids'
@@ -542,6 +542,123 @@ describe('buildRunSpec: devices and display', () => {
   })
 })
 
+describe('buildRunSpec: what the image says', () => {
+  test('an unlabelled image falls back to the configured executable', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity)
+    expect(spec.command).toContain(atlas.executable)
+    expect(spec.command[0]).toBe('xvfb-run')
+    expect(spec.command).toContain('-savedatafolder=/data')
+    expect(spec.command).toContain('/logs/Player.log')
+    expect(spec.env.SCREEN).toBeUndefined()
+  })
+
+  test('a proton image runs under the windows wrapper with a Z: path', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity, {
+      launcher: 'proton',
+      executable: 'RimWorldWin64.exe',
+    })
+    expect(spec.command[0]).toBe('run-headless-windows')
+    expect(spec.command[1]).toBe(String.raw`Z:\game\RimWorldWin64.exe`)
+    expect(spec.command).not.toContain('xvfb-run')
+    expect(spec.env.SCREEN).toBe('1920x1080x24')
+    expect(spec.env.DESKTOP).toBe('1920x1080')
+  })
+
+  // wine reads a bare unix path as a windows one, and --rm then takes the save with it.
+  test('a proton image converts every path it hands the game, not just the executable', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity, { launcher: 'proton' })
+    expect(spec.command).toContain(String.raw`-savedatafolder=Z:\data`)
+    expect(spec.command).toContain(String.raw`Z:\logs\Player.log`)
+    expect(spec.command).not.toContain('-savedatafolder=/data')
+    expect(spec.command).not.toContain('/logs/Player.log')
+  })
+
+  test('the wine prefix lands on a bind, not on the HOME tmpfs', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity, { launcher: 'proton' })
+    const prefix = spec.env.STEAM_COMPAT_DATA_PATH ?? ''
+    expect(prefix).toBe('/xdg/proton')
+    expect(prefix.startsWith(identity.home)).toBe(false)
+    expect(spec.mounts).toContainEqual(
+      expect.objectContaining({ type: 'bind', target: '/xdg' }),
+    )
+  })
+
+  test('WINEPATH is never defaulted: the ffmpeg it pointed at is gone', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity, { launcher: 'proton' })
+    expect(spec.env.WINEPATH).toBeUndefined()
+  })
+
+  test('a direct image still gets xvfb-run, with the label executable', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity, {
+      launcher: 'direct',
+      executable: './RimWorldLinux',
+    })
+    expect(spec.command.slice(0, 2)).toEqual(['xvfb-run', '-a'])
+    expect(spec.command).toContain('./RimWorldLinux')
+    expect(spec.command).toContain('-savedatafolder=/data')
+  })
+
+  test('a proton image refuses a headed launch instead of opening nothing', () => {
+    expect(() =>
+      buildRunSpec(plan('atlas', atlas, {}, 'headed'), [], identity, { launcher: 'proton' }),
+    ).toThrow(GamecrateError)
+    expect(() => refuseProtonHeaded('atlas', 'headed', { launcher: 'proton' })).toThrow(
+      expect.objectContaining({ code: Exit.Config }),
+    )
+  })
+
+  // `gamecrate shell` passes no ImageLaunch, so the refusal must not fire: bash starts no game.
+  test('a shell run against a proton image is not refused', () => {
+    expect(() => refuseProtonHeaded('atlas', 'headed', undefined)).not.toThrow()
+    expect(() => buildRunSpec(plan('atlas', atlas, {}, 'headed'), [], identity)).not.toThrow()
+  })
+
+  test('a proton image offscreen is not refused', () => {
+    expect(() => refuseProtonHeaded('atlas', 'headless', { launcher: 'proton' })).not.toThrow()
+    expect(() => refuseProtonHeaded('atlas', 'headed', { launcher: 'direct' })).not.toThrow()
+  })
+})
+
+// index.ts exits the process at import, so nothing can call execute() or runWithMarker. The
+// wiring is pinned by reading the source, the way image.test.ts already pins the check order.
+describe('run wires the launch path', () => {
+  const source = readFileSync(
+    join(fileURLToPath(new URL('.', import.meta.url)), '../src/index.ts'),
+    'utf8',
+  )
+
+  test('a shell run hands buildRunSpec no image launch, and runs bash', () => {
+    expect(source).toContain('const imageStart = asShell ? undefined : imageLaunch(facts)')
+    expect(source).toContain('buildRunSpec(plan, modMounts, identity, imageStart)')
+    expect(source).toContain("spec.command = ['/bin/bash']")
+    expect(source).not.toContain('buildRunSpec(plan, modMounts, identity, imageLaunch(facts))')
+  })
+
+  test('a shell run skips the marker gate', () => {
+    expect(source).toContain('asShell ? null : markerProblem(')
+  })
+
+  test('the mode refusal reads before the marker gate', () => {
+    const mode = source.indexOf('refuseProtonHeaded(game,')
+    const marker = source.indexOf('markerProblem({')
+    expect(mode).toBeGreaterThan(-1)
+    expect(marker).toBeGreaterThan(mode)
+  })
+
+  // Swapped arms are a silent bug: CI reads 6 as "the game died" and 1 as "it timed out".
+  const arms = /waited === false \? \{ code: (Exit\.\w+).+?: \{ code: (Exit\.\w+)/.exec(
+    source.slice(source.indexOf('container exited before the marker')).replace(/\s+/g, ' '),
+  )
+
+  test('a marker watch that ran its full timeout is MarkerTimeout', () => {
+    expect(arms?.[1]).toBe('Exit.MarkerTimeout')
+  })
+
+  test('a container that stopped while the watch was still polling is GameFailed', () => {
+    expect(arms?.[2]).toBe('Exit.GameFailed')
+  })
+})
+
 describe('waitForMarker', () => {
   test('finds a marker that arrives after the watch starts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gamecrate-log-'))
@@ -646,55 +763,6 @@ describe('capture', () => {
     expect(result.code).toBe(127)
     expect(result.stdout).toBe('')
     expect(result.stderr.length).toBeGreaterThan(0)
-  })
-})
-
-describe('runtimeLayerRef', () => {
-  test('a tagged ref keeps its tag', () => {
-    expect(runtimeLayerRef('example/atlas:1.6')).toBe('example/atlas:1.6-gamecrate')
-  })
-
-  test('an untagged ref gets latest', () => {
-    expect(runtimeLayerRef('example/atlas')).toBe('example/atlas:latest-gamecrate')
-  })
-
-  test('a registry port is not a tag', () => {
-    expect(runtimeLayerRef('localhost:5000/atlas')).toBe('localhost:5000/atlas:latest-gamecrate')
-    expect(runtimeLayerRef('localhost:5000/atlas:1.6')).toBe('localhost:5000/atlas:1.6-gamecrate')
-  })
-
-  test('a digest pin becomes a tag docker will accept', () => {
-    const ref = 'ghcr.io/example/atlas@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-    expect(runtimeLayerRef(ref)).toBe('ghcr.io/example/atlas:sha-0123456789ab-gamecrate')
-  })
-
-  test('a ref pinned by tag and digest keeps one tag, not two', () => {
-    const digest = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-    expect(runtimeLayerRef(`ghcr.io/example/atlas:1.6@${digest}`)).toBe(
-      'ghcr.io/example/atlas:sha-0123456789ab-gamecrate',
-    )
-    expect(runtimeLayerRef(`localhost:5000/atlas:1.6@${digest}`)).toBe('localhost:5000/atlas:sha-0123456789ab-gamecrate')
-    expect(runtimeLayerRef(`localhost:5000/atlas@${digest}`)).toBe('localhost:5000/atlas:sha-0123456789ab-gamecrate')
-  })
-
-  // A tag is at most 128 chars of [A-Za-z0-9_.-] after the first alphanumeric.
-  test('every derived tag is a legal docker tag', () => {
-    const digest = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-    const refs = [
-      'example/atlas',
-      'example/atlas:1.6',
-      'localhost:5000/atlas:1.6',
-      `ghcr.io/example/atlas@${digest}`,
-      `ghcr.io/example/atlas:1.6@${digest}`,
-      `localhost:5000/atlas:1.6@${digest}`,
-    ]
-    for (const ref of refs) {
-      const derived = runtimeLayerRef(ref)
-      const tag = derived.split(':').at(-1)!
-      expect(tag).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
-      // Exactly one tag: a name:tag:tag ref is what docker build --tag rejects.
-      expect(derived.slice(derived.lastIndexOf('/') + 1).split(':')).toHaveLength(2)
-    }
   })
 })
 

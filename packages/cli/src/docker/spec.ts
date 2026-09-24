@@ -6,6 +6,7 @@ import type {
   DockerRunSpec,
   Identity,
   LaunchPlan,
+  ModeName,
   Mount,
 } from '../types'
 import { GamecrateError, Exit } from '../types'
@@ -29,10 +30,30 @@ const RUNTIME_DIR_SIZE = '64m'
 const HOME_SIZE = '64m'
 const MASK_SIZE = '1m'
 
+/** What the image says about starting itself. Absent means fall back to config. */
+export interface ImageLaunch {
+  launcher?: 'direct' | 'proton'
+  executable?: string
+}
+
+/**
+ * Explorer detaches under wine, so a proton image has no headed path at all. run() calls this
+ * before the marker gate, so the mode is the first thing a person reads.
+ */
+export function refuseProtonHeaded(game: string, mode: ModeName, image?: ImageLaunch): void {
+  if (image?.launcher !== 'proton' || mode !== 'headed') return
+  throw new GamecrateError(
+    `${game}: a proton image only runs offscreen`,
+    Exit.Config,
+    'relaunch with --mode headless, or use a variant whose gamecrate.launcher is "direct"',
+  )
+}
+
 export function buildRunSpec(
   plan: LaunchPlan,
   modMounts: Mount[],
   identity: Identity,
+  image?: ImageLaunch,
 ): DockerRunSpec {
   const { gameConfig: game, settings } = plan
   const headed = plan.mode === 'headed'
@@ -47,23 +68,44 @@ export function buildRunSpec(
   addGameFiles(mounts, plan)
   addStage(mounts, plan, modMounts)
 
+  const proton = image?.launcher === 'proton'
+  const executable = image?.executable ?? game.executable
+
+  refuseProtonHeaded(plan.game, plan.mode, image)
+
   // xvfb-run -a picks a free display itself, which removes both the hardcoded :99 and the
   // startup race the old launch.sh papered over with `sleep 2`.
-  const command = headed
-    ? [game.executable]
-    : [
-        'xvfb-run',
-        '-a',
-        `--server-args=-screen 0 ${settings.width}x${settings.height}x24`,
-        game.executable,
-      ]
+  const command = proton
+    ? ['run-headless-windows', winPath(join(game.gameFiles.container, basename(executable)))]
+    : headed
+      ? [executable]
+      : [
+          'xvfb-run',
+          '-a',
+          `--server-args=-screen 0 ${settings.width}x${settings.height}x24`,
+          executable,
+        ]
 
-  if (game.dataDir.mode === 'arg') command.push(validateDataDirArg(game.dataDir))
-  else Object.assign(env, game.dataDir.env)
+  // the wrappers read both: SCREEN sizes Xvfb, DESKTOP sizes the wine virtual desktop.
+  if (proton) {
+    Object.assign(env, {
+      SCREEN: `${settings.width}x${settings.height}x24`,
+      DESKTOP: `${settings.width}x${settings.height}`,
+      // the wrapper would default this to $HOME/.proton, and HOME is a 64m tmpfs.
+      STEAM_COMPAT_DATA_PATH: `${CONTAINER_XDG_DIR}/proton`,
+    })
+  }
+
+  if (game.dataDir.mode === 'arg') {
+    const arg = validateDataDirArg(game.dataDir)
+    const eq = arg.indexOf('=')
+    command.push(proton ? `${arg.slice(0, eq + 1)}${winPath(arg.slice(eq + 1))}` : arg)
+  } else Object.assign(env, game.dataDir.env)
 
   if (game.logFile.mode === 'arg') {
     mounts.push({ type: 'bind', source: hostPath(plan.runDirHost), target: CONTAINER_LOG_DIR })
-    command.push(game.logFile.arg, `${CONTAINER_LOG_DIR}/Player.log`)
+    const log = `${CONTAINER_LOG_DIR}/Player.log`
+    command.push(game.logFile.arg, proton ? winPath(log) : log)
   }
 
   addScratch(mounts, env, plan, identity)
@@ -269,6 +311,11 @@ function mountArgs(mount: Mount): string[] {
 function csvField(field: string): string {
   if (!field.includes(',') && !field.includes('"')) return field
   return `"${field.replaceAll('"', '""')}"`
+}
+
+/** Z: is the unix root inside wine, so /logs/Player.log reaches the game as Z:\logs\Player.log. */
+function winPath(unix: string): string {
+  return `Z:${unix.replaceAll('/', '\\')}`
 }
 
 /**

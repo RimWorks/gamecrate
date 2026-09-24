@@ -18,6 +18,19 @@ case "$*" in
     ;;
 esac
 
+# crane append needs -t even when -o writes a file. fail the way crane fails.
+case "$*" in
+  *"'crane' 'append'"*)
+    case "$*" in
+      *"'-t'"*|*"'--new_tag'"*) : ;;
+      *)
+        printf 'Error: required flag(s) "new_tag" not set\n' >&2
+        exit 1
+        ;;
+    esac
+    ;;
+esac
+
 if [ -n "$FAKE_FAIL_FIRST" ]; then
   count=0
   while IFS= read -r line; do

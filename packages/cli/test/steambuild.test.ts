@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   downloads: [] as string[],
   /** Every out tar craneAppend was asked for, so a test can prove each one is gone. */
   tars: [] as string[],
+  /** The tag the last append wrote into the tar. docker load names the image after it. */
+  appendTag: '',
+  /** What docker load reports. The tar's own tag, unless a test says otherwise. */
+  loadedAs: (): string => state.appendTag,
   gameDir: '',
 }))
 
@@ -31,9 +35,15 @@ vi.mock('../src/image/crane', () => ({
     if (!state.credsRefused) return
     throw new GamecrateError(`no registry credentials for ${ref}`, Exit.Environment, 'set the env vars')
   },
-  craneAppend: async (opts: { out: string }) => {
+  craneAppend: async (opts: { out: string; tag: string }) => {
     state.calls.push(`append ${opts.out}`)
     state.tars.push(opts.out)
+    // crane refuses an append with no -t, so the fake refuses one too
+    if (!opts.tag) {
+      const detail = 'required flag(s) "new_tag" not set'
+      throw new GamecrateError(`crane append for ${opts.out} failed`, Exit.Environment, detail)
+    }
+    state.appendTag = opts.tag
     // a real append leaves a game-sized tar behind, so the fake leaves one too
     await writeFile(opts.out, 'fake oci tar')
   },
@@ -72,7 +82,10 @@ vi.mock('../src/docker/run', async (importOriginal) => {
     ...real,
     capture: (argv: string[]) => {
       state.calls.push(argv.slice(0, 2).join(' '))
-      if (argv[1] === 'load') return Promise.resolve({ code: 0, stdout: 'Loaded image ID: sha256:abc\n', stderr: '' })
+      // the tar carries the tag the append gave it, and that is the name docker prints
+      if (argv[1] === 'load') {
+        return Promise.resolve({ code: 0, stdout: `Loaded image: ${state.loadedAs()}\n`, stderr: '' })
+      }
       if (argv[1] === 'build') {
         const labels: Record<string, string> = {}
         for (let i = 0; i < argv.length; i += 1) {
@@ -141,6 +154,8 @@ beforeEach(() => {
   state.calls.length = 0
   state.downloads.length = 0
   state.tars.length = 0
+  state.appendTag = ''
+  state.loadedAs = () => state.appendTag
   state.credsRefused = false
   state.labels.clear()
   state.mutated.clear()
@@ -227,8 +242,8 @@ describe('steamBuild', () => {
     const results = await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(byVariant(results, 'linux').status).toBe('built')
     expect(state.calls.filter((c) => c === 'docker build')).toHaveLength(1)
-    // one tag before the label build, because FROM needs a ref, then the moving tags after it
-    expect(state.calls.filter((c) => c === 'docker tag')).toHaveLength(4)
+    // the tar already carries the versioned tag, so only the three moving tags are tagged
+    expect(state.calls.filter((c) => c === 'docker tag')).toHaveLength(3)
     expect(state.calls.indexOf('docker build')).toBeLessThan(state.calls.lastIndexOf('docker tag'))
     expect(state.calls).not.toContain('push')
     // the same six a --push cell mutates on, so the two paths cannot drift
@@ -241,6 +256,20 @@ describe('steamBuild', () => {
       'gamecrate.runtime': RUNTIME_BASE.xvfb,
     })
     expect(state.local.get(`${IMAGE}:latest`)).toEqual(state.local.get(`${IMAGE}:1.6.4871`))
+  })
+
+  test('the append is tagged with the versioned ref, so docker load names the image', async () => {
+    await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.appendTag).toBe(`${IMAGE}:1.6.4871`)
+  })
+
+  test('a load that names a different image fails the cell', async () => {
+    // the tar carries its own name now, so a mismatch is the only way to catch a wrong tag
+    state.loadedAs = () => `${IMAGE}:something-else`
+    const results = await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(byVariant(results, 'linux').status).toBe('failed')
+    expect(byVariant(results, 'linux').reason).toContain('docker load failed')
+    expect(state.calls).not.toContain('docker build')
   })
 
   test('a --load cell with no local image builds, and one with an unlabelled image builds too', async () => {

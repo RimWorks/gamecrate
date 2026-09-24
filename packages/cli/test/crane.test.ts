@@ -85,6 +85,7 @@ describe('craneAppend', () => {
       gamePath: '/game',
       base: 'ghcr.io/rimworks/gamecrate/runtime-base@sha256:abc',
       platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1.6.4871',
       out,
     })
     const script = await readFile(argvFile, 'utf8')
@@ -97,6 +98,23 @@ describe('craneAppend', () => {
     expect(script).toContain('linux/amd64')
     expect(script).toContain('-o')
     expect(script).toContain(out)
+    expect(script).toContain("'-t' 'ghcr.io/me/atlas:1.6.4871'")
+  })
+
+  test('a base-less append still carries the tag crane requires', async () => {
+    const { argvFile } = await fakeDocker()
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const out = join(await mkdtemp(join(tmp, 'layers-')), 'ref.tar')
+    await craneAppend({
+      gameDir,
+      include: [],
+      gamePath: '/game',
+      base: null,
+      platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1.6.4871-linux-ref',
+      out,
+    })
+    expect(await readFile(argvFile, 'utf8')).toContain("'-t' 'ghcr.io/me/atlas:1.6.4871-linux-ref'")
   })
 
   test('an include list is prefixed by hand and carries no excludes', async () => {
@@ -112,6 +130,7 @@ describe('craneAppend', () => {
       gamePath: '/game',
       base: null,
       platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1.6.4871-linux-ref',
       out,
     })
     const script = await readFile(argvFile, 'utf8')
@@ -134,6 +153,7 @@ describe('craneAppend', () => {
         gamePath: '/game',
         base: null,
         platform: 'linux/amd64',
+        tag: 'ghcr.io/me/atlas:1',
         out,
       })
     } catch (error) {
@@ -153,6 +173,7 @@ describe('craneAppend', () => {
       gamePath: '/game',
       base: null,
       platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1',
       out: join(outDir, 'x.tar'),
     })
     const [argv] = await runs(argvFile)
@@ -175,6 +196,7 @@ describe('craneAppend', () => {
         gamePath: '/game',
         base: null,
         platform: 'linux/amd64',
+        tag: 'ghcr.io/me/atlas:1',
         out,
       })
     }
@@ -191,6 +213,17 @@ describe('the fake docker', () => {
     const { code, stderr } = await capture(['docker', 'run', 'sh', '-c', 'tar --transform=s,x,y,'])
     expect(code).toBe(1)
     expect(stderr).toContain('unrecognized option')
+  })
+
+  test('refuses an append with no -t, the way crane refuses it', async () => {
+    await fakeDocker()
+    const script = "'crane' 'append' '--platform' 'linux/amd64' '-f' 'l.tar' '-o' 'o.tar'"
+    const bare = await capture(['docker', 'run', 'sh', '-c', script])
+    expect(bare.code).toBe(1)
+    expect(bare.stderr).toContain('required flag(s) "new_tag" not set')
+
+    const tagged = await capture(['docker', 'run', 'sh', '-c', `${script} '-t' 'ghcr.io/me/atlas:1'`])
+    expect(tagged.code).toBe(0)
   })
 })
 

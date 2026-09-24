@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { imageProblem, markerProblem, readImageFacts } from '../launch/image'
 import type { LaunchPlan, Problem } from '../types'
 import { GamecrateError } from '../types'
 import { resolveIdentity } from './identity'
@@ -76,9 +77,21 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
   const image = plan.gameConfig.image
   const where = `/games/${plan.game}/image/ref`
 
-  const present = await capture(['docker', 'image', 'inspect', image.ref])
-  if (present.code === 0) {
+  const facts = await readImageFacts(image.ref)
+  const problem = imageProblem({ game: plan.game, ref: image.ref, mode: plan.mode, facts })
+
+  if (facts.present) {
     await checkImageRunnable(image.ref, where, plan.game, problems)
+    if (problem) problems.push(problem)
+    // a missing marker is a precondition like any other, and finding it here beats finding it
+    // after buildLocalMods has spent minutes compiling assemblies.
+    const marker = markerProblem({ game: plan.game, facts, marker: plan.marker })
+    if (marker) problems.push(marker)
+    return
+  }
+
+  if (image.ref.trim() === '') {
+    if (problem) problems.push(problem)
     return
   }
 
@@ -99,16 +112,17 @@ async function checkImage(plan: LaunchPlan, problems: Problem[]): Promise<void> 
     problems.push({
       where,
       message: `not authenticated to ${host}, so ${image.ref} cannot be pulled`,
-      suggestion: `docker login ${host}`,
+      suggestion: `docker login ${host}, or gamecrate steam build ${plan.game} to make it locally`,
     })
     return
   }
 
-  problems.push({
-    where,
-    message: `image ${image.ref} is not present locally and cannot be pulled: ${firstLine(remote.stderr) || exitCode(remote.code)}`,
-    suggestion: host ? `docker login ${host}` : undefined,
-  })
+  if (problem) {
+    problems.push({
+      ...problem,
+      message: `${problem.message}: ${firstLine(remote.stderr) || exitCode(remote.code)}`,
+    })
+  }
 }
 
 /** A headed run with no display server opens nothing and reports no error of its own. */

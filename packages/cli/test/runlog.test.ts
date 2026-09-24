@@ -57,7 +57,8 @@ async function fixture(): Promise<{ dir: string; env: Record<string, string> }> 
   await mkdir(join(dir, 'game'), { recursive: true })
   await writeFile(join(dir, 'game', 'AtlasLinux'), '')
   await mkdir(join(dir, 'bin'), { recursive: true })
-  await writeFile(join(dir, 'bin', 'docker'), '#!/bin/sh\nexit 0\n')
+  // image inspect has to answer: an id, and a gamecrate.runtime label, or a headless plan is refused.
+  await writeFile(join(dir, 'bin', 'docker'), '#!/bin/sh\ncase "$1 $2" in "image inspect") echo stub;; esac\nexit 0\n')
   await chmod(join(dir, 'bin', 'docker'), 0o755)
 
   await writeFile(

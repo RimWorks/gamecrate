@@ -9,14 +9,9 @@ import { containerName, CONTAINER_LOG_DIR } from '../docker/spec'
 import { GamecrateError, Exit } from '../types'
 import type { BuildPolicy, GameConfig, LaunchPlan, PullPolicy } from '../types'
 
-async function inherit(argv: string[], stdin?: Uint8Array): Promise<number> {
-  const proc = spawnArgv(argv, [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'])
+async function inherit(argv: string[]): Promise<number> {
+  const proc = spawnArgv(argv, ['ignore', 'pipe', 'pipe'])
   const code = exited(proc)
-  if (stdin !== undefined) {
-    // A child that never reads, or never started, must surface as its exit code, not a throw.
-    proc.stdin!.on('error', () => {})
-    proc.stdin!.end(stdin)
-  }
   await Promise.all([
     forwardOutput(proc.stdout!, process.stdout),
     forwardOutput(proc.stderr!, process.stderr),
@@ -32,7 +27,7 @@ export async function imageDigest(ref: string): Promise<string | null> {
 }
 
 /** One label off an image, or null when the image or the label is missing. */
-async function imageLabel(ref: string, label: string): Promise<string | null> {
+export async function imageLabel(ref: string, label: string): Promise<string | null> {
   const format = `{{index .Config.Labels "${label}"}}`
   const { code, stdout } = await capture(['docker', 'image', 'inspect', '--format', format, ref])
   const value = stdout.trim()
@@ -79,78 +74,6 @@ async function buildImage(
   if ((await inherit(['docker', 'build', '--tag', image.ref, image.context])) !== 0) {
     throw new GamecrateError(`docker build failed for ${image.ref}`, Exit.Environment)
   }
-}
-
-/**
- * Packages headless and screenshot modes need. Neither game's published image ships them,
- * and they live in two repos with different publish flows, so gamecrate adds them itself
- * rather than making a third game mean editing a third repo.
- */
-const RUNTIME_PACKAGES = ['xorg-server-xvfb', 'xorg-xwd', 'imagemagick', 'mesa', 'ttf-dejavu']
-const RUNTIME_SUFFIX = '-gamecrate'
-const BASE_LABEL = 'gamecrate.base'
-
-/**
- * Tag for the derived image, keeping the registry path readable. A tag only exists after the
- * last `/`: before it a colon is a registry port, and an `@` means a digest no suffix can ride.
- */
-export function runtimeLayerRef(ref: string): string {
-  const at = ref.indexOf('@')
-  const head = at > 0 ? ref.slice(0, at) : ref
-  const colon = head.lastIndexOf(':')
-  const tagged = colon > head.lastIndexOf('/')
-  const name = tagged ? head.slice(0, colon) : head
-  if (at > 0) {
-    // `name:tag@sha256:...` is legal, and the tag has to go: two tags is not a ref docker takes.
-    const digest = ref.slice(at + 1)
-    const hex = digest.slice(digest.indexOf(':') + 1)
-    return `${name}:sha-${hex.slice(0, 12)}${RUNTIME_SUFFIX}`
-  }
-  return `${name}:${tagged ? head.slice(colon + 1) : 'latest'}${RUNTIME_SUFFIX}`
-}
-
-/**
- * Builds (once) a thin layer over the adapter's image carrying an X server and imagemagick.
- * Detects the package manager so a debian-based game image works the same as an Arch one.
- */
-export async function ensureRuntimeLayer(ref: string): Promise<string> {
-  const derived = runtimeLayerRef(ref)
-  const base = await imageDigest(ref)
-
-  // Keyed on the base image id, not just presence: this layer used to be built once and kept
-  // forever, so a rebuilt base left it months stale with none of the base's newer binaries.
-  if (base !== null && (await imageLabel(derived, BASE_LABEL)) === base) return derived
-
-  const pacman = `pacman -Syu --noconfirm --needed ${RUNTIME_PACKAGES.join(' ')} && pacman -Scc --noconfirm`
-  const apt =
-    'apt-get update && apt-get install -y --no-install-recommends' +
-    ' xvfb x11-apps imagemagick libgl1-mesa-dri fonts-dejavu && rm -rf /var/lib/apt/lists/*'
-  // One line per RUN: shell continuations inside a heredoc-fed Dockerfile are a quoting trap.
-  const install =
-    `if command -v pacman >/dev/null 2>&1; then ${pacman};` +
-    ` elif command -v apt-get >/dev/null 2>&1; then ${apt};` +
-    ' else echo "no supported package manager in the base image" >&2; exit 1; fi'
-
-  const dockerfile = [
-    `FROM ${ref}`,
-    'USER root',
-    `RUN ${install}`,
-    'RUN command -v xvfb-run && command -v Xvfb',
-    `LABEL ${BASE_LABEL}=${base}`,
-  ].join('\n')
-
-  const code = await inherit(
-    ['docker', 'build', '--tag', derived, '-f', '-', '.'],
-    new TextEncoder().encode(dockerfile),
-  )
-  if (code !== 0) {
-    throw new GamecrateError(
-      `could not build the offscreen runtime layer ${derived}`,
-      Exit.Environment,
-      'headless and screenshot modes need an X server in the image',
-    )
-  }
-  return derived
 }
 
 /** A mod builds when it has a .csproj/.slnx and the policy asks for it. */
@@ -453,8 +376,12 @@ export async function captureScreenshot(container: string, plan: LaunchPlan): Pr
   const script =
     'D=":$(ls /tmp/.X11-unix 2>/dev/null | head -1 | tr -d X)";' +
     ' [ "$D" = ":" ] && { echo "no X socket in the container" >&2; exit 1; };' +
+    // ImageMagick 6 calls it convert, 7 calls it magick. both runtime bases are ubuntu 24.04,
+    // which ships 6, but someone can point gamecrate at a base with 7.
+    ' M=$(command -v magick || command -v convert);' +
+    ' [ -z "$M" ] && { echo "no imagemagick in the container" >&2; exit 1; };' +
     ` import -display "$D" -window root ${target} 2>/dev/null` +
-    ` || xwd -root -display "$D" | magick xwd:- ${target}`
+    ` || xwd -root -display "$D" | "$M" xwd:- ${target}`
 
   const code = await inherit(['docker', 'exec', container, 'sh', '-c', script])
   const host = join(plan.runDirHost, name)
