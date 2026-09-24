@@ -205,6 +205,8 @@ export interface SteamBranch {
   password?: boolean
   /** Extra moving tags for this branch, beside the version and `latest` forms. */
   tags?: string[]
+  /** Executable per variant name, when this branch ships a different one. */
+  executable?: Record<string, string>
 }
 
 /** How a plugin's game image gets built from steam. */

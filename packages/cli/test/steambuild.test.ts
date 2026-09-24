@@ -313,6 +313,26 @@ describe('steamBuild', () => {
     expect(state.local.get(`${IMAGE}:latest`)).toEqual(state.local.get(`${IMAGE}:1.6.4871`))
   })
 
+  // a branch that ships a different engine ships a different launcher, and the variant alone
+  // cannot say so: 2.0 is ./RimWorld on linux and AltWin64.exe on windows
+  test('a branch can override the executable per variant', async () => {
+    const renamed = {
+      ...ONE,
+      branches: [{ name: 'public', executable: { linux: './RimWorld' } }],
+    }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorld')
+  })
+
+  test('a branch override for another variant leaves this one alone', async () => {
+    const renamed = {
+      ...ONE,
+      branches: [{ name: 'public', executable: { windows: 'AltWin64.exe' } }],
+    }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorldLinux')
+  })
+
   test('the append is tagged with the versioned ref, so docker load names the image', async () => {
     await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(state.appendTag).toBe(`${IMAGE}:1.6.4871`)

@@ -26,6 +26,12 @@ export async function imageDigest(ref: string): Promise<string | null> {
   return code === 0 && id.length > 0 ? id : null
 }
 
+/** One file out of an image, for a fact the host copy would answer wrongly. */
+export async function readFromImage(ref: string, path: string): Promise<string | null> {
+  const { code, stdout } = await capture(['docker', 'run', '--rm', '--entrypoint', 'cat', ref, path])
+  return code === 0 ? stdout : null
+}
+
 /** One label off an image, or null when the image or the label is missing. */
 export async function imageLabel(ref: string, label: string): Promise<string | null> {
   const format = `{{index .Config.Labels "${label}"}}`

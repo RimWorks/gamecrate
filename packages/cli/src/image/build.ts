@@ -206,7 +206,7 @@ function labelsFor(input: SteamBuildInput, ctx: CellContext, base: string | null
   const labels: Record<string, string> = {
     'gamecrate.variant': ctx.variant.name,
     'gamecrate.branch': ctx.branch.name,
-    'gamecrate.executable': ctx.variant.executable ?? input.executable,
+    'gamecrate.executable': ctx.branch.executable?.[ctx.variant.name] ?? ctx.variant.executable ?? input.executable,
     'gamecrate.launcher': ctx.variant.base === 'proton' ? 'proton' : 'direct',
   }
   if (ctx.published !== null) labels['steam.buildid'] = ctx.published

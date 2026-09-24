@@ -266,7 +266,14 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
 
 /** Exported so a config-less `steam build` gets the same refusals a config file would. */
 export const steamBuildSchema = obj({
-  branches: z.array(obj({ name: str, password: bool.optional(), tags: strArray.optional() }), {
+  branches: z.array(
+    obj({
+      name: str,
+      password: bool.optional(),
+      tags: strArray.optional(),
+      executable: z.record(str, str).optional(),
+    }),
+    {
     error: 'expected an array',
   }),
   variants: z.array(

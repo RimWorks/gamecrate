@@ -979,6 +979,36 @@ describe('generated config files', () => {
     expect(expansions).not.toContain('Atlasco.Atlas ')
   })
 
+  // an image-sourced game carries its own Version.txt, and the host copy is a different release
+  test('the version comes out of the image when the game is not mounted', async () => {
+    const bin = await mkdtemp(join(tmp, 'fakedocker-'))
+    await writeFile(join(bin, 'docker'), '#!/bin/sh\necho "1.9.9999 rev777"\n')
+    await chmod(join(bin, 'docker'), 0o755)
+    const game = {
+      ...atlas({ dsd: { mods: [] } }),
+      gameFiles: { source: 'image' as const, container: '/game' },
+      image: { ref: 'ghcr.io/me/atlas:1', acquire: 'pull' as const },
+    }
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('rw-core'), kind: 'core' }])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    await ensureProfileTree(plan)
+    const path = process.env['PATH']
+    process.env['PATH'] = bin
+    try {
+      const written = await readFile(await generateModsConfig(plan), 'utf8')
+      expect(written).toContain('version 1.9.9999 rev777')
+      expect(plan.warnings.some((w) => w.includes('Version.txt'))).toBe(false)
+    } finally {
+      process.env['PATH'] = path
+    }
+  })
+
   test('each plugin parses its own Version.txt; the formats are not shared', async () => {
     const game = beacon({ qol: { mods: [] } })
     index = makeIndex([

@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+import { readFromImage } from './prepare'
 import { expandHome } from '../config/load'
 import { GamecrateError, Exit } from '../types'
 import type { GamePlugin } from '../plugin'
@@ -10,15 +11,26 @@ async function readInstallVersion(
   game: GameConfig,
   plugin: GamePlugin,
 ): Promise<{ version: string; buildNumber: number } | null> {
+  const raw = await installVersionText(game)
+  if (raw === null) return null
+  return plugin.parseVersion(raw.replace(/^﻿/, '').trim())
+}
+
+/** The host copy answers for a mounted game; an image-sourced one carries its own. */
+async function installVersionText(game: GameConfig): Promise<string | null> {
+  if (game.gameFiles.source !== 'mount') {
+    const ref = game.image?.ref
+    return ref === undefined || ref === ''
+      ? null
+      : await readFromImage(ref, `${game.gameFiles.container}/${game.version.file}`)
+  }
   const host = game.gameFiles.host
-  if (game.gameFiles.source !== 'mount' || host === undefined) return null
-  let raw: string
+  if (host === undefined) return null
   try {
-    raw = await readFile(join(expandHome(host), game.version.file), 'utf8')
+    return await readFile(join(expandHome(host), game.version.file), 'utf8')
   } catch {
     return null
   }
-  return plugin.parseVersion(raw.replace(/^﻿/, '').trim())
 }
 
 /** The expansions actually installed, ordered by the game's declared dlc list. */
