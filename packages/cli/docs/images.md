@@ -135,6 +135,11 @@ gamecrate refs rimworld
 The path goes to standard output on its own, so a build step can capture it. The image digest
 and the assembly count go to standard error.
 
+`refs` resolves the image the same way a launch does. Run it from a directory whose
+`.gamecrate.yml` pins a `gameVersion`, and you get that build's assemblies. `--image <ref>`
+overrides both. Without this, a project could compile against one build while the container
+runs another.
+
 Extraction runs once per image digest and is cached after. Gamecrate also keeps a stable
 symlink at `~/.cache/gamecrate/refs/current/<game>`, which always points at the newest
 extraction. A project file can point at that path directly:

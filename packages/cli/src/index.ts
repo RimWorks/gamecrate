@@ -154,7 +154,7 @@ async function dispatch(
     case 'doctor':
       return doctor(config, plugins)
     case 'refs':
-      return refs(args, config)
+      return refs(args, config, defaults)
     case 'clean':
       return clean(args, config, defaults)
     case 'clone':
@@ -164,7 +164,7 @@ async function dispatch(
     case 'verify':
       return verify(args, config, plugins, defaults)
     case 'build':
-      return build(args, config)
+      return build(args, config, defaults)
     case 'ps':
       return ps(args, config)
     case 'stop':
@@ -250,7 +250,7 @@ async function run(
   const game = requireGame(args, config)
   const profile = launchProfile(args, defaults, config.games[game]!)
 
-  const gameConfig = withImageOverride(config.games[game]!, imageFor(config.games[game]!, profile, args.image))
+  const gameConfig = gameForImage(args, config, defaults, game)
   config.games[game] = gameConfig
   // --dry-run and --print-plan resolve without side effects, and a clone is a side effect.
   const allowFetch = !args.dryRun && !args.printPlan
@@ -731,10 +731,19 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
   return `${runner.argv[0]} (${where})`
 }
 
+/**
+ * The image a launch from here would bind. Without this a csproj references one build while
+ * the container runs another, which is the disagreement refs exists to stop.
+ */
+function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
+  const base = config.games[game]!
+  return withImageOverride(base, imageFor(base, launchProfile(args, defaults, base), args.image))
+}
+
 /** The path alone on stdout, so an MSBuild Exec can capture it without stripping anything. */
-async function refs(args: ParsedArgs, config: RootConfig): Promise<number> {
+async function refs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  const found = await extractRefs(game, config.games[game]!)
+  const found = await extractRefs(game, gameForImage(args, config, defaults, game))
   if (args.json) {
     process.stdout.write(`${JSON.stringify(found, null, 2)}\n`)
     return Exit.Ok
@@ -1181,10 +1190,11 @@ async function waitFor(
   return record.code
 }
 
-async function build(args: ParsedArgs, config: RootConfig): Promise<number> {
+async function build(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  await acquireImage(game, config.games[game]!, args.pull ?? 'always')
-  status(`${config.games[game]!.image.ref} is ready`)
+  const gameConfig = gameForImage(args, config, defaults, game)
+  await acquireImage(game, gameConfig, args.pull ?? 'always')
+  status(`${gameConfig.image.ref} is ready`)
   return Exit.Ok
 }
 

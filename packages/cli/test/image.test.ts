@@ -118,6 +118,22 @@ describe('run wires the checks in before staging', () => {
   test('the runtime layer build is gone', () => {
     expect(source).not.toContain('ensureRuntimeLayer')
   })
+
+  // a csproj that references one build while the container runs another is the disagreement
+  // refs exists to stop, and build picking a different image is the same bug
+  test('refs and build resolve the image the same way a launch does', () => {
+    for (const name of ['refs', 'build']) {
+      expect(body(name)).toContain('gameForImage(args, config, defaults, game)')
+    }
+    expect(source).toContain('withImageOverride(base, imageFor(base, launchProfile(args, defaults, base), args.image))')
+  })
+
+  test('refs keeps stdout to the path alone, so an MSBuild Exec captures nothing else', () => {
+    const handler = body('refs')
+    expect(handler.match(/process\.stdout\.write/g)).toHaveLength(2)
+    expect(handler).toContain('process.stdout.write(`${found.dir}\\n`)')
+    expect(handler).toContain('status(')
+  })
 })
 
 describe('imageFor', () => {

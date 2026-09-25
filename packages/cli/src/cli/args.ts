@@ -90,9 +90,9 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'refs',
     summary: "a directory of the game's managed assemblies, for a mod's csproj to reference",
-    usage: '<game>',
-    positionals: ['game'],
-    flags: [],
+    usage: '<game> [profile]',
+    positionals: ['game', 'profile'],
+    flags: ['--image'],
   },
   {
     name: 'doctor',
@@ -153,9 +153,9 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'build',
     summary: 'build or pull the runtime image, no launch',
-    usage: '<game>',
-    positionals: ['game'],
-    flags: ['--pull'],
+    usage: '<game> [profile]',
+    positionals: ['game', 'profile'],
+    flags: ['--pull', '--image'],
   },
   {
     name: 'steam',

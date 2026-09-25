@@ -275,6 +275,16 @@ describe('flag rejection', () => {
     expect(args.profile).toBe('kitted')
   })
 
+  test('refs and build take a profile and --image, so they can name the pinned build', () => {
+    for (const verb of ['refs', 'build']) {
+      const args = parseArgs([verb, 'atlas', 'kitted', '--image', 'ghcr.io/me/atlas:2.0'], NO_ENV)
+      expect(args.subcommand).toBe(verb)
+      expect(args.game).toBe('atlas')
+      expect(args.profile).toBe('kitted')
+      expect(args.image).toBe('ghcr.io/me/atlas:2.0')
+    }
+  })
+
   test('--replace and --no-replace contradict', () => {
     expect(parseArgs(['beacon', '--no-replace'], NO_ENV).replace).toBe(false)
     expect(fails(['beacon', '--replace', '--no-replace']).message).toContain('contradict')

@@ -26,12 +26,12 @@ The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
 | `wait <game> [profile]` | Block until a detached run ends, then exit with its code |
 | `ps` | Every live run: game, profile/instance, mode, pid, container, then uptime or status |
 | `stop <game> [profile]` | Stop a detached run and release its lock |
-| `build <game>` | Build or pull the runtime image, no launch |
+| `build <game> [profile]` | Build or pull the runtime image, no launch |
 | `steam build <game>` | Download the game from Steam and append it onto a runtime base as an image |
 | `steam login` | Sign in to Steam once and store the session for `steam build` |
 | `shell <game> [profile]` | Same mounts, bash instead of the game |
 | `verify <game> [profile]` | What the running container bound, and whether it looks current |
-| `refs <game>` | Print a directory of the game's managed assemblies for a mod project to reference |
+| `refs <game> [profile]` | Print a directory of the game's managed assemblies for a mod project to reference |
 | `config edit` | Open the global config in `$VISUAL` or `$EDITOR`, validate on save |
 | `fix-perms <game> [profile]` | Chown foreign-owned files back to the caller |
 | `help [topic]` | Help for a subcommand or a game |
@@ -109,10 +109,11 @@ Container and build:
 - `--detach` launches in the background. `--no-detach` stays in the foreground, whatever the
   profile or the repo config asks for.
 
-Steam images. `steam build` takes all of these, and `run` takes `--image`:
+Steam images. `steam build` takes all of these, and `run`, `build` and `refs` take `--image`:
 
-- `--image <ref>` names the target repository for `steam build`, without a tag. On `run` it
-  launches that exact ref instead of the configured one, and reads the game out of the image.
+- `--image <ref>` names the target repository for `steam build`, without a tag. On `run`,
+  `build` and `refs` it names that exact ref instead of the configured one, and reads the game
+  out of the image.
 - `--beta <name>` builds only that Steam branch. Repeatable. Default: every branch the plugin
   declares.
 - `--variant <name>` builds only that image variant. Repeatable. Default: every variant.
