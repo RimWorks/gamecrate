@@ -59,9 +59,14 @@ The [`@gamecrate/cli` README](packages/cli) has a config you can copy and links 
 ```sh
 npm ci
 npm run lint
+npm run build
 npm run typecheck
 npm test
 ```
+
+Build before you typecheck. `@gamecrate/rimworld` typechecks against the declarations
+`@gamecrate/cli` emits, and `dist` is gitignored, so a clean clone fails until the build has run
+once. CI runs the same steps in the same order.
 
 Prose goes through [Vale](https://vale.sh). Fetch the Google package once, then check the docs:
 
