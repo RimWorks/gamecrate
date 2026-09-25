@@ -11,19 +11,34 @@ export interface ImageFacts {
   runtime: string | null
   launcher: string | null
   executable: string | null
+  /** The cell that produced this image, and the steam build it carries. */
+  branch: string | null
+  variant: string | null
+  buildid: string | null
 }
 
-const NO_IMAGE: ImageFacts = { present: false, runtime: null, launcher: null, executable: null }
+const NO_IMAGE: ImageFacts = {
+  present: false,
+  runtime: null,
+  launcher: null,
+  executable: null,
+  branch: null,
+  variant: null,
+  buildid: null,
+}
 
 export async function readImageFacts(ref: string): Promise<ImageFacts> {
   if (ref.trim() === '') return NO_IMAGE
   if ((await imageDigest(ref)) === null) return NO_IMAGE
-  const [runtime, launcher, executable] = await Promise.all([
+  const [runtime, launcher, executable, branch, variant, buildid] = await Promise.all([
     imageLabel(ref, 'gamecrate.runtime'),
     imageLabel(ref, 'gamecrate.launcher'),
     imageLabel(ref, 'gamecrate.executable'),
+    imageLabel(ref, 'gamecrate.branch'),
+    imageLabel(ref, 'gamecrate.variant'),
+    imageLabel(ref, 'steam.buildid'),
   ])
-  return { present: true, runtime, launcher, executable }
+  return { present: true, runtime, launcher, executable, branch, variant, buildid }
 }
 
 /** The labels buildRunSpec reads. An unknown launcher is dropped, not passed through. */

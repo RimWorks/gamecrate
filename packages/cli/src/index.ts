@@ -28,7 +28,9 @@ import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, ST
 import { buildRunSpec, containerName, refuseProtonHeaded, windowTitle } from './docker/spec'
 import { adoptNewWindow } from './docker/window'
 import { generateModsConfig, mergePrefs } from './launch/generate'
+import { createInterface } from 'node:readline/promises'
 import { imageFor, imageLaunch, imageProblem, markerProblem, readImageFacts, withImageOverride } from './launch/image'
+import { offerRebuild } from './launch/updates'
 import type { ImageFacts } from './launch/image'
 import type { ImageLaunch } from './docker/spec'
 import {
@@ -443,7 +445,8 @@ async function readyImage(
     if (absent === null) throw error
     throw new GamecrateError(absent.message, Exit.Environment, absent.suggestion)
   }
-  const facts = await readImageFacts(ref)
+  let facts = await readImageFacts(ref)
+  if (await rebuiltForUpdate(plan, config, args)) facts = await readImageFacts(ref)
   const problem = imageProblem({ game, ref, mode: plan.mode, facts })
   if (problem !== null) {
     throw new GamecrateError(problem.message, Exit.Environment, problem.suggestion)
@@ -458,6 +461,39 @@ async function readyImage(
     throw new GamecrateError(needsMarker.message, Exit.Usage, needsMarker.suggestion)
   }
   return { facts, imageStart }
+}
+
+/**
+ * A rebuild is gigabytes, so it needs a person saying yes. Anything without a terminal warns
+ * and launches on the old image instead of blocking forever on a prompt nobody can answer.
+ */
+async function rebuiltForUpdate(plan: LaunchPlan, config: RootConfig, args: ParsedArgs): Promise<boolean> {
+  const facts = await readImageFacts(config.games[plan.game]!.image.ref)
+  let rebuilt = false
+  await offerRebuild({
+    game: plan.game,
+    config,
+    args,
+    facts,
+    cwd: process.cwd(),
+    configFile: await globalConfigPath(),
+    ask: async (question) => {
+      if (args.yes) return (rebuilt = true)
+      if (process.stdin.isTTY !== true || args.json) {
+        warn('no terminal to ask, so the launch keeps the current image')
+        return false
+      }
+      const rl = createInterface({ input: process.stdin, output: process.stderr })
+      try {
+        const said = (await rl.question(question)).trim().toLowerCase()
+        rebuilt = said === 'y' || said === 'yes'
+        return rebuilt
+      } finally {
+        rl.close()
+      }
+    },
+  })
+  return rebuilt
 }
 
 /**

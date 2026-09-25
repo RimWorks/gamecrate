@@ -308,7 +308,12 @@ const game = obj({
     requiredWhen('arg', (v) => v['mode'] === 'arg'),
     requiredWhen('from', (v) => v['mode'] === 'copy-out'),
   ),
-  image: obj({ ref: str, acquire: oneOf(['pull', 'build']), context: str.optional() }).check(
+  image: obj({
+    ref: str,
+    acquire: oneOf(['pull', 'build']),
+    context: str.optional(),
+    updates: obj({ check: bool.optional(), everyHours: num.optional() }).optional(),
+  }).check(
     requiredWhen('context', (v) => v['acquire'] === 'build'),
   ),
   executable: str,

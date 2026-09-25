@@ -103,6 +103,15 @@ export interface ImageSpec {
   acquire: 'pull' | 'build'
   /** Required when acquire is "build". */
   context?: string
+  updates?: UpdateCheckSpec
+}
+
+/** Whether a launch looks for a newer game build, and how often it bothers. */
+export interface UpdateCheckSpec {
+  /** Default true. */
+  check?: boolean
+  /** Hours between checks for one image. Default 6. 0 checks every launch. */
+  everyHours?: number
 }
 
 /** How the engine is told where its data directory is. Verified per game. */

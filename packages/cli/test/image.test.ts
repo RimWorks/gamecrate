@@ -12,10 +12,14 @@ const built: ImageFacts = {
   runtime: 'sha256:abc',
   launcher: 'direct',
   executable: './RimWorldLinux',
+  branch: 'public',
+  variant: 'linux',
+  buildid: '23969874',
 }
 const proton: ImageFacts = { ...built, launcher: 'proton', executable: 'RimWorldWin64.exe' }
-const foreign: ImageFacts = { present: true, runtime: null, launcher: null, executable: null }
-const missing: ImageFacts = { present: false, runtime: null, launcher: null, executable: null }
+const blank = { runtime: null, launcher: null, executable: null, branch: null, variant: null, buildid: null }
+const foreign: ImageFacts = { present: true, ...blank }
+const missing: ImageFacts = { present: false, ...blank }
 
 describe('imageProblem', () => {
   test('an image somebody else built is refused offscreen, naming the command', () => {

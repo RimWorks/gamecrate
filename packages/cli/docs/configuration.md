@@ -88,6 +88,10 @@ three entries under `dlc` and the game has three, not the plugin's five plus you
 same holds for `modes`, `scanRoots`, and `saveExtensions`. To add one DLC, copy the plugin's
 full list and append to it.
 
+The `image.updates` block controls the staleness check a launch runs: `check` turns it on or off,
+and `everyHours` sets how long one answer lasts. [Game images](images.md#checking-for-a-newer-build)
+covers what it does.
+
 Two arrays are exceptions. `steamBuild.branches` concatenates, matched on `name`, so you
 add a private beta without copying the plugin's list. Your fields win on a name the plugin
 already declares, and a new name lands at the end.

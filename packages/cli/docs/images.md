@@ -95,6 +95,21 @@ therefore costs seconds rather than gigabytes.
 
 `--force` builds anyway.
 
+## Checking for a newer build
+
+A launch compares the image's `steam.buildid` label against what Steam publishes, then offers to
+rebuild. The check costs about four seconds and needs a Steam session. So it runs at most once
+every six hours per image. An image gamecrate did not build is never checked at all.
+
+```json
+{ "image": { "ref": "ghcr.io/you/rimworld-game", "updates": { "check": true, "everyHours": 6 } } }
+```
+
+`check: false` turns it off. `everyHours: 0` checks every launch.
+
+A rebuild downloads the game again, so gamecrate asks first. `--yes` answers for you. With no
+terminal to ask, such as a detached or CI run, it warns and launches on the image you have.
+
 ## Launching what you built
 
 ```sh
