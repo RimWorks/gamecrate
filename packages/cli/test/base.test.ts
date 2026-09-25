@@ -12,7 +12,7 @@ describe('resolveBase', () => {
     expect(resolveBase('none', 'ghcr.io/example/other@sha256:abc')).toBeNull()
   })
 
-  test('a known kind resolves to its pinned digest', () => {
+  test('a known kind resolves to its pinned tag', () => {
     expect(resolveBase('xvfb')).toBe(RUNTIME_BASE.xvfb)
     expect(resolveBase('proton')).toBe(RUNTIME_BASE.proton)
   })
@@ -39,9 +39,11 @@ describe('resolveBase', () => {
 })
 
 describe('RUNTIME_BASE', () => {
-  test('every pin is a digest ref on the gamecrate ghcr path', () => {
+  // a major tag, so an apt fix reaches a released cli. never latest: that lets a breaking
+  // base change reach one too, and never a digest, which needs a release per rebuild
+  test('every pin is a major tag on the gamecrate ghcr path', () => {
     for (const ref of Object.values(RUNTIME_BASE)) {
-      expect(ref).toMatch(/^ghcr\.io\/rimworks\/gamecrate\/[a-z-]+@sha256:[0-9a-f]{64}$/)
+      expect(ref).toMatch(/^ghcr\.io\/rimworks\/gamecrate\/[a-z-]+:[0-9]+$/)
     }
   })
 })

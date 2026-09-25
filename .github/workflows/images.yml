@@ -43,11 +43,15 @@ jobs:
         run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.name }}" >> "$GITHUB_ENV"
 
       # both Dockerfiles COPY scripts/headless-common.sh, a path relative to the images context
+      # :1 is what base.ts names, so an apt fix reaches a released cli. A change that breaks
+      # an older gamecrate gets :2 and a base.ts commit, never a silent :1 push.
       - name: Build
-        run: docker build -t "$IMAGE:latest" -f "images/${{ matrix.file }}" images
+        run: docker build -t "$IMAGE:1" -t "$IMAGE:latest" -f "images/${{ matrix.file }}" images
 
       - name: Push
-        run: docker push "$IMAGE:latest"
+        run: |
+          docker push "$IMAGE:1"
+          docker push "$IMAGE:latest"
 
       - name: Report digest
         run: |

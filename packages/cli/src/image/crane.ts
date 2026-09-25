@@ -312,6 +312,17 @@ export async function craneMutateLabels(ref: string, labels: Record<string, stri
   await runOnce(craneArgv([], ref, [args]), `crane mutate ${ref}`)
 }
 
+/**
+ * The platform manifest a tag resolves to, so an image records the base it was built on rather
+ * than the moving tag. Never the index digest: that is not what a runtime pulls.
+ */
+export async function craneDigest(ref: string, platform: string): Promise<string | null> {
+  const argv = craneArgv([], ref, [['crane', 'digest', '--platform', platform, ref]])
+  const { code, stdout } = await capture(argv)
+  const digest = stdout.trim()
+  return code === 0 && digest.startsWith('sha256:') ? digest : null
+}
+
 /** null when the image or its config cannot be read. An empty record means no labels. */
 export async function craneLabels(ref: string): Promise<Record<string, string> | null> {
   const { code, stdout } = await capture(craneArgv([], ref, [['crane', 'config', ref]]))

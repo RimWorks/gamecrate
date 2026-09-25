@@ -11,7 +11,7 @@ import { Exit, GamecrateError } from '../types'
 import type { RootConfig, SteamBranch, SteamVariant } from '../types'
 
 import { resolveBase } from './base'
-import { checkRegistryAuthEarly, craneAppend, craneLabels, craneMutateLabels, cranePush, craneTag } from './crane'
+import { checkRegistryAuthEarly, craneAppend, craneDigest, craneLabels, craneMutateLabels, cranePush, craneTag } from './crane'
 import { decideGate } from './gate'
 import { branchPassword } from './input'
 import type { SteamBuildInput } from './input'
@@ -136,6 +136,8 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     mkdirSync(layers, { recursive: true })
     const tar = join(layers, `${branch.name}-${variant.name}-${version}.tar`)
     const base = resolveBase(variant.base, opts.baseOverride)
+    // the tag is what we append onto, the digest is what the image records it was built on
+    const baseDigest = base === null ? null : await resolvedBase(base, opts.platform)
     const versioned = `${input.image}:${tags[0]!}`
     try {
       say(`appending onto ${base ?? 'scratch'}`)
@@ -152,7 +154,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       if (opts.push) {
         say(`pushing ${versioned}`)
         await cranePush(tar, versioned)
-        await craneMutateLabels(versioned, labelsFor(input, ctx, base))
+        await craneMutateLabels(versioned, labelsFor(input, ctx, baseDigest))
         // only now: a half-pushed build must not move latest
         for (const tag of tags.slice(1)) await craneTag(versioned, tag)
       }
@@ -160,7 +162,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       if (opts.load && base !== null) {
         say(`loading ${versioned}`)
         await dockerLoad(tar, versioned)
-        await dockerLabel(versioned, labelsFor(input, ctx, base))
+        await dockerLabel(versioned, labelsFor(input, ctx, baseDigest))
         // off the labelled ref, so a moving tag never points at an unlabelled image
         for (const tag of tags.slice(1)) await dockerTag(versioned, `${input.image}:${tag}`)
       }
@@ -199,6 +201,13 @@ async function download(
     say(`reusing the ${ctx.branch.name} ${key} download`)
   }
   return (await pending).dir
+}
+
+/** A tag records as the digest it resolved to. An unreadable one records as itself. */
+async function resolvedBase(base: string, platform: string): Promise<string> {
+  if (base.includes('@sha256:')) return base
+  const digest = await craneDigest(base, platform)
+  return digest === null ? base : `${base.split(':')[0]!}@${digest}`
 }
 
 /** What phase 5 reads back off the image. */

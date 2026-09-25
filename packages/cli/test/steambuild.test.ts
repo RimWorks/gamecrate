@@ -81,6 +81,8 @@ vi.mock('../src/image/crane', () => ({
     return Promise.resolve()
   },
   craneLabels: (ref: string) => Promise.resolve(state.labels.get(ref) ?? null),
+  // the real one resolves a tag to the platform manifest; the fake answers a stable digest
+  craneDigest: () => Promise.resolve(`sha256:${'b'.repeat(64)}`),
 }))
 
 vi.mock('../src/mods/steamcmd', async (importOriginal) => {
@@ -130,7 +132,6 @@ vi.mock('../src/docker/run', async (importOriginal) => {
   }
 })
 
-import { RUNTIME_BASE } from '../src/image/base'
 import { steamBuild } from '../src/image/build'
 import type { CellResult, SteamBuildOptions } from '../src/image/build'
 
@@ -313,7 +314,8 @@ describe('steamBuild', () => {
       'gamecrate.branch': 'public',
       'gamecrate.executable': './RimWorldLinux',
       'gamecrate.launcher': 'direct',
-      'gamecrate.runtime': RUNTIME_BASE.xvfb,
+      // the tag resolved, not the tag itself: that is what makes a moving base safe
+      'gamecrate.runtime': `ghcr.io/rimworks/gamecrate/runtime-base@sha256:${'b'.repeat(64)}`,
     })
     expect(state.local.get(`${IMAGE}:latest`)).toEqual(state.local.get(`${IMAGE}:1.6.4871`))
   })
