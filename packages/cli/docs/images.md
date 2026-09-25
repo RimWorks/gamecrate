@@ -160,7 +160,10 @@ extraction. A project file can point at that path directly:
 Keep `<Private>False</Private>`. Without it, MSBuild copies the game's DLLs into your build
 output and they end up in a Workshop upload.
 
-Where the assemblies live inside the image differs between game versions, so a plugin declares
+Name each assembly, never the whole directory. Most of what the image ships is the .NET runtime,
+so a `*.dll` glob hands the compiler a second `corlib` and thousands of `CS0518` errors.
+
+Where the assemblies sit inside the image differs between game versions, so a plugin declares
 the candidate directories under `managed`. Gamecrate probes them in order and takes the first
 one holding a DLL.
 
