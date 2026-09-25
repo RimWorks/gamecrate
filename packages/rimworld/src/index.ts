@@ -19,6 +19,7 @@ const plugin: GamePlugin = {
     modsDir: { container: '/game/Mods' },
     logFile: { mode: 'arg', arg: '-logfile' },
     executable: './RimWorldLinux',
+    managed: ['RimWorldLinux_Data/Managed', '.'],
     // Verified on a native launch too, so this is the engine and not the container.
     ignoresWmDelete: true,
     steamAppId: 294100,
