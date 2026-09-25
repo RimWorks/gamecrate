@@ -231,6 +231,7 @@ export interface GameConfig {
   logFile: LogFileSpec
   image: ImageSpec
   executable: string
+  managed?: string[]
   steamAppId: number
   workshopRoot: string | null
   scanRoots: ScanRoot[]
@@ -533,7 +534,7 @@ export type ProjectDefaults = Partial<
 export const RESERVED_NAMES: readonly string[] = [
   'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
-  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login',
+  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login', 'refs',
 ]
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/

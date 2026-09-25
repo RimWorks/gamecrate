@@ -88,6 +88,13 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     ],
   },
   {
+    name: 'refs',
+    summary: "a directory of the game's managed assemblies, for a mod's csproj to reference",
+    usage: '<game>',
+    positionals: ['game'],
+    flags: [],
+  },
+  {
     name: 'doctor',
     summary: 'preflight: docker, CDI, registry auth, game dirs, scan roots, perms',
     usage: '',

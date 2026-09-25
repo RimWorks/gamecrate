@@ -123,6 +123,42 @@ Either route reads the game out of the image. That covers the core game and its 
 expansions. Gamecrate copies their manifests out of the image once per image id and caches them,
 so it never needs a local install to resolve them.
 
+## Referencing the game's assemblies
+
+A mod project compiles against the game's own DLLs. `refs` prints a directory holding them,
+pulled out of the image you built:
+
+```sh
+gamecrate refs rimworld
+```
+
+The path goes to standard output on its own, so a build step can capture it. The image digest
+and the assembly count go to standard error.
+
+Extraction runs once per image digest and is cached after. Gamecrate also keeps a stable
+symlink at `~/.cache/gamecrate/refs/current/<game>`, which always points at the newest
+extraction. A project file can point at that path directly:
+
+```xml
+<PropertyGroup>
+  <GameRefs>$(HOME)/.cache/gamecrate/refs/current/rimworld</GameRefs>
+</PropertyGroup>
+
+<ItemGroup>
+  <Reference Include="Assembly-CSharp">
+    <HintPath>$(GameRefs)/Assembly-CSharp.dll</HintPath>
+    <Private>False</Private>
+  </Reference>
+</ItemGroup>
+```
+
+Keep `<Private>False</Private>`. Without it, MSBuild copies the game's DLLs into your build
+output and they end up in a Workshop upload.
+
+Where the assemblies live inside the image differs between game versions, so a plugin declares
+the candidate directories under `managed`. Gamecrate probes them in order and takes the first
+one holding a DLL.
+
 ## Credentials
 
 Every credential comes from the environment, never from a flag. A flag value is readable in the

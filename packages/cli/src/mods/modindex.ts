@@ -26,7 +26,7 @@ import type {
 } from '../types'
 
 /** Cache lives outside the profile tree so `clean --all` can never invalidate it. */
-function cacheDir(): string {
+export function cacheDir(): string {
   return join(process.env['XDG_CACHE_HOME'] ?? join(homedir(), '.cache'), 'gamecrate')
 }
 

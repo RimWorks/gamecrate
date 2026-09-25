@@ -7,6 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
+import { extractRefs } from './image/refs'
 import { list } from './cli/list'
 import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
 import { launchProfile, profileOf } from './cli/profile'
@@ -152,6 +153,8 @@ async function dispatch(
     }
     case 'doctor':
       return doctor(config, plugins)
+    case 'refs':
+      return refs(args, config)
     case 'clean':
       return clean(args, config, defaults)
     case 'clone':
@@ -726,6 +729,20 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
   if (runner.kind === 'docker') return `docker image ${STEAMCMD_IMAGE}`
   const where = config.steamcmd?.path === undefined ? 'on PATH' : 'steamcmd.path'
   return `${runner.argv[0]} (${where})`
+}
+
+/** The path alone on stdout, so an MSBuild Exec can capture it without stripping anything. */
+async function refs(args: ParsedArgs, config: RootConfig): Promise<number> {
+  const game = requireGame(args, config)
+  const found = await extractRefs(game, config.games[game]!)
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(found, null, 2)}\n`)
+    return Exit.Ok
+  }
+  status(`${found.count} assemblies from ${found.source} at ${found.digest}`)
+  status(`stable path: ${found.link}`)
+  process.stdout.write(`${found.dir}\n`)
+  return Exit.Ok
 }
 
 async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {

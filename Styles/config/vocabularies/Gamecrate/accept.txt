@@ -43,3 +43,5 @@ steamcmd
 [Ll]aunchable
 [Ss]ubpaths
 [Uu]nscoped
+DLLs
+MSBuild

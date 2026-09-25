@@ -31,6 +31,7 @@ The subcommand slot defaults to `run`, so `gamecrate rimworld dev` and
 | `steam login` | Sign in to Steam once and store the session for `steam build` |
 | `shell <game> [profile]` | Same mounts, bash instead of the game |
 | `verify <game> [profile]` | What the running container bound, and whether it looks current |
+| `refs <game>` | Print a directory of the game's managed assemblies for a mod project to reference |
 | `config edit` | Open the global config in `$VISUAL` or `$EDITOR`, validate on save |
 | `fix-perms <game> [profile]` | Chown foreign-owned files back to the caller |
 | `help [topic]` | Help for a subcommand or a game |

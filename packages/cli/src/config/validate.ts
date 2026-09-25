@@ -317,6 +317,7 @@ const game = obj({
     requiredWhen('context', (v) => v['acquire'] === 'build'),
   ),
   executable: str,
+  managed: strArray.optional(),
   steamAppId: num,
   workshopRoot: z.union([z.string(), z.null()], { error: 'expected a string or null' }),
   scanRoots: z.array(obj({ path: str, maxDepth: num, exclude: strArray.optional() }), {
