@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1175,8 +1175,7 @@ describe('generated config files', () => {
     expect((await lstat(prefsPath)).isDirectory()).toBe(true)
   })
 
-  test('an unreadable Prefs leaves the tuned keys on disk', async (ctx) => {
-    if (process.getuid?.() === 0) ctx.skip()
+  test.skipIf(process.getuid?.() === 0)('an unreadable Prefs leaves the tuned keys on disk', async () => {
     const plan = await prefsPlan()
     const prefsPath = join(plan.dataDirHost, 'SaveData', 'Prefs.txt')
     await rm(prefsPath, { force: true, recursive: true })

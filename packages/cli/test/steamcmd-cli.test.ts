@@ -1,27 +1,38 @@
-import { afterAll, afterEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-const built = vi.hoisted(() => ({ count: 0 }))
+const built = { count: 0 }
+
+// bun's os.homedir() snapshots at startup and ignores a later HOME, unlike node's.
+// the suite sets HOME to a temp tree, so homedir() has to follow it or the fallback
+// branch reads the real ~/.steam/config/config.vdf.
+const realOs = { ...(await import('node:os')) }
+await mock.module('node:os', () => ({
+  ...realOs,
+  default: { ...realOs, homedir: () => process.env.HOME ?? realOs.homedir() },
+  homedir: () => process.env.HOME ?? realOs.homedir(),
+}))
 
 // the two collaborators past the session check. everything before them is the code under test
-vi.mock('../src/image/build', () => ({
+await mock.module('../src/image/build', () => ({
   steamBuild: () => {
     built.count += 1
     return Promise.resolve([])
   },
 }))
 
-vi.mock('../src/image/input', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/image/input')>()
-  return { ...real, resolveSteamBuildInput: () => Promise.resolve({}) }
-})
+const realInput = { ...(await import('../src/image/input')) }
+await mock.module('../src/image/input', () => ({
+  ...realInput,
+  resolveSteamBuildInput: () => Promise.resolve({}),
+}))
 
-import { resolveSession, sessionPaths, steamBuildCommand } from '../src/cli/steam'
+const { resolveSession, sessionPaths, steamBuildCommand } = await import('../src/cli/steam')
 import type { SteamContext } from '../src/cli/steam'
-import { resolveImage } from '../src/image/input'
-import { accountFile, steamHome } from '../src/mods/steamcmd'
+const { resolveImage } = await import('../src/image/input')
+const { accountFile, steamHome } = await import('../src/mods/steamcmd')
 import { Exit, GamecrateError } from '../src/types'
 import type { ParsedArgs, RootConfig } from '../src/types'
 

@@ -46,14 +46,17 @@ The build needs [bun](https://bun.sh). It writes `packages/cli/dist/gamecrate.js
 ## Testing
 
 ```sh
-npm test                                   # vitest, both packages
-npx vitest run packages/cli/test/args.test.ts   # one file
+npm test                                   # bun test, both packages
+bun test packages/cli/test/args.test.ts    # one file
 npm run lint                               # oxlint
 npm run typecheck                          # tsc --noEmit, both packages
 vale README.md packages/*/README.md        # prose, after one vale sync
 ```
 
 - Run the full suite before committing. All tests must pass.
+- **`npm test` passes `--parallel`, and that flag is load-bearing.** It implies `--isolate`, which
+  gives each file its own process. A bare `bun test` shares one process, so `mock.module` leaks
+  between files and 111 tests fail. Running one file on its own is fine.
 - While iterating, run the single test closest to your change.
 - The suite covers config parsing, mod resolution, staleness, worktrees, and argument parsing.
   It does not start Docker. Prove anything that touches a container with a real launch.

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -169,7 +169,7 @@ describe('listRuns merge', () => {
 
   // pins the merge against a guard that tests the incoming lock: that one is last-wins, which
   // is readdir order again with a different answer. the second live pid is a child this test
-  // spawns, not process.ppid, so nothing here depends on how vitest parents its workers.
+  // spawns, not process.ppid, so nothing here depends on how the runner parents its workers.
   test('a live lock does not replace a live one that merged before it', async () => {
     const child = spawn('sleep', ['30'], { stdio: 'ignore' })
     try {

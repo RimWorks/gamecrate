@@ -1,11 +1,16 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import {
+// bun's os.homedir() snapshots at process start and ignores a later HOME, unlike node's.
+const realOs = { ...(await import('node:os')) }
+const os = { ...realOs, homedir: () => process.env.HOME ?? realOs.homedir() }
+await mock.module('node:os', () => ({ ...os, default: os }))
+
+const {
   STEAMCMD_IMAGE,
   downloadItems,
   downloadRoot,
@@ -13,8 +18,8 @@ import {
   resolveSteamcmd,
   steamHome,
   workshopUrlId,
-} from '../src/mods/steamcmd'
-import { Exit } from '../src/types'
+} = await import('../src/mods/steamcmd')
+const { Exit } = await import('../src/types')
 import type { GameConfig, GamecrateError, RootConfig } from '../src/types'
 
 let tmp = ''

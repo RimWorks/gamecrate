@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, jest, test } from 'bun:test'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -119,7 +119,7 @@ describe('checkDrift', () => {
   })
 
   test('a request that never answers falls back to the missing items at 5s', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    jest.useFakeTimers()
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     let started = (): void => {}
     const sent = new Promise<void>((resolve) => {
@@ -134,14 +134,14 @@ describe('checkDrift', () => {
 
     const report = checkDrift(['818773962', '2009463077'], [root], fetchImpl)
     await sent
-    vi.advanceTimersByTime(5000)
+    jest.advanceTimersByTime(5000)
 
     expect(await report).toEqual({
       needed: ['2009463077'],
       unavailable: [],
       warnings: ['could not ask steam which items changed (no answer in 5000ms); only missing items will download'],
     })
-    vi.useRealTimers()
+    jest.useRealTimers()
   })
 
   test('a non-200 falls back to the missing items', async () => {

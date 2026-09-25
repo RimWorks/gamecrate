@@ -1,5 +1,16 @@
-import { afterEach, describe, expect, test } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { afterEach, describe, expect, mock, test } from 'bun:test'
+
+// bun's spawnSync snapshots the environment at process start, so a PATH this suite sets
+// later is invisible to a child. node defaults `env` to process.env; restore that.
+const realCp = { ...(await import('node:child_process')) }
+const cp = {
+  ...realCp,
+  spawnSync: (cmd: string, args?: unknown, opts?: Record<string, unknown>) =>
+    (realCp.spawnSync as (...a: unknown[]) => unknown)(cmd, args, { env: process.env, ...opts }),
+}
+await mock.module('node:child_process', () => ({ ...cp, default: cp }))
+
+const { execFileSync } = await import('node:child_process')
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
@@ -7,9 +18,9 @@ import { dirname, join, sep } from 'node:path'
 import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { Exit } from '../src/types'
 import type { GameConfig, GamecrateError, LaunchPlan, ParsedArgs, Problem, ProfileConfig } from '../src/types'
-import { buildIndex } from '../src/mods/modindex'
-import { resolvePlan } from '../src/launch/resolve'
-import { cachedSources, cloneDir, defaultBranch, ensureClone, gitRefOf, isMoving, lockDir, normalizeUrl, prepareSources, sourcesRoot, unlinkOrphan } from '../src/mods/source'
+const { buildIndex } = await import('../src/mods/modindex')
+const { resolvePlan } = await import('../src/launch/resolve')
+const { cachedSources, cloneDir, defaultBranch, ensureClone, gitRefOf, isMoving, lockDir, normalizeUrl, prepareSources, sourcesRoot, unlinkOrphan } = await import('../src/mods/source')
 
 const ROOT = '/data/gamecrate'
 const MAIN = { kind: 'branch', value: 'main' } as const
@@ -89,7 +100,7 @@ describe('normalizeUrl', () => {
   // a long interior run of slashes used to backtrack exponentially
   test('a long interior run of slashes is left alone and does not backtrack', () => {
     // 28 slashes: the old regex took ~1.9s there, so a regression trips the guard below. more
-    // slashes and it never returns at all, and vitest cannot interrupt a sync regex.
+    // slashes and it never returns at all, and no runner can interrupt a sync regex.
     const url = `https://h/o${'/'.repeat(28)}repo`
     const start = Date.now()
     expect(normalizeUrl(url)).toBe(url)
@@ -712,7 +723,7 @@ describe('prepareSources', () => {
     const first = fixture()
     const second = fixture()
     // the hash in a clone dir is not predictable, so decide which url is which after the fact
-    const [low, high] = [cloneDir(data, first.url, MAIN), cloneDir(data, second.url, MAIN)].sort()
+    const [low, high] = [cloneDir(data, first.url, MAIN), cloneDir(data, second.url, MAIN)].sort() as [string, string]
     const urlOf = (dir: string): string => (dir === cloneDir(data, first.url, MAIN) ? first.url : second.url)
     // a.one and d.four share the later clone, b.two and c.three the earlier one, so sorting ids
     // would hand the two runs opposite lock orders

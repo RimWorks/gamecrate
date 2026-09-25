@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { Exit, GamecrateError } from '../src/types'
 import type { RootConfig, SteamVariant } from '../src/types'
 
-const state = vi.hoisted(() => ({
+const state = {
   /** Every faked collaborator call, in order. */
   calls: [] as string[],
   labels: new Map<string, Record<string, string>>(),
@@ -30,10 +30,11 @@ const state = vi.hoisted(() => ({
   /** What docker load reports. The tar's own tag, unless a test says otherwise. */
   loadedAs: (): string => state.appendTag,
   gameDir: '',
-}))
+}
 
-vi.mock('../src/cli/output', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/cli/output')>()
+const realOutput = { ...(await import('../src/cli/output')) }
+await mock.module('../src/cli/output', () => {
+  const real = realOutput
   return {
     ...real,
     status: (message: string) => {
@@ -44,7 +45,7 @@ vi.mock('../src/cli/output', async (importOriginal) => {
   }
 })
 
-vi.mock('../src/image/crane', () => ({
+await mock.module('../src/image/crane', () => ({
   CRANE_IMAGE: 'fake/crane',
   checkRegistryAuthEarly: (ref: string) => {
     state.calls.push('creds')
@@ -85,8 +86,9 @@ vi.mock('../src/image/crane', () => ({
   craneDigest: () => Promise.resolve(`sha256:${'b'.repeat(64)}`),
 }))
 
-vi.mock('../src/mods/steamcmd', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/mods/steamcmd')>()
+const realSteamcmd = { ...(await import('../src/mods/steamcmd')) }
+await mock.module('../src/mods/steamcmd', () => {
+  const real = realSteamcmd
   return {
     ...real,
     publishedBuildId: () => Promise.resolve(state.published),
@@ -98,8 +100,9 @@ vi.mock('../src/mods/steamcmd', async (importOriginal) => {
   }
 })
 
-vi.mock('../src/docker/run', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/docker/run')>()
+const realRun = { ...(await import('../src/docker/run')) }
+await mock.module('../src/docker/run', () => {
+  const real = realRun
   return {
     ...real,
     capture: (argv: string[]) => {
@@ -132,7 +135,7 @@ vi.mock('../src/docker/run', async (importOriginal) => {
   }
 })
 
-import { steamBuild } from '../src/image/build'
+const { steamBuild } = await import('../src/image/build')
 import type { CellResult, SteamBuildOptions } from '../src/image/build'
 
 const VARIANTS: SteamVariant[] = [

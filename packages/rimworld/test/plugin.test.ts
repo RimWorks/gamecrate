@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'bun:test'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import plugin from '../src/index'

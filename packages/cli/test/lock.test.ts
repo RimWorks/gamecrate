@@ -1,57 +1,27 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
-import { existsSync, writeFileSync } from 'node:fs'
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { capture, spawnArgv, STOP_TIMEOUT_SECONDS } from '../src/docker/run'
-import { openRunLog, runStartedAt, runTimestamp, tailArgv, waitNotice } from '../src/cli/output'
-import { awaitExit, awaitRunLog, lastExit, recordExit, supervisorFailed } from '../src/launch/supervisor'
-import {
-  isRunning,
-  lockPath,
-  readLock,
-  replacePrevious,
-  stopRun,
-  STOP_RELEASE_WAIT_MS,
-  takeLock,
-  writeLock,
-} from '../src/launch/prepare'
-import { GamecrateError, Exit } from '../src/types'
-import { deadPids } from './pids'
 import type { LaunchPlan } from '../src/types'
 
 /** Flipped on only by the fallback test; everything else reads the real procfs. */
-const procfs = vi.hoisted(() => ({ broken: false }))
+const procfs = { broken: false }
 
 /**
  * "did not docker stop" is the whole point of two tests below, and a real `docker stop` on a
  * fixture container that does not exist is a silent no-op, so nothing else can see it.
  */
-const stopped = vi.hoisted(() => ({ names: [] as string[] }))
+const stopped = { names: [] as string[] }
 
 /** Seam for the one race no fixture can stage: something happening inside stopRun's wait loop. */
-const fsHooks = vi.hoisted(() => ({ afterExists: undefined as ((path: string, answer: boolean) => void) | undefined }))
+const fsHooks = { afterExists: undefined as ((path: string, answer: boolean) => void) | undefined }
 
-vi.mock('../src/docker/run', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/docker/run')>()
-  return {
-    ...real,
-    stopContainer: (name: string) => {
-      stopped.names.push(name)
-      return Promise.resolve()
-    },
-  }
-})
+const realFs = { ...(await import('node:fs')) }
 
-beforeEach(() => {
-  stopped.names.length = 0
-  fsHooks.afterExists = undefined
-})
-
-vi.mock('node:fs', async (importOriginal) => {
-  const real = await importOriginal<typeof import('node:fs')>()
-  return {
+await mock.module('node:fs', () => {
+  const real = realFs
+  const patched = {
     ...real,
     readFileSync: (path: unknown, ...rest: unknown[]) => {
       if (procfs.broken && String(path).startsWith('/proc/')) throw new Error('no procfs here')
@@ -63,6 +33,40 @@ vi.mock('node:fs', async (importOriginal) => {
       return answer
     },
   }
+  return { ...patched, default: patched }
+})
+
+const { existsSync, writeFileSync } = await import('node:fs')
+
+const realRun = { ...(await import('../src/docker/run')) }
+
+await mock.module('../src/docker/run', () => ({
+  ...realRun,
+  stopContainer: (name: string) => {
+    stopped.names.push(name)
+    return Promise.resolve()
+  },
+}))
+
+const { capture, spawnArgv, STOP_TIMEOUT_SECONDS } = await import('../src/docker/run')
+const { openRunLog, runStartedAt, runTimestamp, tailArgv, waitNotice } = await import('../src/cli/output')
+const { awaitExit, awaitRunLog, lastExit, recordExit, supervisorFailed } = await import('../src/launch/supervisor')
+const {
+  isRunning,
+  lockPath,
+  readLock,
+  replacePrevious,
+  stopRun,
+  STOP_RELEASE_WAIT_MS,
+  takeLock,
+  writeLock,
+} = await import('../src/launch/prepare')
+import { GamecrateError, Exit } from '../src/types'
+const { deadPids } = await import('./pids')
+
+beforeEach(() => {
+  stopped.names.length = 0
+  fsHooks.afterExists = undefined
 })
 
 let tmp = ''
@@ -380,7 +384,7 @@ describe('stopRun', () => {
     // jump past the deadline once stopRun has set it, rather than waiting it out for real
     const real = Date.now.bind(Date)
     let calls = 0
-    const clock = vi.spyOn(Date, 'now').mockImplementation(() => {
+    const clock = spyOn(Date, 'now').mockImplementation(() => {
       return calls++ === 0 ? real() : real() + STOP_RELEASE_WAIT_MS + 1000
     })
     try {

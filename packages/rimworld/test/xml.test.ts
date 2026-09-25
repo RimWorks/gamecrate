@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { glob, readFile } from 'node:fs/promises'
 import { join } from 'node:path'

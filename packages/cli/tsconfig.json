@@ -4,7 +4,7 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": ["node", "bun"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

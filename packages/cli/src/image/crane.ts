@@ -177,6 +177,13 @@ async function runOnce(argv: string[], what: string): Promise<void> {
 
 const HEARTBEAT_MS = 1000
 
+/** Node says "spawn crane ENOENT", bun says "Executable not found in $PATH". Only the code is portable. */
+function spawnFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  return code === undefined || message.includes(code) ? message : `${message} (${code})`
+}
+
 /**
  * Streamed, and ticking while it streams: crane prints nothing of its own, so on a two gigabyte
  * tar the elapsed line is all that separates slow from stuck.
@@ -193,10 +200,7 @@ async function live(argv: string[], what: string): Promise<{ code: number; text:
   }, HEARTBEAT_MS)
   try {
     // captureLive rejects when the spawn itself fails, where capture answered 127
-    return await captureLive(argv).catch((error: unknown) => ({
-      code: 127,
-      text: error instanceof Error ? error.message : String(error),
-    }))
+    return await captureLive(argv).catch((error: unknown) => ({ code: 127, text: spawnFailure(error) }))
   } finally {
     clearInterval(timer)
   }

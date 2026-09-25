@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'vitest'
+import { afterAll, describe, expect, test } from 'bun:test'
 import { chmod, lstat, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -149,7 +149,7 @@ describe('writeConfig file handling', () => {
   test('restores mode bits the umask would have masked off', async () => {
     const file = await seed('gamecrate.json', '{\n  "game": "rimworld"\n}\n')
     await chmod(file, 0o666)
-    // safe only because vitest's default `forks` pool gives this file its own process.
+    // safe only because bun runs one file at a time per worker, and the finally puts it back.
     const umask = process.umask(0o022)
     try {
       await writeConfig(file, [{ path: ['profile'], value: 'dev' }])

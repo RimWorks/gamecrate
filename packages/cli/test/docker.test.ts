@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir, hostname } from 'node:os'
 import { join } from 'node:path'
@@ -776,7 +776,7 @@ describe('window claims', () => {
     expect(parseWindowPid('')).toBeUndefined()
   })
 
-  // Deliberately a spawned gamecrate rather than process.pid: the vitest worker only has
+  // Deliberately a spawned gamecrate rather than process.pid: the test runner only has
   // 'gamecrate' in its cmdline because this checkout sits under a directory of that name, so
   // this test would quietly lose its teeth from a checkout named anything else. The precondition
   // is asserted because everything after it reads false when the child is not a gamecrate, so a

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'bun:test'
 import { RUNTIME_BASE, resolveBase } from '../src/image/base'
 import type { BaseKind } from '../src/image/base'
 import { Exit, GamecrateError } from '../src/types'

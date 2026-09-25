@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, mock, spyOn, test } from 'bun:test'
 import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,11 +8,13 @@ import { CONTAINER_LOG_DIR } from '../src/docker/spec'
 import { RUNTIME_BASE } from '../src/image/base'
 import type { LaunchPlan } from '../src/types'
 
-const shell = vi.hoisted(() => ({ bin: '', out: '', argv: [] as string[] }))
+const shell = { bin: '', out: '', argv: [] as string[] }
 
-vi.mock('../src/docker/run', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/docker/run')>()
-  const { spawn } = await import('node:child_process')
+const realRun = { ...(await import('../src/docker/run')) }
+const { spawn } = await import('node:child_process')
+
+await mock.module('../src/docker/run', () => {
+  const real = realRun
   return {
     ...real,
     // `docker exec <container> sh -c <script>` becomes a real /bin/sh whose PATH holds only
@@ -111,7 +113,7 @@ describe('the screenshot fallback', () => {
   test('an image with no imagemagick says so instead of dying on an empty binary name', async () => {
     const plan = await container(['ls', 'import', 'xwd'])
     const errs: string[] = []
-    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    const spy = spyOn(process.stderr, 'write').mockImplementation((chunk) => {
       errs.push(String(chunk))
       return true
     })

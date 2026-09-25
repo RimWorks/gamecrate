@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeAll, afterAll } from 'vitest'
+import { describe, expect, test, beforeAll, afterAll } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'

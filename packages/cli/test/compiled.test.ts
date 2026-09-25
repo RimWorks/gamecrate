@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

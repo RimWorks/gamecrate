@@ -1,17 +1,19 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, mock, test } from 'bun:test'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
 import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import type { GameConfig, LaunchPlan, ModeName } from '../src/types'
 
 const REF = 'ghcr.io/rimworks/atlas-game:foreign'
 
-const state = vi.hoisted(() => ({
+const state = {
   present: true,
   labels: {} as Record<string, string>,
-}))
+}
 
-vi.mock('../src/docker/run', async (importOriginal) => {
-  const real = await importOriginal<typeof import('../src/docker/run')>()
+const realRun = { ...(await import('../src/docker/run')) }
+
+await mock.module('../src/docker/run', () => {
+  const real = realRun
   const ok = { code: 0, stdout: '', stderr: '' }
   const gone = { code: 1, stdout: '', stderr: 'No such image\n' }
   return {

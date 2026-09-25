@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test } from 'bun:test'
 
 import { extractRefs, extractScript } from '../src/image/refs'
 import { Exit } from '../src/types'

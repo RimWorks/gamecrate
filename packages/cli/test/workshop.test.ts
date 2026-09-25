@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -25,8 +25,10 @@ afterAll(async () => {
   await rm(tmp, { recursive: true, force: true })
 })
 
+const realFetch = globalThis.fetch
+
 afterEach(() => {
-  vi.unstubAllGlobals()
+  globalThis.fetch = realFetch
   delete process.env['FAKE_FAIL_IDS']
   delete process.env['FAKE_MANIFEST_DIR']
   asked = []
@@ -37,10 +39,10 @@ afterEach(() => {
  * Every test runs through this, so none of them can reach the network.
  */
 function stubSteam(): void {
-  vi.stubGlobal('fetch', async (_url: unknown, init: { body: URLSearchParams }) => {
+  globalThis.fetch = (async (_url: unknown, init: { body: URLSearchParams }) => {
     asked.push([...init.body].filter(([k]) => k.startsWith('publishedfileids')).map(([, v]) => v))
     return new Response(JSON.stringify({ response: { publishedfiledetails: [] } }))
-  })
+  }) as unknown as typeof fetch
 }
 
 /** `packageid <id>` and `dep <packageId> [url]`, one per line. `throw` is a broken manifest. */
@@ -266,7 +268,7 @@ describe('prepareWorkshop', () => {
     expect(out.unfetched).toEqual([])
   })
 
-  test('a cycle terminates instead of spinning', { timeout: 10_000 }, async () => {
+  test('a cycle terminates instead of spinning', async () => {
     stubSteam()
     const w = await setup(['workshop:111'], {
       '111': about('111', ['222']),
@@ -278,9 +280,9 @@ describe('prepareWorkshop', () => {
     expect([...out.ids].sort()).toEqual(['111', '222'])
     expect(out.problems).toEqual([])
     expect(asked).toEqual([['111'], ['222']])
-  })
+  }, 10_000)
 
-  test('a chain longer than the cap stops and names what is left', { timeout: 10_000 }, async () => {
+  test('a chain longer than the cap stops and names what is left', async () => {
     stubSteam()
     const links = ['111', '222', '333', '444', '555', '666', '777']
     const bodies = Object.fromEntries(links.map((id, i) => [id, about(id, links[i + 1] === undefined ? [] : [links[i + 1] as string])]))
@@ -293,7 +295,7 @@ describe('prepareWorkshop', () => {
     expect(out.problems[0]?.message).toContain('666')
     expect(out.problems[0]?.message).toContain('5 rounds')
     expect(asked).toHaveLength(5)
-  })
+  }, 10_000)
 
   test('a dependency with no usable workshop url is skipped', async () => {
     stubSteam()

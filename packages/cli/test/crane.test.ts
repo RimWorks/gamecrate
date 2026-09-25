@@ -1,11 +1,11 @@
-import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, test } from 'vitest'
+import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { capture } from '../src/docker/run'
-import {
+const { capture } = await import('../src/docker/run')
+const {
   CRANE_IMAGE,
   checkRegistryAuthEarly,
   craneAppend,
@@ -13,8 +13,8 @@ import {
   craneMutateLabels,
   cranePush,
   craneTag,
-} from '../src/image/crane'
-import { Exit } from '../src/types'
+} = await import('../src/image/crane')
+const { Exit } = await import('../src/types')
 import type { GamecrateError } from '../src/types'
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-crane.sh', import.meta.url))
