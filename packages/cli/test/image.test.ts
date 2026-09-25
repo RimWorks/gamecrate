@@ -125,7 +125,8 @@ describe('run wires the checks in before staging', () => {
     for (const name of ['refs', 'build']) {
       expect(body(name)).toContain('gameForImage(args, config, defaults, game)')
     }
-    expect(source).toContain('withImageOverride(base, imageFor(base, launchProfile(args, defaults, base), args.image))')
+    expect(source).toContain('args.image ?? imageFor(base, launchProfile(args, defaults, base))')
+    expect(source).toContain('withImageOverride(base, ref)')
   })
 
   test('refs keeps stdout to the path alone, so an MSBuild Exec captures nothing else', () => {

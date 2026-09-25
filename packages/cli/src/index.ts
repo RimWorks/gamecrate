@@ -737,7 +737,8 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
  */
 function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
   const base = config.games[game]!
-  return withImageOverride(base, imageFor(base, launchProfile(args, defaults, base), args.image))
+  const ref = args.image ?? imageFor(base, launchProfile(args, defaults, base))
+  return withImageOverride(base, ref)
 }
 
 /** The path alone on stdout, so an MSBuild Exec can capture it without stripping anything. */
