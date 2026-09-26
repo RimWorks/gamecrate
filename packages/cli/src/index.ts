@@ -7,7 +7,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
-import { extractRefs } from './image/refs'
+import { currentRefs, extractRefs } from './image/refs'
 import { list } from './cli/list'
 import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
 import { launchProfile, profileOf } from './cli/profile'
@@ -402,7 +402,7 @@ interface ExecuteInputs {
 
 async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   const { plan, args, config, identity, asShell, profileSpec, runDir, releaseSources } = inputs
-  await buildLocalMods(plan, buildPolicy(args, profileSpec))
+  await buildLocalMods(plan, buildPolicy(args, profileSpec), currentRefs(plan.game))
   // the build writes into the clones, so their lock only comes off once it is done. it covers
   // fetch and build, not the session: stageMods bind-mounts a clone subdir into the container,
   // and nothing stops another launch resetting that tree while the game holds it.

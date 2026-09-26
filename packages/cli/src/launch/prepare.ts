@@ -101,7 +101,11 @@ async function buildTarget(dir: string): Promise<string | null> {
  * ones resolution flagged stale; `never` skips. A build failure stops the launch, shipping
  * the previous DLL after a failed compile is how you debug code that is not running.
  */
-export async function buildLocalMods(plan: LaunchPlan, policy: BuildPolicy): Promise<void> {
+export async function buildLocalMods(
+  plan: LaunchPlan,
+  policy: BuildPolicy,
+  refsNote?: string,
+): Promise<void> {
   if (policy === 'never') return
 
   const wanted = plan.mods.filter(
@@ -109,21 +113,29 @@ export async function buildLocalMods(plan: LaunchPlan, policy: BuildPolicy): Pro
   )
   if (wanted.length === 0) return
 
+  // every mod is built before any failure is raised: stopping at the first leaves the state of
+  // the rest unknown, and one unported mod then reads as the whole set being broken
+  const failed: string[] = []
   for (const mod of wanted) {
     const target = await buildTarget(mod.hostDir)
     if (target === null) continue
     const code = await inherit(['dotnet', 'build', target, '-v', 'quiet', '--nologo'])
     if (code !== 0) {
-      throw new GamecrateError(
-        `dotnet build failed for ${mod.packageId}`,
-        Exit.Environment,
-        target,
-      )
+      failed.push(`${mod.packageId}  ${target}`)
+      continue
     }
     mod.stale = false
     // The launch warning is derived from this, so clearing it is what silences the warning.
     delete mod.staleReport
   }
+  if (failed.length === 0) return
+
+  const what = failed.length === 1 ? failed[0]!.split('  ')[0] : `${failed.length} mods`
+  throw new GamecrateError(
+    `dotnet build failed for ${what}`,
+    Exit.Environment,
+    [...failed, refsNote].filter((part) => part !== undefined).join('\n'),
+  )
 }
 
 /**

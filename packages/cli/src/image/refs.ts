@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readlinkSync } from 'node:fs'
 import { mkdir, readdir, rename, rm, symlink, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -27,6 +27,17 @@ function refsRoot(): string {
 
 export function refsLink(game: string): string {
   return join(refsRoot(), 'current', game)
+}
+
+/** What `current` points at, for a failure message. A build that broke on the wrong game
+ * generation says nothing about refs on its own. */
+export function currentRefs(game: string): string | undefined {
+  try {
+    const target = readlinkSync(refsLink(game))
+    return `refs in use: ${target.replace(/^.*\/refs\//, '')}`
+  } catch {
+    return undefined
+  }
 }
 
 const MARK = '@@gamecrate@@ '
