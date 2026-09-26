@@ -21,7 +21,18 @@ export interface Toplevel {
 /** Every window that appeared since the snapshot and belongs to this game, in wmctrl's order. */
 export function newMatches(now: Toplevel[], seen: Set<string>, executable: string): Toplevel[] {
   const wanted = basename(executable).toLowerCase()
-  return now.filter((w) => !seen.has(w.id) && w.wmClass.toLowerCase().includes(wanted))
+  return now.filter((w) => !seen.has(w.id) && classMatches(w.wmClass, wanted))
+}
+
+/**
+ * Either name may be the longer one: a toolkit takes the window class from the product, so
+ * RimWorldLinux opens a window classed RimWorld. Three characters, or "rim" would claim it.
+ */
+function classMatches(wmClass: string, wanted: string): boolean {
+  return wmClass
+    .toLowerCase()
+    .split('.')
+    .some((part) => part.length >= 3 && (wanted.includes(part) || part.includes(wanted)))
 }
 
 export function parseWindowPid(stdout: string): number | undefined {

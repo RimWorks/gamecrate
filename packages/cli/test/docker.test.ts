@@ -834,6 +834,17 @@ describe('window candidates', () => {
     const all = new Set(['0x01', '0x02', '0x04'])
     expect(newMatches(windows, all, '/game/RimWorldLinux')).toEqual([])
   })
+
+  // measured: the game opens a window classed RimWorld.RimWorld while its binary is RimWorldLinux
+  test('a window classed after the product still belongs to the binary that opened it', () => {
+    const real = [{ id: '0x09', wmClass: 'RimWorld.RimWorld' }]
+    expect(newMatches(real, new Set(), '/game/RimWorldLinux').map((w) => w.id)).toEqual(['0x09'])
+  })
+
+  test('another window is still somebody else', () => {
+    const other = [{ id: '0x0a', wmClass: 'firefox.Navigator' }, { id: '0x0b', wmClass: 'st.st' }]
+    expect(newMatches(other, new Set(), '/game/RimWorldLinux')).toEqual([])
+  })
 })
 
 /** argv0 rather than `exec -a`: dash has no such builtin, and /bin/sh is dash on debian. */
