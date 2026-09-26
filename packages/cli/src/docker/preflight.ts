@@ -101,6 +101,17 @@ async function checkImage(plan: LaunchPlan, problems: Problem[], asShell: boolea
     return
   }
 
+  await checkAbsentImage(plan, problems, where, problem)
+}
+
+/** The image is not in the daemon. Whether that is fixable depends on how it was meant to arrive. */
+async function checkAbsentImage(
+  plan: LaunchPlan,
+  problems: Problem[],
+  where: string,
+  problem: Problem | null,
+): Promise<void> {
+  const image = plan.gameConfig.image
   if (image.ref.trim() === '') {
     if (problem) problems.push(problem)
     return

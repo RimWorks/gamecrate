@@ -6,6 +6,15 @@ describe('sanitizeVersion', () => {
     expect(sanitizeVersion('1.6.4871 rev598', 'x')).toBe('1.6.4871')
   })
 
+  // invalid characters become dashes, so junk then one valid character is a long dash run with
+  // no trailing dash. /-+$/ then fails from every position in turn and goes quadratic.
+  test('a long run of invalid characters does not stall the trim', () => {
+    const start = Date.now()
+    const junk = `${'%'.repeat(80_000)}x`
+    expect(sanitizeVersion(junk, 'fallback')).toBe(`${'-'.repeat(80_000)}x`)
+    expect(Date.now() - start).toBeLessThan(1000)
+  })
+
   test('replaces a character an OCI tag refuses', () => {
     expect(sanitizeVersion('1.6+beta', 'x')).toBe('1.6-beta')
   })

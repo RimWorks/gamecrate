@@ -49,6 +49,39 @@ export function refuseProtonHeaded(game: string, mode: ModeName, image?: ImageLa
   )
 }
 
+/** Proton needs its wrapper and a windows path; an offscreen run needs a display from xvfb-run. */
+function launchCommand(plan: LaunchPlan, executable: string, proton: boolean): string[] {
+  const { gameConfig: game, settings } = plan
+  if (proton) {
+    return ['run-headless-windows', winPath(join(game.gameFiles.container, basename(executable)))]
+  }
+  if (plan.mode === 'headed') return [executable]
+  // xvfb-run -a picks a free display itself, which removes both the hardcoded :99 and the
+  // startup race the old launch.sh papered over with `sleep 2`.
+  return ['xvfb-run', '-a', `--server-args=-screen 0 ${settings.width}x${settings.height}x24`, executable]
+}
+
+/** Where the game's data and log go, as an argument or an env var, per what the plugin declares. */
+function appendGameArgs(
+  command: string[],
+  mounts: Mount[],
+  env: Record<string, string>,
+  plan: LaunchPlan,
+  proton: boolean,
+): void {
+  const { gameConfig: game } = plan
+  if (game.dataDir.mode === 'arg') {
+    const arg = validateDataDirArg(game.dataDir)
+    const eq = arg.indexOf('=')
+    command.push(proton ? `${arg.slice(0, eq + 1)}${winPath(arg.slice(eq + 1))}` : arg)
+  } else Object.assign(env, game.dataDir.env)
+
+  if (game.logFile.mode !== 'arg') return
+  mounts.push({ type: 'bind', source: hostPath(plan.runDirHost), target: CONTAINER_LOG_DIR })
+  const log = `${CONTAINER_LOG_DIR}/Player.log`
+  command.push(game.logFile.arg, proton ? winPath(log) : log)
+}
+
 export function buildRunSpec(
   plan: LaunchPlan,
   modMounts: Mount[],
@@ -73,19 +106,7 @@ export function buildRunSpec(
 
   refuseProtonHeaded(plan.game, plan.mode, image)
 
-  // xvfb-run -a picks a free display itself, which removes both the hardcoded :99 and the
-  // startup race the old launch.sh papered over with `sleep 2`.
-  const command = proton
-    ? ['run-headless-windows', winPath(join(game.gameFiles.container, basename(executable)))]
-    : headed
-      ? [executable]
-      : [
-          'xvfb-run',
-          '-a',
-          `--server-args=-screen 0 ${settings.width}x${settings.height}x24`,
-          executable,
-        ]
-
+  const command = launchCommand(plan, executable, proton)
   // the wrappers read both: SCREEN sizes Xvfb, DESKTOP sizes the wine virtual desktop.
   if (proton) {
     Object.assign(env, {
@@ -95,18 +116,7 @@ export function buildRunSpec(
       STEAM_COMPAT_DATA_PATH: `${CONTAINER_XDG_DIR}/proton`,
     })
   }
-
-  if (game.dataDir.mode === 'arg') {
-    const arg = validateDataDirArg(game.dataDir)
-    const eq = arg.indexOf('=')
-    command.push(proton ? `${arg.slice(0, eq + 1)}${winPath(arg.slice(eq + 1))}` : arg)
-  } else Object.assign(env, game.dataDir.env)
-
-  if (game.logFile.mode === 'arg') {
-    mounts.push({ type: 'bind', source: hostPath(plan.runDirHost), target: CONTAINER_LOG_DIR })
-    const log = `${CONTAINER_LOG_DIR}/Player.log`
-    command.push(game.logFile.arg, proton ? winPath(log) : log)
-  }
+  appendGameArgs(command, mounts, env, plan, proton)
 
   addScratch(mounts, env, plan, identity)
   if (headed) addSession(mounts, env, plan)

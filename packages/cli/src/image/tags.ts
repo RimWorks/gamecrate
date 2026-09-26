@@ -16,8 +16,13 @@ export interface TagInput {
  */
 export function sanitizeVersion(raw: string, fallback: string): string {
   const first = raw.trim().split(/\s+/)[0] ?? ''
-  const mapped = first.replaceAll(/[^A-Za-z0-9._-]/g, '-').replace(/-+$/, '')
-  return mapped.length > 0 ? mapped : fallback
+  const mapped = first.replaceAll(/[^\w.-]/g, '-')
+  // trimmed by hand: /-+$/ backtracks from every position on an all-dash string, which is what
+  // a version of nothing but invalid characters becomes
+  let end = mapped.length
+  while (end > 0 && mapped.charAt(end - 1) === '-') end -= 1
+  const trimmed = mapped.slice(0, end)
+  return trimmed.length > 0 ? trimmed : fallback
 }
 
 /**

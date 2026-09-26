@@ -744,25 +744,29 @@ function applyPositionals(out: ParsedArgs, positional: string[], games?: readonl
   const { sub, slots, rest } = routePositionals(out, first, positional, games)
   const left = fillSlots(out, slots, rest)
 
+  if (!help) requireSubverbArgs(out)
+
+  if (left.length > 0) {
+    const shape = sub ? `${sub.name} ${sub.usage}`.trim() : `${out.game} [profile]`
+    throw usage(`unexpected argument ${left[0]}`, `gamecrate ${shape}`)
+  }
+}
+
+/** What a subverb needs beyond its slots. Missing here beats failing deep in a launch. */
+function requireSubverbArgs(out: ParsedArgs): void {
   // sync is the only subverb whose game and ids are optional.
-  if (!help && (out.subverb === 'add' || out.subverb === 'rm')) {
+  if (out.subverb === 'add' || out.subverb === 'rm') {
     if (out.game === undefined) throw usage(`mods ${out.subverb} needs a game`)
     if (out.subverb === 'rm' && out.rest.length === 0) throw usage('mods rm needs at least one mod id')
   }
 
   // routePositionals falls back to the subcommand's own slots, so an unknown steam subverb would
   // land in the game slot and fail much later.
-  if (!help && out.subcommand === 'steam') {
-    if (out.subverb === undefined) {
-      throw usage('steam needs a subverb', 'gamecrate steam build <game>, or gamecrate steam login')
-    }
-    if (out.subverb === 'build' && out.game === undefined) throw usage('steam build needs a game')
+  if (out.subcommand !== 'steam') return
+  if (out.subverb === undefined) {
+    throw usage('steam needs a subverb', 'gamecrate steam build <game>, or gamecrate steam login')
   }
-
-  if (left.length > 0) {
-    const shape = sub ? `${sub.name} ${sub.usage}`.trim() : `${out.game} [profile]`
-    throw usage(`unexpected argument ${left[0]}`, `gamecrate ${shape}`)
-  }
+  if (out.subverb === 'build' && out.game === undefined) throw usage('steam build needs a game')
 }
 
 interface Route {
