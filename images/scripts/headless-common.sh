@@ -49,6 +49,7 @@ run_under_xephyr() {
     echo "run-headed: no Xephyr in this image. rebuild it on a newer runtime base." >&2
     exit 5
   fi
+  game="$1"
   outer="${DISPLAY:-}"
   [ -n "$outer" ] || { echo "run-headed: no DISPLAY to host the nested server on" >&2; exit 5; }
   # the host socket is linked in under its own number, so the nested one has to differ or Xephyr
@@ -61,7 +62,7 @@ run_under_xephyr() {
     ln -sf "$HOST_X11_DIR/X${outer#:}" "/tmp/.X11-unix/X${outer#:}" || true
   fi
 
-  Xephyr "$NESTED_DISPLAY" -screen "$SCREEN" -resizeable -name "$(basename "$1")" &
+  Xephyr "$NESTED_DISPLAY" -screen "$SCREEN" -resizeable -name "$(basename "$game")" &
   server=$!
   waited=0
   until [ -S "/tmp/.X11-unix/X${NESTED_DISPLAY#:}" ]; do

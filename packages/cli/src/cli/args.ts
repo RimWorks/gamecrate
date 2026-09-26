@@ -659,7 +659,7 @@ interface FlagLog {
   seen: Set<string>
   counts: Map<string, number>
   worktree: string[]
-  cleanTier?: ParsedArgs['cleanTier']
+  cleanTier?: NonNullable<ParsedArgs['cleanTier']>
 }
 
 /**

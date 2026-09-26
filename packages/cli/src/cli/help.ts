@@ -175,7 +175,10 @@ complete -F ${fn} ${NAME}
 `
   }
 
-  const zshVerbs = SUBCOMMANDS.map((s) => `    '${s.name}:${s.summary.replaceAll("'", String.raw`'\''`)}'`).join('\n')
+  const zshVerbs = SUBCOMMANDS.map((s) => {
+    const summary = s.summary.replaceAll("'", String.raw`'\''`)
+    return `    '${s.name}:${summary}'`
+  }).join('\n')
   const zshFlags = options.map((f) => {
     const desc = f.description.replaceAll("'", String.raw`'\''`).replaceAll(/[[\]:]/g, '')
     const arg = placeholder(f)

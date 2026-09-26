@@ -203,6 +203,10 @@ async function download(
   return (await pending).dir
 }
 
+function loadOutput(stdout: string, stderr: string): string {
+  return `${stdout}\n${stderr}`.trim() || '(no output)'
+}
+
 /** A tag records as the digest it resolved to. An unreadable one records as itself. */
 async function resolvedBase(base: string, platform: string): Promise<string> {
   if (base.includes('@sha256:')) return base
@@ -232,7 +236,7 @@ async function readGate(ref: string, opts: SteamBuildOptions): Promise<{ present
   const reads: (Record<string, string> | null)[] = []
   if (opts.push) reads.push(await craneLabels(ref))
   if (opts.load) reads.push(await inspectLabels(ref))
-  if (reads.some((labels) => labels === null)) return { present: false, buildid: null }
+  if (reads.includes(null)) return { present: false, buildid: null }
   const ids = reads.map((labels) => labels?.['steam.buildid'] ?? null)
   return { present: reads.length > 0, buildid: ids.every((id) => id === ids[0]) ? (ids[0] ?? null) : null }
 }
@@ -255,7 +259,7 @@ async function dockerLoad(tar: string, ref: string): Promise<void> {
     throw new GamecrateError(
       `docker load failed for ${tar}`,
       Exit.Environment,
-      `expected "Loaded image: ${ref}", got: ${`${stdout}\n${stderr}`.trim() || '(no output)'}`,
+      `expected "Loaded image: ${ref}", got: ${loadOutput(stdout, stderr)}`,
     )
   }
 }

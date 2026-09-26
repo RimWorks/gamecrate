@@ -16,6 +16,7 @@ case "$*" in
     printf 'tar: unrecognized option: transform\n' >&2
     exit 1
     ;;
+  *) ;;
 esac
 
 # crane append needs -t even when -o writes a file. fail the way crane fails.
@@ -29,6 +30,7 @@ case "$*" in
         ;;
     esac
     ;;
+  *) ;;
 esac
 
 if [ -n "$FAKE_FAIL_FIRST" ]; then
@@ -47,6 +49,7 @@ case "$*" in
     printf '%s\n' "${FAKE_CONFIG_JSON:-$DEFAULT_CONFIG}"
     exit "${FAKE_EXIT:-0}"
     ;;
+  *) ;;
 esac
 
 exit "${FAKE_EXIT:-0}"

@@ -274,7 +274,7 @@ describe('what the long calls say while they run', () => {
     expect(text).toContain('ghcr.io/me/atlas:1.6.4871')
     expect(text).toContain('push attempt 1 of 3 failed: fake: 502 from the registry')
     expect(text).toContain('retrying')
-    expect((await runs(argvFile)).length).toBe(2)
+    expect(await runs(argvFile)).toHaveLength(2)
   })
 
   test('an append with nothing to print still says how long it has been running', async () => {
@@ -395,7 +395,7 @@ describe('registry credentials', () => {
     await craneMutateLabels('ghcr.io/me/atlas:1.6.4871', { 'steam.buildid': '1' })
     await craneLabels('ghcr.io/me/atlas:1.6.4871')
     const recorded = await runs(argvFile)
-    expect(recorded.length).toBe(3)
+    expect(recorded).toHaveLength(3)
     for (const argv of recorded) {
       expect(argv.join(' ')).toContain("'crane' 'auth' 'login' 'ghcr.io' '-u' 'me'")
       expect(argv).toContain('DOCKER_CONFIG=/tmp/gamecrate-docker')
@@ -415,7 +415,7 @@ describe('registry credentials', () => {
     expect(thrown?.detail).toContain('pass')
     expect(thrown?.detail).toContain('GAMECRATE_REGISTRY_USER')
     expect(thrown?.detail).toContain('GAMECRATE_REGISTRY_PASSWORD')
-    expect((await runs(argvFile)).length).toBe(0)
+    expect(await runs(argvFile)).toHaveLength(0)
   })
 
   test('a credHelpers entry for the target registry is refused the same way', async () => {
@@ -455,7 +455,7 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
     await dockerConfig(KA_CONFIG)
     expect(() => checkRegistryAuthEarly('ghcr.io/rimworks/gamecrate/rimworld:1')).not.toThrow()
     await cranePush('/layers/x.tar', 'ghcr.io/rimworks/gamecrate/rimworld:1')
-    expect((await runs(argvFile)).length).toBe(1)
+    expect(await runs(argvFile)).toHaveLength(1)
   })
 
   test('that same config still refuses the registry the helper does cover', async () => {
@@ -540,7 +540,7 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
     }
     expect(thrown?.code).toBe(Exit.Environment)
     expect(thrown?.message).toContain('GAMECRATE_REGISTRY_PASSWORD')
-    expect((await runs(argvFile)).length).toBe(0)
+    expect(await runs(argvFile)).toHaveLength(0)
   })
 })
 
@@ -593,7 +593,7 @@ describe('cranePush', () => {
     const { argvFile } = await fakeDocker()
     process.env.FAKE_FAIL_FIRST = '2'
     await cranePush('/layers/x.tar', 'ghcr.io/me/atlas:1.6.4871')
-    expect((await runs(argvFile)).length).toBe(3)
+    expect(await runs(argvFile)).toHaveLength(3)
   })
 
   test('a push that never succeeds throws with the registry output', async () => {
@@ -607,7 +607,7 @@ describe('cranePush', () => {
     }
     expect(thrown?.code).toBe(Exit.Environment)
     expect(thrown?.detail).toContain('502')
-    expect((await runs(argvFile)).length).toBe(3)
+    expect(await runs(argvFile)).toHaveLength(3)
   })
 })
 

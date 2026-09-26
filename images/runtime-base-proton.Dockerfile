@@ -18,8 +18,8 @@ ARG PROTON_SHA512=9fd0b2cfbd501c0b5c892239c392c7283a029b5e5d5a77d3f85b0ce190d555
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        imagemagick \
         curl \
+        imagemagick \
         libasound2t64 \
         libfreetype6 \
         libgl1 \

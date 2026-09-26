@@ -9,8 +9,7 @@ import { resolveSteamBuildInput } from '../image/input'
 import { publishedBuildId } from '../mods/steamcmd'
 import { imageDigest } from './prepare'
 import type { ImageFacts } from './image'
-import type { ParsedArgs, RootConfig } from '../types'
-import type { UpdateCheckSpec } from '../types'
+import type { ParsedArgs, RootConfig, UpdateCheckSpec } from '../types'
 
 const DEFAULT_HOURS = 6
 

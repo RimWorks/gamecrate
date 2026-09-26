@@ -481,7 +481,10 @@ async function rebuiltForUpdate(plan: LaunchPlan, config: RootConfig, args: Pars
     cwd: process.cwd(),
     configFile: await globalConfigPath(),
     ask: async (question) => {
-      if (args.yes) return (rebuilt = true)
+      if (args.yes) {
+        rebuilt = true
+        return true
+      }
       if (process.stdin.isTTY !== true || args.json) {
         warn('no terminal to ask, so the launch keeps the current image')
         return false

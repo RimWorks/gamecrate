@@ -26,7 +26,7 @@ export function sanitizeVersion(raw: string, fallback: string): string {
  */
 export function versionPrefixes(version: string): string[] {
   const parts = version.split('.')
-  if (parts.length < 2 || parts.some((p) => p === '')) return []
+  if (parts.length < 2 || parts.includes('')) return []
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('.'))
 }
 

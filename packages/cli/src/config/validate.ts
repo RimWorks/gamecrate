@@ -200,7 +200,12 @@ function repeats(entries: unknown[], key: string): { index: number; name: string
  * The docker tag charset, not gamecrate's own name rule: steam picks a branch name, and it
  * lands in a tag as `<version>-<branch>-<variant>`, so a space or a slash is fatal there.
  */
-const TAG_COMPONENT = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/
+/** A config value in a message. It reaches here unvalidated, so a bare cast could print an object. */
+function describe(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+const TAG_COMPONENT = /^\w[\w.-]*$/
 
 function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): void {
   const push = (message: string, path: PropertyKey[], suggestion?: string): void => {
@@ -257,7 +262,7 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
     const wants = depot === 'windows' ? 'proton' : 'xvfb'
     if (base === wants) return
     push(
-      `a ${String(depot)} depot cannot run on the "${base}" base`,
+      `a ${describe(depot)} depot cannot run on the "${base}" base`,
       ['variants', index, 'base'],
       depot === 'windows'
         ? 'set base to "proton"; it is the only base with wine'

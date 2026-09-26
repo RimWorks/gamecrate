@@ -225,8 +225,10 @@ function addX11(mounts: Mount[], env: Record<string, string>, identity: Identity
   if (!x11) return
   // the nested server needs its own socket dir. sharing the host's read-write is how a nested
   // display number lands on top of the real one and takes the desktop's X down with it.
-  mounts.push({ type: 'tmpfs', target: X11_SOCKET_DIR, uid: identity.uid, gid: identity.gid, mode: '1777' })
-  mounts.push({ type: 'bind', source: X11_SOCKET_DIR, target: HOST_X11_DIR, readonly: true })
+  mounts.push(
+    { type: 'tmpfs', target: X11_SOCKET_DIR, uid: identity.uid, gid: identity.gid, mode: '1777' },
+    { type: 'bind', source: X11_SOCKET_DIR, target: HOST_X11_DIR, readonly: true },
+  )
   env.HOST_X11_DIR = HOST_X11_DIR
   env.DISPLAY = x11.display
   env.XDG_SESSION_TYPE = 'x11'

@@ -146,7 +146,8 @@ function dockerRun(mounts: string[], script: string): string[] {
 
 /** POSIX single-quoting, for the one place an argv becomes a shell script. */
 function shq(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`
+  const escaped = value.replaceAll("'", String.raw`'\''`)
+  return `'${escaped}'`
 }
 
 /**
@@ -215,7 +216,7 @@ async function runLive(argv: string[], what: string): Promise<void> {
 
 /** The registry's own complaint, for a retry line that has to fit on one. */
 function lastLine(text: string): string {
-  return text.split('\n').map((l) => l.trim()).filter((l) => l !== '').at(-1) ?? 'no output'
+  return text.split('\n').map((l) => l.trim()).findLast((l) => l !== '') ?? 'no output'
 }
 
 export async function craneAppend(opts: {

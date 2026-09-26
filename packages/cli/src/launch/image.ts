@@ -1,8 +1,7 @@
 import type { ImageLaunch } from '../docker/spec'
-import type { ModeName, Problem } from '../types'
+import type { GameConfig, ModeName, Problem } from '../types'
 import { resolveProfile } from '../config/load'
 import { imageDigest, imageLabel } from './prepare'
-import type { GameConfig } from '../types'
 
 /** What an image says about itself. Every field is null for an image gamecrate did not build. */
 export interface ImageFacts {

@@ -36,7 +36,10 @@ const MARK = '@@gamecrate@@ '
  * through stdout corrupts one and busybox tar has no --transform; see landmines.md.
  */
 export function extractScript(candidates: string[], container: string): string {
-  const quoted = candidates.map((c) => `'${join(container, c).replaceAll("'", String.raw`'\''`)}'`)
+  const quoted = candidates.map((c) => {
+    const escaped = join(container, c).replaceAll("'", String.raw`'\''`)
+    return `'${escaped}'`
+  })
   return [
     `for d in ${quoted.join(' ')}; do`,
     '  set -- "$d"/*.dll',
