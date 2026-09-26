@@ -1,5 +1,5 @@
 import { existsSync, readlinkSync } from 'node:fs'
-import { mkdir, readdir, rename, rm, symlink, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, symlink, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { status } from '../cli/output'
@@ -18,6 +18,8 @@ export interface ManagedRefs {
   digest: string
   /** Container path they were found at. */
   source: string
+  /** `1.6` from the game's own Version.txt, absent when the image does not ship one. */
+  version?: string
   count: number
 }
 
@@ -25,8 +27,24 @@ function refsRoot(): string {
   return join(cacheDir(), 'refs')
 }
 
-export function refsLink(game: string): string {
-  return join(refsRoot(), 'current', game)
+export function refsLink(game: string, version?: string): string {
+  if (version === undefined) return join(refsRoot(), 'current', game)
+  return join(refsRoot(), 'version', game, version)
+}
+
+/** `1.6.4633 rev1254` in the file, `1.6` as the folder a mod builds into. */
+export async function readVersion(dir: string): Promise<string | undefined> {
+  const text = await readFile(join(dir, 'Version.txt'), 'utf8').catch(() => undefined)
+  const hit = text === undefined ? null : /^(\d+\.\d+)/.exec(text.trim())
+  return hit === null ? undefined : hit[1]
+}
+
+/** Both links, so a version matrix never reads `current` and gets whatever ran last. */
+async function pointBoth(game: string, dir: string): Promise<{ link: string; version?: string }> {
+  const version = await readVersion(dir)
+  const link = await point(refsLink(game), dir)
+  if (version !== undefined) await point(refsLink(game, version), dir)
+  return { link, version }
 }
 
 /** What `current` points at, for a failure message. A build that broke on the wrong game
@@ -57,6 +75,7 @@ export function extractScript(candidates: string[], container: string): string {
     '  [ -f "$1" ] || continue',
     `  echo "${MARK}$d"`,
     '  cp "$@" /out/',
+    `  cp '${join(container, 'Version.txt')}' /out/ 2>/dev/null || true`,
     '  exit 0',
     'done',
     'exit 3',
@@ -87,9 +106,8 @@ export async function extractRefs(game: string, config: GameConfig): Promise<Man
   }
 
   const dir = join(refsRoot(), digest.replace(/[^A-Za-z0-9]/g, '-'))
-  const link = refsLink(game)
   if (existsSync(dir)) {
-    return { dir, link: await point(link, dir), digest, source: '(cached)', count: await dllCount(dir) }
+    return { dir, ...(await pointBoth(game, dir)), digest, source: '(cached)', count: await dllCount(dir) }
   }
 
   const partial = `${dir}.partial`
@@ -124,7 +142,7 @@ export async function extractRefs(game: string, config: GameConfig): Promise<Man
     )
   }
   await rename(partial, dir)
-  return { dir, link: await point(link, dir), digest, source, count }
+  return { dir, ...(await pointBoth(game, dir)), digest, source, count }
 }
 
 async function dllCount(dir: string): Promise<number> {

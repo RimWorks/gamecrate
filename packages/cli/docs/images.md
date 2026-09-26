@@ -140,13 +140,24 @@ and the assembly count go to standard error.
 overrides both. Without this, a project could compile against one build while the container
 runs another.
 
-Extraction runs once per image digest and is cached after. Gamecrate also keeps a stable
-symlink at `~/.cache/gamecrate/refs/current/<game>`, which always points at the newest
-extraction. A project file can point at that path directly:
+Extraction runs once per image digest and is cached after. Gamecrate keeps two symlinks into it:
+
+| link | follows |
+| --- | --- |
+| `~/.cache/gamecrate/refs/current/<game>` | the newest extraction, whichever it was |
+| `~/.cache/gamecrate/refs/version/<game>/<major.minor>` | that game version, and nothing else |
+
+**Point a project at the version link, not at `current`.** Every `gamecrate refs` run moves
+`current`, including one from another terminal or another repository, so a project that follows
+it compiles against whatever ran last. The version link only moves when that same version is
+extracted again. The version comes from the game's own `Version.txt`, so a build gets
+`refs/version/rimworld/1.6` without naming a digest.
+
+A project file can point at either path directly:
 
 ```xml
 <PropertyGroup>
-  <GameRefs>$(HOME)/.cache/gamecrate/refs/current/rimworld</GameRefs>
+  <GameRefs>$(HOME)/.cache/gamecrate/refs/version/rimworld/1.6</GameRefs>
 </PropertyGroup>
 
 <ItemGroup>
