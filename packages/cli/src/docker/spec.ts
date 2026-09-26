@@ -19,7 +19,6 @@ export const CONTAINER_LOG_DIR = '/logs'
 
 /** X11's well-known socket directory. The path is the same on both sides or DISPLAY lies. */
 const X11_SOCKET_DIR = '/tmp/.X11-unix'
-const HOST_X11_DIR = '/run/host-x11'
 
 /** Outside XDG_RUNTIME_DIR on purpose: that is a tmpfs, and a bind under it races the tmpfs. */
 const CONTAINER_XAUTHORITY = '/tmp/xauth'
@@ -79,15 +78,13 @@ export function buildRunSpec(
   const command = proton
     ? ['run-headless-windows', winPath(join(game.gameFiles.container, basename(executable)))]
     : headed
-      ? ['run-headed', executable]
+      ? [executable]
       : [
           'xvfb-run',
           '-a',
           `--server-args=-screen 0 ${settings.width}x${settings.height}x24`,
           executable,
         ]
-
-  if (headed) env.SCREEN = `${settings.width}x${settings.height}x24`
 
   // the wrappers read both: SCREEN sizes Xvfb, DESKTOP sizes the wine virtual desktop.
   if (proton) {
@@ -112,7 +109,7 @@ export function buildRunSpec(
   }
 
   addScratch(mounts, env, plan, identity)
-  if (headed) addSession(mounts, env, plan, identity)
+  if (headed) addSession(mounts, env, plan)
 
   const deviceCgroupRules: string[] = []
   if (settings.input) {
@@ -208,9 +205,9 @@ function addScratch(
  * Display and audio for a headed run. Offscreen modes get their X server from xvfb-run, so
  * DISPLAY is set by it, not by us.
  */
-function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPlan, identity: Identity): void {
+function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPlan): void {
   const { settings } = plan
-  if (settings.display === 'x11') addX11(mounts, env, identity)
+  if (settings.display === 'x11') addX11(mounts, env)
   else addWayland(mounts, env)
 
   if (!settings.audio) return
@@ -220,16 +217,10 @@ function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPl
   env.PULSE_SERVER = `unix:${CONTAINER_RUNTIME_DIR}/pulse/native`
 }
 
-function addX11(mounts: Mount[], env: Record<string, string>, identity: Identity): void {
+function addX11(mounts: Mount[], env: Record<string, string>): void {
   const x11 = x11Session()
   if (!x11) return
-  // the nested server needs its own socket dir. sharing the host's read-write is how a nested
-  // display number lands on top of the real one and takes the desktop's X down with it.
-  mounts.push(
-    { type: 'tmpfs', target: X11_SOCKET_DIR, uid: identity.uid, gid: identity.gid, mode: '1777' },
-    { type: 'bind', source: X11_SOCKET_DIR, target: HOST_X11_DIR, readonly: true },
-  )
-  env.HOST_X11_DIR = HOST_X11_DIR
+  mounts.push({ type: 'bind', source: X11_SOCKET_DIR, target: X11_SOCKET_DIR })
   env.DISPLAY = x11.display
   env.XDG_SESSION_TYPE = 'x11'
   env.SDL_VIDEODRIVER = 'x11'

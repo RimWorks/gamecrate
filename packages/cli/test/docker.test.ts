@@ -204,16 +204,11 @@ describe('buildRunSpec: invariants', () => {
     const headed = toDockerArgs(buildRunSpec(plan('atlas', atlas, {}, 'headed'), [], identity))
     const entry = headed.indexOf('--entrypoint')
     expect(entry).toBeGreaterThan(0)
-    expect(headed[entry + 1]).toBe('run-headed')
+    expect(headed[entry + 1]).toBe('./AtlasLinux')
 
     const at = headed.indexOf('atlas-build:latest')
     expect(at).toBeGreaterThan(0)
-    expect(headed.slice(at + 1)).toEqual([
-      './AtlasLinux',
-      '-savedatafolder=/data',
-      '-logfile',
-      '/logs/Player.log',
-    ])
+    expect(headed.slice(at + 1)).toEqual(['-savedatafolder=/data', '-logfile', '/logs/Player.log'])
   })
 
   test('offscreen: xvfb-run is the entrypoint and the game becomes its argument', () => {
@@ -476,14 +471,9 @@ describe('buildRunSpec: devices and display', () => {
         expect(spec.hostname).toBe(hostname())
 
         const args = toDockerArgs(spec)
+        expect(mountFor(args, '/tmp/.X11-unix')).toBeDefined()
         expect(mountFor(args, '/tmp/xauth')).toContain('readonly')
         expect(valuesOf(args, '--hostname')).toEqual([hostname()])
-
-        // the nested server gets its own socket dir. a writable bind of the host's is how a
-        // nested display lands on the real one and takes the desktop's X down with it.
-        expect(valuesOf(args, '--tmpfs').some((t) => t.startsWith('/tmp/.X11-unix:'))).toBe(true)
-        expect(mountFor(args, '/tmp/.X11-unix')).toBeUndefined()
-        expect(mountFor(args, '/run/host-x11')).toContain('readonly')
       }
     } finally {
       process.env.DISPLAY = previous.display
