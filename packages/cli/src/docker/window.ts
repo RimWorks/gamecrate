@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { warn } from '../cli/output'
+import { setWindowIcon } from './icon'
 import { capture } from './run'
 
 /** Long enough for a cold RimWorld start on a spinning disk, short enough to give up on. */
@@ -101,6 +102,8 @@ async function toplevels(): Promise<Toplevel[] | null> {
 export interface AdoptOptions {
   executable: string
   title: string
+  /** An image the adopted window takes as its icon. Absolute, already resolved. */
+  icon?: string
   /** Set for an engine that claims WM_DELETE_WINDOW and ignores it, RimWorld being the one. */
   stripDelete: boolean
   /** Called once the window a stripDelete run adopted is gone. */
@@ -152,6 +155,7 @@ async function adoptFirstMatch(seen: Set<string>, opts: AdoptOptions, stopped: (
     if (!(await adopt(match.id, opts))) continue
 
     await capture(['wmctrl', '-i', '-r', match.id, '-N', opts.title])
+    if (opts.icon !== undefined) await setWindowIcon(match.id, opts.icon)
     if (opts.stripDelete) await watchForClose(match.id, stopped, opts.onClosed)
     return true
   }

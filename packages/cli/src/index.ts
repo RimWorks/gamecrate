@@ -26,7 +26,7 @@ import {
 import { resolveIdentity } from './docker/identity'
 import { preflight } from './docker/preflight'
 import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
-import { buildRunSpec, containerName, refuseProtonHeaded, windowTitle } from './docker/spec'
+import { buildRunSpec, containerName, refuseProtonHeaded, windowIcon, windowTitle } from './docker/spec'
 import { adoptNewWindow } from './docker/window'
 import { generateModsConfig, mergePrefs } from './launch/generate'
 import { createInterface } from 'node:readline/promises'
@@ -184,6 +184,12 @@ async function dispatch(
     default:
       throw new GamecrateError(`no such subcommand ${args.subcommand}`, Exit.Usage)
   }
+}
+
+/** Spread into the adopt options, so no icon means no key rather than an undefined one. */
+function iconOption(plan: LaunchPlan, configFile: string): { icon?: string } {
+  const icon = windowIcon(plan, dirname(configFile))
+  return icon === undefined ? {} : { icon }
 }
 
 function helpTopic(args: ParsedArgs): string | undefined {
@@ -526,6 +532,7 @@ async function dispatchRun(
       : await adoptNewWindow({
           executable: plan.gameConfig.executable,
           title: windowTitle(plan),
+          ...iconOption(plan, await globalConfigPath()),
           stripDelete: plan.gameConfig.ignoresWmDelete === true,
           onClosed: () => {
             windowClosed = true

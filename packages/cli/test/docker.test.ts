@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
 import { buildRunSpec, refuseProtonHeaded, toDockerArgs, windowTitle } from '../src/docker/spec'
+import { iconProperty } from '../src/docker/icon'
 import { resolveIdentity } from '../src/docker/identity'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -52,7 +53,7 @@ const atlas: GameConfig = {
   core: 'atlasco.atlas',
   dlc: [],
   modes: ['headed', 'headless', 'screenshot'],
-  profiles: {},
+  profiles: { kitted: { mods: [] } },
 }
 
 const beacon: GameConfig = {
@@ -78,7 +79,7 @@ const beacon: GameConfig = {
   core: 'beaconco.beacon',
   dlc: [],
   modes: ['headed', 'headless', 'screenshot'],
-  profiles: {},
+  profiles: { kitted: { mods: [] } },
 }
 
 function plan(
@@ -816,6 +817,36 @@ describe('window claims', () => {
   })
 })
 
+describe('windowTitle', () => {
+  const titled: GameConfig = {
+    ...atlas,
+    profiles: {
+      ...atlas.profiles,
+      captioned: { mods: [], windowTitle: 'Atlas dev rig' },
+      child: { extends: 'captioned', mods: [] },
+    },
+  }
+
+  const as = (profile: string): LaunchPlan => ({ ...plan('atlas', titled, {}, 'headed'), profile })
+
+  test('a profile caption replaces the default', () => {
+    expect(windowTitle(as('captioned'))).toBe('Atlas dev rig')
+  })
+
+  test('a child inherits its parent caption', () => {
+    expect(windowTitle(as('child'))).toBe('Atlas dev rig')
+  })
+
+  test('without one the caption is still game and profile', () => {
+    expect(windowTitle(as('kitted'))).toBe('atlas kitted')
+  })
+
+  test('an instance still gets its suffix', () => {
+    const p = { ...plan('atlas', titled, {}, 'headed', 'two'), profile: 'captioned' }
+    expect(windowTitle(p)).toBe('Atlas dev rig / two')
+  })
+})
+
 describe('window candidates', () => {
   const seen = new Set(['0x01'])
   const windows = [
@@ -864,3 +895,21 @@ async function waitFor(ok: () => boolean): Promise<void> {
   const deadline = Date.now() + 2000
   while (!ok() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
 }
+
+describe('iconProperty', () => {
+  test('leads with the dimensions, then one cardinal per pixel', () => {
+    const rgba = Buffer.alloc(2 * 2 * 4)
+    rgba.set([0x11, 0x22, 0x33, 0xff], 0)
+    const body = iconProperty(rgba, 2)
+    expect(body.length).toBe(8 + 4 * 4)
+    expect(body.readUInt32LE(0)).toBe(2)
+    expect(body.readUInt32LE(4)).toBe(2)
+  })
+
+  // the wire format is ARGB, and ImageMagick hands over RGBA. swapping them silently tints
+  // every icon, which no test of the byte count would notice.
+  test('packs RGBA into ARGB, not the order it arrived in', () => {
+    const rgba = Buffer.from([0x11, 0x22, 0x33, 0xff])
+    expect(iconProperty(rgba, 1).readUInt32LE(8)).toBe(0xff112233)
+  })
+})

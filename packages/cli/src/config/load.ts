@@ -404,7 +404,7 @@ function resolveNamed(game: GameConfig, name: string, seen: string[]): ProfileCo
   if (auto !== undefined) out.autoDependencies = auto
   // a scalar a child does not restate is its parent's. every one of these is read off the
   // resolved profile, so dropping it here is the same as the option never existing
-  for (const field of ['detach', 'replace', 'build', 'gameVersion', 'image'] as const) {
+  for (const field of ['detach', 'replace', 'build', 'gameVersion', 'image', 'windowTitle', 'windowIcon'] as const) {
     const value = self[field] ?? parent[field]
     if (value !== undefined) Object.assign(out, { [field]: value })
   }

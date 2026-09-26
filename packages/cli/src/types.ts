@@ -193,6 +193,10 @@ export interface ProfileConfig {
   gameVersion?: string
   /** A whole image ref, used verbatim. Beaten only by --image. */
   image?: string
+  /** The caption the window takes, instead of "<game> <profile>". */
+  windowTitle?: string
+  /** A path to an image the window takes as its icon. Relative to the config file. */
+  windowIcon?: string
   /** Launch defaults for this profile. The matching --no-* flag overrides each one. */
   detach?: boolean
   replace?: boolean

@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import type {
   DataDirSpec,
   DockerRunSpec,
@@ -9,6 +9,7 @@ import type {
   ModeName,
   Mount,
 } from '../types'
+import { expandHome, resolveProfile } from '../config/load'
 import { GamecrateError, Exit } from '../types'
 
 /** Container-side XDG_RUNTIME_DIR. A sized tmpfs; display and audio sockets land inside it. */
@@ -257,8 +258,18 @@ export function containerName(plan: LaunchPlan): string {
 }
 
 /** What the window is renamed to, so a taskbar full of worktrees is readable. */
+/** The icon a profile names, made absolute against the config that named it. */
+export function windowIcon(plan: LaunchPlan, configDir: string): string | undefined {
+  const named = resolveProfile(plan.gameConfig, plan.profile).windowIcon
+  if (named === undefined) return undefined
+  const path = expandHome(named)
+  return isAbsolute(path) ? path : resolve(configDir, path)
+}
+
 export function windowTitle(plan: LaunchPlan): string {
-  const base = `${plan.game} ${plan.profile}`
+  // read off the resolved profile, so an inherited windowTitle counts the same as an own one
+  const own = resolveProfile(plan.gameConfig, plan.profile).windowTitle
+  const base = own ?? `${plan.game} ${plan.profile}`
   return plan.instance === undefined ? base : `${base} / ${plan.instance}`
 }
 

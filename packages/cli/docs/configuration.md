@@ -194,6 +194,20 @@ you. `image` names a whole reference and gamecrate uses it as written. `image` b
 Either key switches the game files to the image, because the game lives inside one. A host mount
 over the same path would hide what the image carries.
 
+A headed profile can also name its own window caption and icon. Without them the caption is
+`<game> <profile>`, and the window keeps whatever icon the game sets.
+
+```json
+{
+  "profiles": {
+    "dev": { "windowTitle": "Atlas dev rig", "windowIcon": "art/dev.png", "mods": [] }
+  }
+}
+```
+
+`windowIcon` is relative to the config file that names it, and ImageMagick reads it, so any
+format it knows works. Both need X11: a Wayland client owns its own caption, so neither applies there.
+
 gamecrate ships one profile of its own, `modless`. It resolves to the core game plus its
 official DLC, and you cannot redefine it. Subcommand names are reserved the same way: a game or
 profile called `run`, `add` or `sync` fails validation.
