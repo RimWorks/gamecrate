@@ -47,3 +47,38 @@ jobs:
 
       - name: Test
         run: npm test
+
+  headed:
+    name: nested display smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # the runner has no desktop, so Xvfb stands in for the display Xephyr draws onto
+      - name: Install Xvfb
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb >/dev/null
+
+      - name: Build the runtime base
+        run: docker build -t gamecrate-base:smoke -f images/runtime-base.Dockerfile images
+
+      - name: A headed launch accepts injected input
+        run: |
+          set -euo pipefail
+          Xvfb :98 -screen 0 1280x1024x24 -nolisten tcp &
+          for _ in $(seq 1 60); do [ -e /tmp/.X11-unix/X98 ] && break; sleep 0.25; done
+          [ -e /tmp/.X11-unix/X98 ] || { echo "Xvfb never came up"; exit 1; }
+          docker run --rm --init -u "$(id -u)" \
+            -e SCREEN=800x600x24 -e DISPLAY=:98 -e HOST_X11_DIR=/run/host-x11 \
+            --tmpfs "/tmp/.X11-unix:rw,uid=$(id -u),gid=$(id -g),mode=1777" \
+            -v /tmp/.X11-unix:/run/host-x11:ro \
+            -v "$PWD/.github/smoke-headed.sh:/game/smoke.sh:ro" \
+            --entrypoint run-headed gamecrate-base:smoke /game/smoke.sh
+
+      # the failure that cost a desktop: a nested display landing on the host's socket
+      - name: The container never touches the host socket directory
+        run: |
+          set -euo pipefail
+          test "$(ls /tmp/.X11-unix)" = "X98" || { echo "host socket dir gained: $(ls /tmp/.X11-unix)"; exit 1; }
+          echo "host socket dir untouched"
