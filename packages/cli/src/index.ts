@@ -32,11 +32,13 @@ import { generateModsConfig, mergePrefs } from './launch/generate'
 import { createInterface } from 'node:readline/promises'
 import { imageFor, imageLaunch, imageProblem, markerProblem, readImageFacts, withImageOverride } from './launch/image'
 import { offerRebuild } from './launch/updates'
+import { RUNTIME_BASE } from './image/base'
 import type { ImageFacts } from './launch/image'
 import type { ImageLaunch } from './docker/spec'
 import {
   acquireImage,
   buildLocalMods,
+  repoDigest,
   captureScreenshot,
   heldLock,
   isRunning,
@@ -773,10 +775,40 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
     const gameConfig = config.games[game]!
     const sources = cachedSources(gameConfig, 'modless', {}, config.dataRoot)
     const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
-    const all = [...problems, ...(await preflight(plan)), ...steamcmdProblems(game, gameConfig, config)]
+    const all = [
+      ...problems,
+      ...(await preflight(plan)),
+      ...steamcmdProblems(game, gameConfig, config),
+      ...(await baseDriftProblems(game, gameConfig)),
+    ]
     if (!reportDoctor(game, all)) failed = true
   }
   return failed ? Exit.Environment : Exit.Ok
+}
+
+/**
+ * An image carries the base digest it was appended onto. Nothing compares it, so an image built
+ * on an older base fails later as a missing entrypoint with no hint of why.
+ */
+async function baseDriftProblems(game: string, gameConfig: GameConfig): Promise<Problem[]> {
+  const ref = gameConfig.image.ref
+  if (ref.trim() === '') return []
+  const facts = await readImageFacts(ref)
+  if (!facts.present || facts.runtime === null) return []
+
+  const base = RUNTIME_BASE[facts.launcher === 'proton' ? 'proton' : 'xvfb']
+  const current = await repoDigest(base)
+  // no local copy of the base is nothing to compare against, not a problem
+  if (current === null) return []
+  if (facts.runtime.endsWith(current)) return []
+
+  return [
+    {
+      where: `/games/${game}/image/ref`,
+      message: `${ref} was built on an older ${base}`,
+      suggestion: `gamecrate steam build ${game} to rebuild it on the base you have`,
+    },
+  ]
 }
 
 function steamcmdProblems(game: string, gameConfig: GameConfig, config: RootConfig): Problem[] {

@@ -26,6 +26,17 @@ export async function imageDigest(ref: string): Promise<string | null> {
   return code === 0 && id.length > 0 ? id : null
 }
 
+/**
+ * The registry digest a local image was pulled at. `.Id` is the config digest and is a different
+ * number, so comparing it against a recorded manifest digest never matches.
+ */
+export async function repoDigest(ref: string): Promise<string | null> {
+  const format = '{{range .RepoDigests}}{{.}}{{break}}{{end}}'
+  const { code, stdout } = await capture(['docker', 'image', 'inspect', '--format', format, ref])
+  const at = stdout.trim().lastIndexOf('@')
+  return code === 0 && at !== -1 ? stdout.trim().slice(at + 1) : null
+}
+
 /** One file out of an image, for a fact the host copy would answer wrongly. */
 export async function readFromImage(ref: string, path: string): Promise<string | null> {
   const { code, stdout } = await capture(['docker', 'run', '--rm', '--entrypoint', 'cat', ref, path])

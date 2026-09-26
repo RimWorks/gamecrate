@@ -115,6 +115,17 @@ describe('run wires the checks in before staging', () => {
     expect(source).toContain('throw new GamecrateError(needsMarker.message, Exit.Usage')
   })
 
+  // an image records the base digest it was appended onto, and comparing .Id instead of the
+  // registry digest matches nothing, so doctor would cry drift on every image
+  test('doctor compares the base against the registry digest, not the local id', () => {
+    const drift = body('baseDriftProblems')
+    expect(drift).toContain('await repoDigest(base)')
+    expect(drift).not.toContain('imageDigest(base)')
+    expect(drift).toContain('facts.runtime.endsWith(current)')
+    // no local base is nothing to compare, not a finding
+    expect(drift).toContain('if (current === null) return []')
+  })
+
   test('the runtime layer build is gone', () => {
     expect(source).not.toContain('ensureRuntimeLayer')
   })
