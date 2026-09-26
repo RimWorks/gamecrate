@@ -32,6 +32,7 @@ RUN apt-get update \
         locales \
         x11-apps \
         xdotool \
+        xserver-xephyr \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,6 +42,7 @@ ENV LANG=C.UTF-8
 # your own test-runner mod.
 COPY scripts/headless-common.sh /usr/local/lib/headless-common.sh
 COPY --chmod=755 scripts/run-headless.sh /usr/local/bin/run-headless
+COPY --chmod=755 scripts/run-headed.sh /usr/local/bin/run-headed
 
 # no USER: run-headless needs root to chown the mount parents, then drops to uid 1000.
 # ubuntu:24.04 ships a stock user at uid 1000, so reclaim it first.
