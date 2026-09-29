@@ -1,5 +1,10 @@
 # @gamecrate/rimworld
 
+[![npm](https://img.shields.io/npm/v/%40gamecrate%2Frimworld)](https://www.npmjs.com/package/@gamecrate/rimworld)
+[![npm downloads](https://img.shields.io/npm/dm/%40gamecrate%2Frimworld)](https://www.npmjs.com/package/@gamecrate/rimworld)
+[![MIT license](https://img.shields.io/npm/l/%40gamecrate%2Frimworld)](../../LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Cryptiks_Mods-5865F2?logo=discord&logoColor=white)](https://discord.gg/tbcKN8e4mZ)
+
 gamecrate launches a modded game inside a Docker container. You describe a profile once in one
 config file, then run it by name. Each profile gets its own save directory, its own logs, and
 only the mods it lists.
@@ -7,7 +12,7 @@ only the mods it lists.
 The tool knows nothing about any one game. A plugin supplies the file formats and the engine
 facts, so the core stays the same for every title.
 
-This package is the RimWorld plugin for [`@gamecrate/cli`](../cli). It teaches gamecrate three
+This package is the RimWorld plugin for [`@gamecrate/cli`](../cli). It teaches gamecrate five
 RimWorld file formats plus a handful of engine facts. gamecrate then runs the game with the
 mods a profile lists.
 
@@ -16,36 +21,20 @@ is the word you type on the command line.
 
 ## Install
 
-Neither package sits on npm yet. Build from a clone of the monorepo, then point your config at
-the built file:
-
 ```sh
-git clone https://github.com/RimWorks/gamecrate.git
-cd gamecrate
-npm install
-npm run build
+npm install -g @gamecrate/cli
+gamecrate init
 ```
 
-```jsonc
-// ~/.config/gamecrate/profiles.json
-{
-  "plugins": ["~/src/gamecrate/packages/rimworld/dist/index.js"]
-}
+Pick `rimworld` when `init` asks. It installs this package and writes
+`~/.config/gamecrate/config.yml` with the plugin already listed:
+
+```yaml
+plugins: ['@gamecrate/rimworld']
 ```
 
-Once the package reaches npm, install it next to your config and use the bare name instead:
-
-```sh
-cd ~/.config/gamecrate
-npm init -y
-npm install @gamecrate/rimworld
-```
-
-```jsonc
-{
-  "plugins": ["@gamecrate/rimworld"]
-}
-```
+The global config has to be YAML. `init` refuses to run against a `config.json` or a
+`config.jsonc` and asks you to rename it first.
 
 ## What the plugin handles
 
@@ -55,12 +44,18 @@ name, the dependencies, and the load-order hints.
 It writes `Config/ModsConfig.xml` with the active package ids in load order, lowercased, plus
 the known expansions and the engine's build number.
 
-It merges `Config/Prefs.xml`. Your own prefs survive, and gamecrate overwrites only the keys it
-owns. Those are the screen size, dev mode, and a few more. `fullscreen: False` is what puts the
-game in a window.
+It merges `Config/Prefs.xml`. Your own prefs survive, and gamecrate overwrites only six keys:
+`screenWidth`, `screenHeight`, `devMode`, `runInBackground`, `fullscreen`, and
+`resetModsConfigOnCrash`. `fullscreen: False` is what puts the game in a window, and
+`resetModsConfigOnCrash: False` stops the engine wiping your mod list after a crash. gamecrate
+also writes anything you put in `settings.prefsExtra`.
 
 It parses `Version.txt`. RimWorld writes strings like `1.6.4871 rev598`, and the number after
 `rev` is the build number that `ModsConfig.xml` wants.
+
+It writes a mod's own settings file before a launch, so a profile can turn a mod on with the
+options it needs. Those land in the game's `Config` directory. See
+[Configuration](../cli/docs/configuration.md) for the `modSettings` block.
 
 ## What the plugin already knows
 
@@ -85,39 +80,68 @@ Anything about your machine stays in your config:
 | Key | Why the plugin cannot know it |
 | --- | --- |
 | `gameFiles.host` | Where you installed RimWorld |
-| `image.ref` and `image.acquire` | Which runtime image you pull or build |
+| `image.ref` and `image.acquire` | Only for an image that carries the game. A mounted install pulls the built-in runtime |
 | `workshopRoot` | Where Steam put the workshop content, or `null` |
 | `scanRoots` | Which directories hold your local mods |
+| `library` | Which mod each pin resolves to. `gamecrate mods add` writes this |
 | `profiles` | Which mods each profile loads |
 
 A full example:
 
-```jsonc
-{
-  "plugins": ["@gamecrate/rimworld"],
-  "games": {
-    "rimworld": {
-      "gameFiles": { "host": "~/games/RimWorld" },
-      "image": { "ref": "ghcr.io/your-org/rimworld:1.6", "acquire": "pull" },
-      "workshopRoot": "~/.steam/steam/steamapps/workshop/content/294100",
-      "scanRoots": [{ "path": "~/projects/mods", "maxDepth": 2 }],
-      "profiles": {
-        "dev": { "mods": ["brrainz.harmony", "yourname.yourmod"] }
-      }
-    }
-  }
-}
+```yaml
+plugins: ['@gamecrate/rimworld']
+games:
+  rimworld:
+    gameFiles:
+      host: ~/games/RimWorld
+    workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
+    scanRoots:
+      - path: ~/projects/mods
+        maxDepth: 2
+    profiles:
+      dev:
+        mods: [brrainz.harmony, yourname.yourmod]
 ```
 
 Then launch it:
 
 ```sh
-gamecrate rimworld dev
+gamecrate run dev
+```
+
+## Building an image from Steam
+
+If you own RimWorld on Steam but have no install on this host, build the image instead. The
+plugin declares three variants:
+
+| Variant | Gives you |
+| --- | --- |
+| `linux` | The native Linux build |
+| `windows` | The Windows build, run through Proton |
+| `linux-ref` | The managed DLLs and `Version.txt` only, for referencing from a csproj |
+
+```sh
+gamecrate steam login
+gamecrate steam build --game rimworld --variant linux --load
+```
+
+To reference the game's DLLs from a csproj without a local install:
+
+```sh
+gamecrate refs --game rimworld
 ```
 
 ## Overriding a default
 
 Any key you write replaces the plugin's value for that key. Watch out for arrays: yours
-replaces the plugin's list rather than adding to it. To run with a sixth DLC, copy all five ids
-out of the plugin and add the new one. The [`@gamecrate/cli` README](../cli) covers the merge
-rules and the one exception, which is the settings ladder.
+replaces the plugin's list rather than adding to it. The plugin sets `scanRoots` to an empty
+list, so writing your own is a replacement:
+
+```yaml
+    scanRoots:
+      - path: ~/projects/mods
+        maxDepth: 2
+```
+
+[Configuration](../cli/docs/configuration.md#arrays-replace-instead-of-merging)
+covers the merge rules and the two arrays that concatenate instead.

@@ -1,7 +1,6 @@
 import type { GamePlugin } from '@gamecrate/cli'
-import { mergePrefsXml, parseAboutXml, writeModsConfigXml } from './xml'
+import { mergePrefsXml, parseAboutXml, writeModsConfigXml, renderModSettings } from './xml'
 
-/** RimWorld ships "1.6.4871 rev598"; the number after rev is what ModsConfig calls the build. */
 function parseVersion(text: string): { version: string; buildNumber: number } | null {
   if (text === '') return null
   const rev = /^(.+) rev(\d+)$/.exec(text)
@@ -9,10 +8,8 @@ function parseVersion(text: string): { version: string; buildNumber: number } | 
 }
 
 const plugin: GamePlugin = {
-  apiVersion: 2,
+  apiVersion: 3,
   game: 'rimworld',
-  // Only what is true of the game itself. The install path, workshop root, scan roots and
-  // image belong to whoever is running it, so they stay in profiles.json.
   defaults: {
     gameFiles: { source: 'mount', container: '/game' },
     dataDir: { container: '/data', mode: 'arg', arg: '-savedatafolder=/data' },
@@ -20,23 +17,32 @@ const plugin: GamePlugin = {
     logFile: { mode: 'arg', arg: '-logfile' },
     executable: './RimWorldLinux',
     managed: ['RimWorldLinux_Data/Managed', '.'],
-    // Verified on a native launch too, so this is the engine and not the container.
     ignoresWmDelete: true,
     steamAppId: 294100,
-    // Where Steam put the workshop is this machine's business, so a profile has to say.
     workshopRoot: null,
     scanRoots: [],
     manifest: { file: 'About/About.xml' },
     modsConfig: { file: 'Config/ModsConfig.xml' },
     prefs: { file: 'Config/Prefs.xml' },
+    modSettingsDir: 'Config',
     version: { file: 'Version.txt' },
+    records: {
+      dir: 'config/unity3d/Ludeon Studios/RimWorld by Ludeon Studios/RimLogging',
+      mods: ['RimWorks.RimLogging'],
+      enable: {
+        file: 'Mod_RimLogging_LoggingMod.xml',
+        class: 'RimWorks.RimLogging.Settings.LoggingSettings',
+        values: { sinkOverrideNames: ['RollingJson'], sinkOverrideStates: [true] },
+        replace: ['sinkOverrideNames', 'sinkOverrideStates'],
+      },
+    },
     steamBuild: {
       branches: [{ name: 'public' }],
       variants: [
-        { name: 'linux', base: 'xvfb', include: [] },
+        { name: 'linux', base: 'linux', include: [] },
         {
           name: 'windows',
-          base: 'proton',
+          base: 'windows',
           include: [],
           depot: 'windows',
           executable: 'RimWorldWin64.exe',
@@ -58,8 +64,6 @@ const plugin: GamePlugin = {
       'ludeon.rimworld.odyssey',
     ],
     modes: ['headed', 'headless', 'screenshot'],
-    // A mod's own server binds loopback inside the container, where -p cannot reach it.
-    // Sharing the host netns is what makes RimObs' dashboard openable.
     settings: { network: 'host' },
     profiles: {},
   },
@@ -67,6 +71,7 @@ const plugin: GamePlugin = {
   renderModsConfig: ({ version, activeMods, knownExpansions }) =>
     writeModsConfigXml({ version, activeMods, knownExpansions }),
   mergePrefs: mergePrefsXml,
+  renderModSettings,
   windowedPrefs: { fullscreen: 'False' },
   parseVersion,
 }

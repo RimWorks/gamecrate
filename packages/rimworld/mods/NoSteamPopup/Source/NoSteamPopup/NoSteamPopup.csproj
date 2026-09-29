@@ -10,12 +10,24 @@
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <DebugType>none</DebugType>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <GameVersion Condition="'$(GameVersion)' == ''">1.6</GameVersion>
+    <GamecrateCache Condition="'$(GamecrateCache)' == '' And '$(XDG_CACHE_HOME)' != ''">$(XDG_CACHE_HOME)</GamecrateCache>
+    <GamecrateCache Condition="'$(GamecrateCache)' == ''">$([System.IO.Path]::Combine($([System.Environment]::GetFolderPath(SpecialFolder.UserProfile)), '.cache'))</GamecrateCache>
+    <GamecrateRefs Condition="'$(GamecrateRefs)' == ''">$([System.IO.Path]::Combine($(GamecrateCache), 'gamecrate', 'refs', 'version', 'rimworld', $(GameVersion)))</GamecrateRefs>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4871" PrivateAssets="all" />
     <!-- Matches the Concord the workshop mod ships; it supplies the runtime, we only compile. -->
     <PackageReference Include="Concord.Ref" Version="0.16.0" PrivateAssets="all" />
     <PackageReference Include="Concord.Analyzers" Version="0.16.0" PrivateAssets="all" />
+    <Reference Include="$(GamecrateRefs)/*.dll"
+               Exclude="$(GamecrateRefs)/System.*.dll;$(GamecrateRefs)/System.dll;$(GamecrateRefs)/Microsoft.*.dll;$(GamecrateRefs)/mscorlib.dll;$(GamecrateRefs)/netstandard.dll;$(GamecrateRefs)/WindowsBase.dll">
+      <Private>False</Private>
+    </Reference>
   </ItemGroup>
+  <Target Name="RequireGameRefs" BeforeTargets="ResolveAssemblyReferences"
+          Condition="!Exists('$(GamecrateRefs)/Assembly-CSharp.dll')">
+    <Error Text="no rimworld $(GameVersion) assemblies at $(GamecrateRefs). run: gamecrate steam build rimworld --beta version-$(GameVersion)" />
+  </Target>
 </Project>

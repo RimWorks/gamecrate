@@ -1,20 +1,14 @@
+import type { ModManifest, ModSettingsFile } from '@gamecrate/cli'
 import { SaxesParser } from 'saxes'
 import { NAME_RE } from 'xmlchars/xml/1.0/ed5'
-import type { ModManifest } from '@gamecrate/cli'
 
 interface XmlNode {
   name: string
   children: XmlNode[]
-  /** Direct character data only, entities and CDATA resolved. */
   text: string
-  /** Source between the start and end tags, verbatim. */
   inner: string
 }
 
-/**
- * Strict by default: an unknown entity or a valueless attribute is an error. A DOCTYPE is
- * accepted and its external part is never fetched, because saxes resolves nothing itself.
- */
 function parseDocument(text: string): XmlNode {
   const src = text.codePointAt(0) === 0xfeff ? text.slice(1) : text
   const parser = new SaxesParser({ xmlns: false, position: true })
@@ -35,7 +29,6 @@ function parseDocument(text: string): XmlNode {
     if (tag.isSelfClosing) return
     const frame = stack.pop()
     if (!frame) return
-    // Between innerStart and here the only '<' is the one opening this closing tag.
     frame.node.inner = src.slice(frame.innerStart, src.lastIndexOf('<', parser.position - 1))
   })
   const addText = (t: string): void => {
@@ -161,7 +154,6 @@ function isMarkup(value: string): boolean {
 export function writePrefsXml(entries: Map<string, string>): string {
   const lines = ['<?xml version="1.0" encoding="utf-8"?>', '<PrefsData>']
   for (const [key, value] of entries) {
-    // A key becomes a tag name, so a bad one from prefsExtra fails here instead of in the file.
     if (!NAME_RE.test(key)) throw new Error(`prefs key is not an XML name: ${JSON.stringify(key)}`)
     if (value === '') lines.push(`  <${key} />`)
     else if (isMarkup(value)) lines.push(`  <${key}>${value}</${key}>`)
@@ -177,4 +169,60 @@ export function mergePrefsXml(existing: string | null, owned: Record<string, str
     existing === null || existing.trim() === '' ? new Map<string, string>() : parsePrefsXml(existing)
   for (const [key, value] of Object.entries(owned)) entries.set(key, value)
   return writePrefsXml(entries)
+}
+
+export function renderModSettings(existing: string | null, block: ModSettingsFile): string {
+  const owned = new Set<string>(block.replace ?? [])
+  const stripped = owned.size === 0 ? existing : dropKeys(existing, owned)
+  const missing = Object.entries(block.values).filter(([key]) => !hasKey(stripped, key))
+  if (stripped !== null && missing.length === 0) return stripped
+
+  const added = missing.map(([key, value]) => renderSetting(key, value)).join('\n')
+  if (stripped === null) {
+    return `<?xml version="1.0" encoding="utf-8"?>
+<SettingsBlock>
+\t<ModSettings Class="${block.class}">
+${added}
+\t</ModSettings>
+</SettingsBlock>
+`
+  }
+  const close = stripped.lastIndexOf('</ModSettings>')
+  if (close === -1) return existing ?? stripped
+  const body = stripped.slice(0, close)
+  let end = body.length
+  while (end > 0 && (body[end - 1] === ' ' || body[end - 1] === '\t')) end--
+  return `${body.slice(0, end)}${added}\n\t${stripped.slice(close)}`
+}
+
+function dropKeys(existing: string | null, keys: ReadonlySet<string>): string | null {
+  if (existing === null) return null
+  let text = existing
+  for (const key of keys) {
+    const element = String.raw`[ \t]*<${key}\b(?:[^>/]|/(?!>))*(?:/>|>[\s\S]*?</${key}>)\r?\n?`
+    text = text.replace(new RegExp(element, 'g'), '')
+  }
+  return text
+}
+
+function hasKey(existing: string | null, key: string): boolean {
+  if (existing === null) return false
+  return new RegExp(String.raw`<${key}\b`).test(existing)
+}
+
+function renderSetting(key: string, value: unknown): string {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => `\t\t\t<li>${escapeXml(scalar(item))}</li>`).join('\n')
+    return items.length === 0 ? `\t\t<${key} />` : `\t\t<${key}>\n${items}\n\t\t</${key}>`
+  }
+  return `\t\t<${key}>${escapeXml(scalar(value))}</${key}>`
+}
+
+function scalar(value: unknown): string {
+  if (typeof value === 'boolean') return value ? 'True' : 'False'
+  return String(value)
+}
+
+function escapeXml(text: string): string {
+  return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
 }
