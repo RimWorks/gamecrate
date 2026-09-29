@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
 
-// bun's spawnSync snapshots the environment at process start, so a PATH this suite sets
-// later is invisible to a child. node defaults `env` to process.env; restore that.
 const realCp = { ...(await import('node:child_process')) }
 const cp = {
   ...realCp,
@@ -97,10 +95,7 @@ describe('normalizeUrl', () => {
     }
   })
 
-  // a long interior run of slashes used to backtrack exponentially
   test('a long interior run of slashes is left alone and does not backtrack', () => {
-    // 28 slashes: the old regex took ~1.9s there, so a regression trips the guard below. more
-    // slashes and it never returns at all, and no runner can interrupt a sync regex.
     const url = `https://h/o${'/'.repeat(28)}repo`
     const start = Date.now()
     expect(normalizeUrl(url)).toBe(url)
@@ -189,14 +184,12 @@ function temp(prefix: string): string {
   return dir
 }
 
-// a real repo: commit "one" tagged v1, then commit "two" on main. no network, no mocks
 function fixture(): { url: string; dir: string } {
   const dir = temp('gc-remote-')
   const run = (...argv: string[]): void => {
     execFileSync('git', argv, { cwd: dir, stdio: 'pipe' })
   }
   run('init', '-b', 'main')
-  // a throwaway repo must not inherit the global hooksPath, its commit-msg hook blocks on a ui.
   run('config', 'core.hooksPath', '/dev/null')
   run('config', 'user.email', 'test@example.invalid')
   run('config', 'user.name', 'gamecrate test')
@@ -260,7 +253,6 @@ describe('ensureClone', () => {
     const res = await ensureClone(root, { url: remote.url }, { kind: 'branch', value: 'main' }, 'fetch')
     expect(res.warning).toBeUndefined()
     expect(read(res.dir)).toBe('two')
-    // a bare clone also lands on main at two, only the detached checkout leaves HEAD off a branch
     const head = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: res.dir, encoding: 'utf8' })
     expect(head.trim()).toBe('HEAD')
   })
@@ -368,15 +360,12 @@ describe('ensureClone', () => {
     const ref = { kind: 'branch', value: 'main' } as const
     const dir = cloneDir(root, remote.url, ref)
     mkdirSync(dir, { recursive: true })
-    // what SIGKILL on `git clone` leaves behind: a .git with HEAD, config, objects and refs, no
-    // commit, and an origin with no fetch refspec, so nothing downstream ever repairs it
     const run = (...argv: string[]): void => {
       execFileSync('git', argv, { cwd: dir, stdio: 'pipe' })
     }
     run('init')
     run('remote', 'add', 'origin', remote.url)
     run('config', '--unset', 'remote.origin.fetch')
-    // a `.git` check alone passes this directory, which is why the gate resolves HEAD instead
     expect(existsSync(join(dir, '.git'))).toBe(true)
 
     const error = await ensureClone(root, { url: remote.url }, ref, 'use')
@@ -411,7 +400,6 @@ describe('ensureClone', () => {
     const second = await ensureClone(root, { url: remote.url }, ref, 'fetch')
     expect(read(second.dir)).toBe('one')
 
-    // force has to actually fetch and reset, so a wrong reset target shows up as a warning
     writeFileSync(join(second.dir, 'f.txt'), 'tampered')
     const third = await ensureClone(root, { url: remote.url }, ref, 'force')
     expect(third.warning).toBeUndefined()
@@ -451,7 +439,6 @@ describe('lockDir', () => {
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('waited on a dead holder')), 2000)),
     ])
 
-    // returning fast is not the same as taking it over: the file has to name us now
     const held = JSON.parse(readFileSync(`${dir}.lock`, 'utf8')) as { pid: number }
     expect(held.pid).toBe(process.pid)
     expect(held.pid).not.toBe(Number(dead))
@@ -460,19 +447,14 @@ describe('lockDir', () => {
     expect(existsSync(`${dir}.lock`)).toBe(false)
   })
 
-  // a simulation, not two real processes: it plays A's read, B's legitimate take, then A's steal
-  // in order, which is the interleaving a true race would have to hit by luck
   test('a steal refuses once another holder has taken the lock', async () => {
     const root = temp('gc-data-')
     const path = join(root, 'x.lock')
     const dead = execFileSync('sh', ['-c', 'echo $$'], { encoding: 'utf8' }).trim()
-    // one timestamp for both, so the records differ by pid alone on every run and not just the ones
-    // where two `new Date()` calls land in the same millisecond
     const at = new Date().toISOString()
     const seen = JSON.stringify({ pid: Number(dead), startedAt: at })
     writeFileSync(path, seen)
 
-    // B wins the orphan and writes its own live record while A still holds the record it read
     const live = JSON.stringify({ pid: process.pid, startedAt: at })
     writeFileSync(path, live)
 
@@ -488,7 +470,6 @@ describe('lockDir', () => {
     const seen = JSON.stringify({ pid: Number(dead), startedAt: new Date(Date.now() - 60_000).toISOString() })
     writeFileSync(path, seen)
 
-    // pid reuse: the two records differ by startedAt alone, so comparing pid only would still refuse
     const live = JSON.stringify({ pid: Number(dead), startedAt: new Date().toISOString() })
     writeFileSync(path, live)
 
@@ -549,6 +530,9 @@ function gameWith(library: GameConfig['library'], profiles: Record<string, Profi
 function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
     subcommand: 'run',
+    verbTyped: false,
+    quiet: false,
+    plain: false,
     mods: [],
     without: [],
     only: [],
@@ -575,7 +559,6 @@ function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
   }
 }
 
-/** A mod the fixture repo carries, so a clone of it is something the index can read. */
 function modAt(dir: string, subdir: string, id: string): string {
   const at = join(dir, subdir, 'About')
   mkdirSync(at, { recursive: true })
@@ -722,11 +705,8 @@ describe('prepareSources', () => {
     const data = temp('gc-data-')
     const first = fixture()
     const second = fixture()
-    // the hash in a clone dir is not predictable, so decide which url is which after the fact
     const [low, high] = [cloneDir(data, first.url, MAIN), cloneDir(data, second.url, MAIN)].sort() as [string, string]
     const urlOf = (dir: string): string => (dir === cloneDir(data, first.url, MAIN) ? first.url : second.url)
-    // a.one and d.four share the later clone, b.two and c.three the earlier one, so sorting ids
-    // would hand the two runs opposite lock orders
     const library = {
       'a.one': { git: urlOf(high as string), branch: 'main' },
       'b.two': { git: urlOf(low as string), branch: 'main' },
@@ -759,7 +739,6 @@ describe('prepareSources', () => {
       await result.release()
     }
 
-    // the other side: they are not exempt, they go through the same drop list as every other id
     const args = cliArgs({ without: ['Pre.Core', 'The.Dlc', 'Atlasco.Atlas'] })
     const dropped = await prepareSources(game, 'p', args, data, true)
     try {
@@ -786,7 +765,6 @@ describe('prepareSources', () => {
     expect((index.byPackageId.get('acme.mod') ?? []).map((r) => r.dir))
       .toEqual([join(cloneDir(data, url, MAIN), 'V14', 'Mod')])
 
-    // the tie used to be fatal here, and this is the caller that has no map to dodge it with
     const { problems } = await resolvePlan({
       game: 'atlas',
       profile: 'p',
@@ -817,19 +795,15 @@ describe('prepareSources', () => {
     await onTag.release()
 
     const index = await buildIndex('atlas', game, fixturePlugin('atlas'), sourcesRoot(data))
-    // two clones still contribute two records: the collapse must not reach across a ref
     expect((index.byPackageId.get('acme.mod') ?? []).map((r) => r.dir).sort()).toEqual([
       join(cloneDir(data, url, MAIN), 'V14', 'Mod'),
       join(cloneDir(data, url, { kind: 'tag', value: 'v2' }), 'V14', 'Mod'),
     ].sort())
-    // and a second id inside the same clones is untouched
     expect((index.byPackageId.get('acme.other') ?? [])).toHaveLength(2)
   })
 
   test('a git pin prepared here resolves to the subdir it names, not the one the scan finds', async () => {
     const { dir: remote, url } = fixture()
-    // both declare Acme.Twin, and `Decoy` sorts ahead of `Wanted`, so a packageId scan alone
-    // picks the wrong one. only the sources map can tell them apart.
     modAt(remote, 'Decoy', 'Acme.Twin')
     modAt(remote, 'Wanted', 'Acme.Twin')
     modAt(remote, 'Core', 'Atlasco.Atlas')
@@ -856,7 +830,6 @@ describe('prepareSources', () => {
       expect(prepared.problems).toEqual([])
       expect(prepared.plan.mods.map((mod: { hostDir: string }) => mod.hostDir)).toContain(join(clone, 'Wanted'))
 
-      // without the map the pin says nothing, and the scan hands back the decoy
       const bare = await plan(new Map())
       expect(bare.plan.mods.map((mod: { hostDir: string }) => mod.hostDir)).toContain(join(clone, 'Decoy'))
     } finally {
@@ -873,7 +846,6 @@ describe('cachedSources', () => {
       { 'acme.one': { git: url, tag: 'v1' }, 'acme.two': { git: url, tag: 'v1' } },
       { p: { mods: ['Acme.One', 'Acme.Two'] } },
     )
-    // the other side of the existsSync check: an id whose clone was never fetched stays out
     expect([...cachedSources(game, 'p', cliArgs(), data).keys()]).toEqual([])
 
     const prepared = await prepareSources(game, 'p', cliArgs(), data, true)
@@ -896,7 +868,6 @@ describe('cachedSources', () => {
     const second = gameWith({ 'acme.one': { git: url, branch: 'other' } }, { p: { mods: ['Acme.One'] } })
     const also = await prepareSources(second, 'p', cliArgs(), data, true)
     await also.release()
-    // two branch clones of one url is a coin flip, so it maps nothing and leaves the scan in charge
     expect(cachedSources(game, 'p', cliArgs(), data).has('acme.one')).toBe(false)
   })
 })
@@ -905,7 +876,6 @@ describe('a cache-versus-cache tie', () => {
   const V2 = { kind: 'tag', value: 'v2' } as const
   const V3 = { kind: 'tag', value: 'v3' } as const
 
-  /** Two tagged refs that both carry the mods, both cloned: one id, two cache records. */
   async function repinned(data: string): Promise<{ url: string; one: string; two: string }> {
     const { dir: remote, url } = fixture()
     const run = (...argv: string[]): void => {
@@ -927,7 +897,6 @@ describe('a cache-versus-cache tie', () => {
     return { url, one: cloneDir(data, url, V2), two: cloneDir(data, url, V3) }
   }
 
-  /** mtime to the second, so the assertion never rides on how fast two clones ran. */
   function fetchedAt(dir: string, seconds: number): void {
     utimesSync(dir, seconds, seconds)
   }
@@ -953,7 +922,6 @@ describe('a cache-versus-cache tie', () => {
   test('path 1: a match: glob over a repinned mod takes the newest clone, either way round', async () => {
     const data = temp('gc-data-')
     const { url, one, two } = await repinned(data)
-    // a glob is never pinnable, so cachedSources maps nothing and this lands in pick()
     const game = gameWith({ 'acme.mod': { git: url, tag: 'v3' } }, { p: { mods: [{ match: 'Acme.M*' }] } })
     expect(cachedSources(game, 'p', cliArgs(), data).has('acme.mod')).toBe(false)
 
@@ -964,7 +932,6 @@ describe('a cache-versus-cache tie', () => {
     expect(newer.problems).toEqual([])
     expect(newer.dirs).toContain(join(two, 'Mod'))
 
-    // the other way round: it is the clock that decides, not the directory name
     fetchedAt(one, 3_000)
     const older = await problemsAndDirs(game, data, new Map())
     expect(older.problems).toEqual([])
@@ -988,7 +955,6 @@ describe('a cache-versus-cache tie', () => {
     const other = cloneDir(data, url, { kind: 'branch', value: 'other' })
 
     const game = gameWith({ 'acme.mod': { git: url } }, { p: { mods: ['Acme.Mod'] } })
-    // soleBranchClone abstains on two, which is what put this id back in front of pick()
     expect(cachedSources(game, 'p', cliArgs(), data).has('acme.mod')).toBe(false)
 
     fetchedAt(cloneDir(data, url, MAIN), 1_000)
@@ -1006,14 +972,12 @@ describe('a cache-versus-cache tie', () => {
     fetchedAt(one, 2_000)
     fetchedAt(two, 1_000)
 
-    // doctor runs modless and passes this map, so the pin names its own directory
     const sources = cachedSources(game, 'modless', {}, data)
     expect(sources.get('acme.mod')).toBe(two)
     const mapped = await problemsAndDirs(game, data, sources, 'modless')
     expect(mapped.problems).toEqual([])
     expect(mapped.dirs).toContain(join(two, 'Mod'))
 
-    // and with no map at all the tie is still broken rather than fatal, here toward the older tag
     const bare = await problemsAndDirs(game, data, new Map(), 'modless')
     expect(bare.problems).toEqual([])
     expect(bare.dirs).toContain(join(one, 'Mod'))
@@ -1027,7 +991,6 @@ describe('a cache-versus-cache tie', () => {
 
     const game = gameWith({ 'acme.mod': { git: url, tag: 'v3' } }, { p: { mods: ['Acme.Mod'] } })
     game.scanRoots = [{ path: checkout, maxDepth: 2 }]
-    // both clones newer than anything: a scan-root record carries no clonedAt and must still win
     fetchedAt(one, 3_999_999_999)
     fetchedAt(two, 4_000_000_000)
 

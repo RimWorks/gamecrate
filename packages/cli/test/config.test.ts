@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +25,7 @@ import { launchProfile, profileOf } from '../src/cli/profile'
 import { parseJsonc } from '../src/config/jsonc'
 import { orderedKeys, readConfigFile, readConfigText } from '../src/config/read'
 import { validateConfig } from '../src/config/validate'
+import { RUNTIME_BASE } from '../src/image/base'
 import { GamecrateError, Exit } from '../src/types'
 import type { GameConfig, ParsedArgs, Problem, ProjectDefaults, RootConfig } from '../src/types'
 
@@ -44,12 +46,10 @@ function base(): RootConfig {
   }
 }
 
-/** The merge loadConfig runs: the fixture plugin's defaults underneath, the user's blocks over. */
 function merged(user: unknown): { config: RootConfig; problems: Problem[] } {
   return validateConfig(mergeUserConfig(base(), user))
 }
 
-/** A plugin file written outside the repo, so the loader is exercised the way a user hits it. */
 async function writePlugin(dir: string, game = 'atlas'): Promise<string> {
   const file = join(dir, `${game}-plugin.ts`)
   await writeFile(
@@ -110,8 +110,6 @@ describe('parseJsonc', () => {
     expect(v['a/*b*/c']).toBe(1)
   })
 
-  // jsonc-parser recovers from syntax errors and still returns a value, so only its
-  // error list can say the parse failed.
   test('a recovered parse is still a failure', () => {
     expect(() => parseJsonc('{ "a": 1 "b": 2 }')).toThrow(GamecrateError)
     expect(() => parseJsonc('')).toThrow(GamecrateError)
@@ -165,7 +163,6 @@ describe('merge chain', () => {
     expect(s.gameArgs).toEqual(['-a', '-b', '-c', '-d'])
   })
 
-  // An instance's args land after the profile's and before whatever the CLI adds.
   test('the instance layer sits between the profile and the CLI', () => {
     const s = resolveSettings(
       root,
@@ -211,8 +208,6 @@ describe('resolveProfile', () => {
     },
   }
 
-  // every one of these is read off the resolved profile at launch, so dropping it here is the
-  // same as the option never existing
   test('the scalar launch options survive resolution', () => {
     const p = resolveProfile(game, 'pinned')
     expect(p.detach).toBe(true)
@@ -290,6 +285,24 @@ describe('validateConfig', () => {
   test('a reserved profile name is rejected', () => {
     const { problems } = merged({ games: { atlas: { profiles: { logs: { mods: [] } } } } })
     expect(find(problems, 'reserved')?.where).toBe('/games/atlas/profiles/logs')
+  })
+
+  test("a profile's modSettings block takes replace", () => {
+    const { problems } = merged({
+      games: {
+        atlas: {
+          profiles: {
+            dev: {
+              mods: [],
+              modSettings: [
+                { file: 'Mod_Thing.xml', class: 'Thing.Settings', values: { level: 2 }, replace: ['level'] },
+              ],
+            },
+          },
+        },
+      },
+    })
+    expect(problems).toEqual([])
   })
 
   test('a reserved game name is rejected', () => {
@@ -394,6 +407,31 @@ describe('validateConfig', () => {
     expect(error.detail).toContain('/steamcmd/path')
   })
 
+  test('a loaded config with no image anywhere gets the published runtime', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    const { image, ...imageless } = structuredClone(ATLAS_DEFAULTS) as unknown as Record<string, unknown>
+    expect(image).toBeDefined()
+    await writeFile(
+      join(dir, 'atlas-plugin.ts'),
+      `export default {
+        apiVersion: ${PLUGIN_API_VERSION},
+        game: 'atlas',
+        defaults: ${JSON.stringify(imageless)},
+        parseManifest: () => null,
+        renderModsConfig: () => '',
+        mergePrefs: () => '',
+        windowedPrefs: {},
+        parseVersion: () => null,
+      }\n`,
+    )
+    const file = join(dir, 'config.json')
+    await writeFile(file, JSON.stringify({ plugins: ['./atlas-plugin.ts'] }))
+
+    const { config } = await loadConfig(file)
+    expect(config.games['atlas']?.image.ref).toBe(RUNTIME_BASE.linux)
+    expect(config.games['atlas']?.image.acquire).toBe('pull')
+  })
+
   test('wrong types are reported, not coerced', () => {
     const { problems } = merged({ games: { atlas: { steamAppId: '294100' } } })
     expect(find(problems, 'expected a number')?.where).toBe('/games/atlas/steamAppId')
@@ -456,7 +494,7 @@ describe('validateConfig', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: {
         branches: [{ name: 'public' }],
-        variants: [{ name: 'mac', depot: 'macos', base: 'xvfb', include: [] }],
+        variants: [{ name: 'mac', depot: 'macos', base: 'linux', include: [] }],
       } } },
     })
     const p = find(problems, 'macos')
@@ -475,33 +513,33 @@ describe('validateConfig', () => {
     expect(find(problems, 'macos')).toBeUndefined()
   })
 
-  test('a windows depot on the xvfb base is refused', () => {
+  test('a windows depot on the linux base is refused', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: { variants: [
-        { name: 'win', depot: 'windows', base: 'xvfb', include: [] },
+        { name: 'win', depot: 'windows', base: 'linux', include: [] },
       ] } } },
     })
     const p = find(problems, 'windows')
     expect(p?.where).toBe('/games/atlas/steamBuild/variants/0/base')
-    expect(p?.suggestion).toContain('proton')
+    expect(p?.suggestion).toContain('windows')
   })
 
-  test('a forgotten depot on the proton base is refused', () => {
+  test('a forgotten depot on the windows base is refused', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: { variants: [
-        { name: 'win', base: 'proton', include: [] },
+        { name: 'win', base: 'windows', include: [] },
       ] } } },
     })
-    expect(find(problems, 'proton')?.where).toBe('/games/atlas/steamBuild/variants/0/base')
+    expect(find(problems, 'windows')?.where).toBe('/games/atlas/steamBuild/variants/0/base')
   })
 
-  test('an explicit linux depot on the proton base is refused', () => {
+  test('an explicit linux depot on the windows base is refused', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: { variants: [
-        { name: 'x', depot: 'linux', base: 'proton', include: [] },
+        { name: 'x', depot: 'linux', base: 'windows', include: [] },
       ] } } },
     })
-    expect(find(problems, 'proton')).toBeDefined()
+    expect(find(problems, 'windows')).toBeDefined()
   })
 
   test('every depot is allowed on the none base', () => {
@@ -518,8 +556,8 @@ describe('validateConfig', () => {
   test("rimworld's own three variants still validate", () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: { variants: [
-        { name: 'linux', base: 'xvfb', include: [] },
-        { name: 'windows', base: 'proton', depot: 'windows', include: [], executable: 'X.exe' },
+        { name: 'linux', base: 'linux', include: [] },
+        { name: 'windows', base: 'windows', depot: 'windows', include: [], executable: 'X.exe' },
         { name: 'linux-ref', base: 'none', include: ['Managed'] },
       ] } } },
     })
@@ -531,7 +569,7 @@ describe('validateConfig', () => {
       games: { atlas: { steamBuild: {
         branches: [{ name: 'public' }],
         variants: [
-          { name: 'linux', base: 'xvfb', include: [] },
+          { name: 'linux', base: 'linux', include: [] },
           { name: 'linux', base: 'none', include: [] },
         ],
       } } },
@@ -562,18 +600,17 @@ describe('validateConfig', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: {
         branches: [{ name: 'public' }, { name: '1.5-test', password: true }],
-        variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+        variants: [{ name: 'linux', base: 'linux', include: [] }],
       } } },
     })
     expect(problems).toHaveLength(0)
   })
 
-  // the merge keeps the plugin's branches, so only a config whose own list is empty can fire this
   test('an empty branches list is refused', () => {
     const cfg = base()
     cfg.games.atlas!.steamBuild = {
       branches: [],
-      variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+      variants: [{ name: 'linux', base: 'linux', include: [] }],
     }
     const p = find(validateConfig(cfg).problems, 'branches')
     expect(p?.message).toBe('steamBuild.branches cannot be empty')
@@ -590,7 +627,7 @@ describe('validateConfig', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: {
         branches: [{ name: 'public' }],
-        variants: [{ name: 'a b/c', base: 'xvfb', include: [] }],
+        variants: [{ name: 'a b/c', base: 'linux', include: [] }],
       } } },
     })
     expect(find(problems, 'a b/c')?.where).toBe('/games/atlas/steamBuild/variants/0/name')
@@ -600,7 +637,7 @@ describe('validateConfig', () => {
     const { problems } = merged({
       games: { atlas: { steamBuild: {
         branches: [{ name: 'public' }],
-        variants: [{ name: '', base: 'xvfb', include: [] }],
+        variants: [{ name: '', base: 'linux', include: [] }],
       } } },
     })
     expect(find(problems, 'variants/0/name')).toBeDefined()
@@ -629,7 +666,6 @@ describe('validateConfig', () => {
     expect(config.games.atlas?.steamBuild.branches[0]?.name).toBe('public')
   })
 
-  // the merge only dedupes what a user adds, so a plugin's own list reaches validation as-is
   test('a plugin declaring one branch twice is refused with no user config', () => {
     const cfg = base()
     cfg.games.atlas!.steamBuild.branches = [{ name: 'public' }, { name: 'public' }]
@@ -876,8 +912,6 @@ describe('validateConfig name space', () => {
     expect(problems).toEqual([])
   })
 
-  // the game is part of the container name, so the collision crosses games: this is the
-  // destructive direction, two runs sharing one docker name, not a refusal that annoys anyone
   test('two games that build one container name are refused', () => {
     const { problems } = merged({
       games: {
@@ -978,7 +1012,6 @@ describe('loadConfig', () => {
     expect(config.defaults?.settings?.width).toBe(2560)
     expect(config.defaults?.settings?.height).toBe(1080)
     expect(config.games['atlas']?.settings?.memory).toBe('16g')
-    // The plugin's own setting survives a user block that does not mention it.
     expect(config.games['atlas']?.settings?.network).toBe('host')
     expect(Object.keys(config.games['atlas']!.profiles)).toContain('solo')
     expect(config.games['atlas']?.core).toBe('atlasco.atlas')
@@ -1120,7 +1153,6 @@ describe('loadConfig', () => {
     await writePlugin(pkg, 'atlas')
     await writeFile(join(pkg, 'plugin.js'), await readFile(join(pkg, 'atlas-plugin.ts'), 'utf8'))
 
-    // The config sits a level down, so resolution has to walk up to find the package.
     const nested = join(dir, 'nested')
     await mkdir(nested, { recursive: true })
     const file = join(nested, 'profiles.json')
@@ -1205,7 +1237,7 @@ describe('loadProjectDefaults', () => {
       build: 'always',
       replace: true,
       resolution: { width: 2560, height: 1440 },
-      log: 'game.log',
+      log: join(dir, 'game.log'),
       mods: ['Test.Mod'],
       configPath: join(dir, '.gamecrate.yml'),
     })
@@ -1253,7 +1285,7 @@ describe('loadProjectDefaults', () => {
 
     expect(await loadProjectDefaults(dir)).toEqual({
       game: 'atlas', defaultProfile: 'kitted', mode: 'headless', pull: 'missing', sort: 'topo',
-      network: 'host', build: 'auto', marker: 'ready', instance: 'dev', log: 'game.log',
+      network: 'host', build: 'auto', marker: 'ready', instance: 'dev', log: join(dir, 'game.log'),
       timeout: 90, renderWait: 0, resolution: { width: 1920, height: 1080 },
       mods: ['A'], without: ['B'], only: ['C'], dockerArgs: ['-v'], gameArgs: ['-q'],
       worktree: ['/w'], use: ['A=/x'],
@@ -1263,14 +1295,46 @@ describe('loadProjectDefaults', () => {
     })
   })
 
+  test('a relative log resolves against the config file, and an absolute one is left alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+    const nested = join(dir, 'deep', 'deeper')
+    await mkdir(nested, { recursive: true })
+
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\nlog: logs/run.log\n')
+    expect((await loadProjectDefaults(nested)).log).toBe(join(dir, 'logs', 'run.log'))
+
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\nlog: /var/tmp/fixed.log\n')
+    expect((await loadProjectDefaults(nested)).log).toBe('/var/tmp/fixed.log')
+  })
+
+  test('a project profile key that is not a name is refused', async () => {
+    for (const key of ['../../../../tmp/pwned', '..', '', 'a/b', './x', 'a\\b', '-lead', '.hidden']) {
+      const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+      await writeFile(join(dir, '.gamecrate.yml'), `game: atlas\nprofiles:\n  ${JSON.stringify(key)}: {}\n`)
+      await expect(loadProjectDefaults(dir)).rejects.toThrow(/config is invalid/)
+    }
+  })
+
+  test('an ordinary project profile key still loads', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+    await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\nprofiles:\n  dev-2.0_x: {}\n  v16: {}\n')
+    expect((await loadProjectDefaults(dir)).profileOrder).toEqual(['dev-2.0_x', 'v16'])
+  })
+
+  test('the omit list and the config schema agree on what a project file may set', async () => {
+    for (const key of ['quiet', 'plain']) {
+      const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
+      await writeFile(join(dir, '.gamecrate.yml'), `game: atlas\n${key}: true\n`)
+      await expect(loadProjectDefaults(dir)).rejects.toThrow(/config is invalid/)
+    }
+  })
+
   test('an empty file is no defaults, but still says which file', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
     await writeFile(join(dir, '.gamecrate.yml'), '')
     expect(await loadProjectDefaults(dir)).toEqual({ configPath: join(dir, '.gamecrate.yml') })
   })
 
-  // list prints this name, and four suffixes are legal, so a hardcoded .yml is wrong three
-  // times out of four
   test('the suffix that was actually found is the one reported', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-project-'))
     await writeFile(join(dir, '.gamecrate.json'), '{"game": "atlas"}')
@@ -1313,10 +1377,10 @@ describe('loadProjectDefaults', () => {
     await writeFile(join(dir, '.gamecrate.yml'), 'game: atlas\ndefaultProfile: kitted\nmode: headless\nmarker: ready\n')
     const defaults = await loadProjectDefaults(dir)
 
-    const bare = parseArgs([], { env: {}, games: ['atlas'], defaults })
+    const bare = parseArgs(['run'], { env: {}, games: ['atlas'], defaults })
     expect([bare.game, bare.profile, bare.mode, bare.marker]).toEqual(['atlas', undefined, 'headless', 'ready'])
 
-    const cli = parseArgs(['--mode', 'headed'], { env: { GAMECRATE_MARKER: 'env' }, games: ['atlas'], defaults })
+    const cli = parseArgs(['run', '--mode', 'headed'], { env: { GAMECRATE_MARKER: 'env' }, games: ['atlas'], defaults })
     expect([cli.mode, cli.marker]).toEqual(['headed', 'env'])
   })
 })
@@ -1429,8 +1493,6 @@ describe('config formats', () => {
     }
   })
 
-  // js sorts all-integer object keys to the front, so Object.keys lies about which
-  // profile was written first. NAME_PATTERN allows a profile called 2024.
   test('orderedKeys reports source order, not Object.keys order', () => {
     const yaml = 'profiles:\n  2024:\n    mods: []\n  dev:\n    mods: []\n  1:\n    mods: []\n'
     expect(orderedKeys(yaml, 'x.yml', 'profiles')).toEqual(['2024', 'dev', '1'])
@@ -1516,7 +1578,6 @@ describe('config discovery', () => {
     })
   })
 
-  // A yml in a parent and a json in a child is normal nesting, not a conflict.
   test('the nearest directory wins across a walk, in any format', async () => {
     const child = join(dir, 'a', 'b')
     await mkdir(child, { recursive: true })
@@ -1532,14 +1593,32 @@ describe('config discovery', () => {
     expect(defaults.mode).toBe('headless')
   })
 
-  test('findGlobalConfig probes the four suffixes under XDG_CONFIG_HOME', async () => {
-    const xdg = join(dir, 'xdg')
+  test('an old profiles config is renamed to config, keeping its suffix and contents', async () => {
+    const xdg = join(dir, 'xdg-old')
     await mkdir(join(xdg, 'gamecrate'), { recursive: true })
-    await writeFile(join(xdg, 'gamecrate', 'profiles.yml'), 'games: {}\n')
+    await writeFile(join(xdg, 'gamecrate', 'profiles.json'), '{"games":{}}\n')
     const real = process.env['XDG_CONFIG_HOME']
     process.env['XDG_CONFIG_HOME'] = xdg
     try {
-      expect(await findGlobalConfig()).toBe(join(xdg, 'gamecrate', 'profiles.yml'))
+      expect(await findGlobalConfig()).toBe(join(xdg, 'gamecrate', 'config.json'))
+      expect(await readFile(join(xdg, 'gamecrate', 'config.json'), 'utf8')).toBe('{"games":{}}\n')
+      expect(existsSync(join(xdg, 'gamecrate', 'profiles.json'))).toBe(false)
+      // the rename happens once: a second call finds the new name and moves nothing
+      expect(await findGlobalConfig()).toBe(join(xdg, 'gamecrate', 'config.json'))
+    } finally {
+      if (real === undefined) delete process.env['XDG_CONFIG_HOME']
+      else process.env['XDG_CONFIG_HOME'] = real
+    }
+  })
+
+  test('findGlobalConfig probes the four suffixes under XDG_CONFIG_HOME', async () => {
+    const xdg = join(dir, 'xdg')
+    await mkdir(join(xdg, 'gamecrate'), { recursive: true })
+    await writeFile(join(xdg, 'gamecrate', 'config.yml'), 'games: {}\n')
+    const real = process.env['XDG_CONFIG_HOME']
+    process.env['XDG_CONFIG_HOME'] = xdg
+    try {
+      expect(await findGlobalConfig()).toBe(join(xdg, 'gamecrate', 'config.yml'))
     } finally {
       if (real === undefined) delete process.env['XDG_CONFIG_HOME']
       else process.env['XDG_CONFIG_HOME'] = real
@@ -1576,7 +1655,6 @@ describe('project profiles', () => {
     expect(defaults.profileOrder).toEqual(['2024', 'dev'])
   })
 
-  // recovering source order from a duplicate key is guesswork, so it is an error now.
   test('a duplicate profiles key is a config error', async () => {
     await write('{"game":"rimworld","profiles":{"first":{}},"profiles":{"second":{}}}', '.json')
     await expect(loadProjectDefaults(dir)).rejects.toMatchObject({ code: Exit.Config })
@@ -1644,7 +1722,6 @@ describe('repo profile splice', () => {
       profiles: { dev: { mods: ['Repo.One'] } },
     })
     expect(config.games['rimworld']!.profiles['dev']!.mods).toEqual(['Repo.One'])
-    // Replacement is wholesale, so the global instances are gone. Documented, not a bug.
     expect(config.games['rimworld']!.profiles['dev']!.instances).toBeUndefined()
   })
 
@@ -1696,8 +1773,6 @@ describe('repo profile splice', () => {
     })
   })
 
-  // a bare `profiles[name] = x` write would hit the prototype setter and drop the profile
-  // before validateConfig ever saw the name.
   test('a repo profile named __proto__ lands as an own key, not on the prototype', async () => {
     const path = await globalConfig({ rimworld: { ...fixtureGame(), profiles: { base: { mods: ['B'] } } } })
     const profiles = JSON.parse('{"__proto__":{"mods":["Evil.Mod"]},"dev":{"mods":7}}') as Record<
@@ -1708,7 +1783,6 @@ describe('repo profile splice', () => {
     await expect(loadConfig(path, project)).rejects.toMatchObject({ code: Exit.Config })
     await loadConfig(path, project).catch((error: GamecrateError) => {
       expect(error.detail).toContain('__proto__')
-      // dev is invalid too, so its pointer only shows up if the sibling survived the spread.
       expect(error.detail).toContain('/profiles/dev')
     })
   })
@@ -1760,11 +1834,9 @@ describe('repo profile splice', () => {
       library: { 'Some.Mod': { git: 'https://example.com/x.git', branch: 'main' } },
     })
     const library = config.games['rimworld']!.library!
-    // one key, the repo's spelling. both alive would hand two profiles two pins for one mod
     expect(Object.keys(library).sort()).toEqual(['Other.Mod', 'Some.Mod'])
     expect(library['Some.Mod']).toEqual({ git: 'https://example.com/x.git', branch: 'main' })
 
-    // and the other way round, so it is not the global spelling that happens to lose
     const upper = await globalConfig({
       rimworld: { ...fixtureGame(), library: { 'Some.Mod': { workshop: 7 } } },
     })
@@ -1783,7 +1855,6 @@ describe('repo profile splice', () => {
       game: 'rimworld',
       library: { 'Third.Mod': { git: 'https://example.com/x.git', branch: 'main' } },
     })
-    // the fold must only drop a key the repo actually replaces
     expect(Object.keys(config.games['rimworld']!.library!).sort()).toEqual(['Some.Other', 'Third.Mod', 'some.mod'])
   })
 
@@ -1829,7 +1900,6 @@ describe('profileOf', () => {
     expect(profileOf(noProfile, { profileOrder: ['first', 'second'] })).toBe('first')
   })
 
-  // Source order, so a profile named 2024 written first is still first.
   test('the first key is source order, not Object.keys order', () => {
     expect(profileOf(noProfile, { profileOrder: ['2024', 'dev'] })).toBe('2024')
   })
@@ -1839,7 +1909,7 @@ describe('profileOf', () => {
   })
 
   test('args.profile stays undefined so verbs can tell typed from defaulted', () => {
-    const args = parseArgs(['rimworld'], { env: {}, games: ['rimworld'] })
+    const args = parseArgs(['run'], { env: {}, games: ['rimworld'] })
     expect(args.profile).toBeUndefined()
   })
 })
@@ -1929,7 +1999,6 @@ describe('list provenance', () => {
         },
       },
     } as unknown as RootConfig
-    // .json on purpose: the note used to name .gamecrate.yml whatever the repo actually had
     const defaults: ProjectDefaults = {
       game: 'rimworld',
       profiles: { dev: { mods: ['A'] } },
@@ -1977,7 +2046,6 @@ describe('launchProfile', () => {
     expect(launchProfile(noFlag, { profileOrder: ['first'] }, withProfiles)).toBe('first')
   })
 
-  // modless drops base and preCore, so falling back to it silently loses every mod
   test('a game with profiles refuses to guess, and lists them', () => {
     let thrown: GamecrateError | undefined
     try {

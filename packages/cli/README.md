@@ -1,5 +1,10 @@
 # @gamecrate/cli
 
+[![npm](https://img.shields.io/npm/v/%40gamecrate%2Fcli)](https://www.npmjs.com/package/@gamecrate/cli)
+[![npm downloads](https://img.shields.io/npm/dm/%40gamecrate%2Fcli)](https://www.npmjs.com/package/@gamecrate/cli)
+[![MIT license](https://img.shields.io/npm/l/%40gamecrate%2Fcli)](../../LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Cryptiks_Mods-5865F2?logo=discord&logoColor=white)](https://discord.gg/tbcKN8e4mZ)
+
 gamecrate launches a modded game inside a Docker container. You describe a profile once in one
 config file, then run it by name. Each profile gets its own save directory, its own logs, and
 only the mods it lists.
@@ -10,67 +15,68 @@ facts, so the core stays the same for every title.
 This package is the `gamecrate` command itself. It resolves a profile to a mod set, stages that
 set, and launches the game. Without at least one plugin, it has no games to run.
 
+You need Docker, a Linux host, and a copy of the game.
+
 ## Install
 
 ```sh
-npm install -g @gamecrate/cli @gamecrate/rimworld
+npm install -g @gamecrate/cli
+gamecrate init
 ```
 
-To run an unreleased change, build it from a clone of the monorepo instead:
+`init` asks which game you want, installs that game's plugin, and writes
+`~/.config/gamecrate/config.yml`. Add `--project` to also write a `.gamecrate.yml` beside a mod
+you are working on.
 
-```sh
-git clone https://github.com/RimWorks/gamecrate.git
-cd gamecrate
-npm install
-npm run build
-npm install -g ./packages/cli
-```
-
-That build needs [bun](https://bun.sh) and Node 22 or newer.
-
-## First launch
-
-Write `~/.config/gamecrate/profiles.yml`. This is the smallest RimWorld config that runs:
+The file it writes points at a placeholder image and game directory, so edit those two before
+your first launch:
 
 ```yaml
 plugins: ['@gamecrate/rimworld']
-# Optional. Without it, gamecrate uses steamcmd from PATH, then a Docker image.
-steamcmd:
-  path: ~/.local/bin/steamcmd
 games:
   rimworld:
-    # The plugin already says source: mount and container: /game.
     gameFiles:
       host: ~/games/RimWorld
-    image:
-      ref: ghcr.io/your-org/rimworld:1.6
-      acquire: pull
-    # Optional. Only for workshop items a Steam install already downloaded.
-    workshopRoot: ~/.steam/steam/steamapps/workshop/content/294100
-    scanRoots:
-      - path: ~/projects/mods
-        maxDepth: 2
     profiles:
       dev:
         mods: [brrainz.harmony, yourname.yourmod]
 ```
 
-The bare name `@gamecrate/rimworld` only resolves once the package is installed next to the
-config. [Configuration](docs/configuration.md#how-plugins-resolve) shows both ways to point at
-a plugin. A workshop item reaches a profile two ways: gamecrate downloads it with steamcmd, or
-it reads an existing Steam install under `workshopRoot`. Both keys are optional, and
-[Mod sources](docs/mod-sources.md) covers the choice. Then:
+[Configuration](docs/configuration.md#where-the-game-comes-from) covers pointing at a game
+image instead, which drops the `gameFiles.host` line. It also covers the two ways to point at a
+plugin. [Mod sources](docs/mod-sources.md) covers the other ways to point at a mod.
+
+## First launch
 
 ```sh
 gamecrate doctor
-gamecrate rimworld dev
+gamecrate run dev --print-plan
+gamecrate run dev
 ```
 
 `doctor` checks Docker, the image, the game directory, and the workshop root before anything
 launches. When a config uses workshop items, it also reports which steamcmd it found and the
-directories downloaded items land in. The second line resolves the `dev` profile, stages its
-two mods, and starts the game.
-`gamecrate rimworld dev --print-plan` shows what it would do without launching.
+directories downloaded items land in.
+
+`--print-plan` shows what a launch would do without starting it.
+
+## Day to day
+
+```sh
+gamecrate run dev --detach                 # launch and get the prompt back
+gamecrate ps                               # what is running, and for how long
+gamecrate attach dev                       # watch it. Ctrl-c leaves the game running
+gamecrate logs dev -f                      # follow this run's log
+gamecrate stop dev                         # free the profile
+```
+
+To point one mod at a working checkout and compile it before the launch:
+
+```sh
+gamecrate run dev --use yourname.yourmod=~/projects/mods/yourmod --build
+```
+
+Every subcommand takes `--json`, which prints a machine-readable result instead of text.
 
 ## Documentation
 

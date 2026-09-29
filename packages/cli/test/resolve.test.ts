@@ -92,7 +92,7 @@ function atlas(profiles: Record<string, ProfileConfig>): GameConfig {
     modsConfig: { file: 'Config/ModsConfig.txt' },
     prefs: { file: 'Config/Prefs.txt' },
     version: { file: 'Version.txt' },
-    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'xvfb', include: [] }] },
+    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'linux', include: [] }] },
     saveExtensions: ['sav'],
     core: 'Atlasco.Atlas',
     dlc: ['Atlasco.Atlas.Royalty', 'Atlasco.Atlas.Ideology'],
@@ -117,7 +117,7 @@ function beacon(profiles: Record<string, ProfileConfig>): GameConfig {
     modsConfig: { file: 'SaveData/Config/ModsConfig.txt' },
     prefs: { file: 'SaveData/Prefs.txt' },
     version: { file: 'Version.txt' },
-    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'xvfb', include: [] }] },
+    steamBuild: { branches: [{ name: 'public' }], variants: [{ name: 'linux', base: 'linux', include: [] }] },
     saveExtensions: ['sav'],
     core: 'Atlasco.Beacon',
     dlc: [],
@@ -304,6 +304,39 @@ describe('dynamic match entries', () => {
     ])
   })
 
+  test('alpha order is code-unit, not locale collation', async () => {
+    const game = beacon({
+      kitted: { mods: [{ match: 'Kitted.*', first: ['Kitted.Core'], sort: 'alpha', minMatches: 1 }] },
+    })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Kitted.Ähr', dir: await modDir('Ahr') },
+      { id: 'Kitted.Core', dir: await modDir('KittedCore') },
+      { id: 'Kitted.Bee', dir: await modDir('Bee') },
+      { id: 'Kitted.Zephyr', dir: await modDir('Zephyr') },
+    ])
+    const tail = ['Kitted.Bee', 'Kitted.Zephyr', 'Kitted.Ähr']
+    expect([...tail].sort((a, b) => a.localeCompare(b))).not.toEqual(tail)
+
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'kitted',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.mods.map((m) => m.packageId)).toEqual([
+      'Lib.Bridge.Beacon',
+      'Atlasco.Beacon',
+      'Example.ModManager',
+      'Kitted.Core',
+      ...tail,
+    ])
+  })
+
   test('zero matches under minMatches is a problem, not a throw', async () => {
     const game = beacon({
       kitted: { mods: [{ match: 'Kitted.*', first: ['Kitted.Core'], minMatches: 1 }] },
@@ -418,7 +451,6 @@ describe('autoDependencies', () => {
       root: rootFor('beacon', game),
       index,
     })
-    // gamecrate downloads a declared dependency anyway, so refusing to load it only breaks the game
     expect(plan.mods.map((m) => m.packageId)).toContain('Kitted.Core')
   })
 })
@@ -650,6 +682,26 @@ describe('sorting, exclusion and warnings', () => {
     expect(plan.mods).toHaveLength(4)
   })
 
+  test('a mutual incompatibility warns once whatever order the ids arrive in', async () => {
+    const game = beacon({ qol: { mods: ['Kitted.Ähr', 'Kitted.Bee'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Kitted.Ähr', dir: await modDir('Ahr'), incompatibleWith: ['Kitted.Bee'] },
+      { id: 'Kitted.Bee', dir: await modDir('Bee'), incompatibleWith: ['Kitted.Ähr'] },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'qol',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.warnings.filter((w) => w.includes('incompatible'))).toHaveLength(1)
+  })
+
   test('an unknown mod is a problem, an optional one is only a warning', async () => {
     const game = beacon({
       qol: { mods: ['Nobody.Missing', { id: 'Nobody.Optional', optional: true }] },
@@ -845,7 +897,6 @@ describe('staleness', () => {
     expect(planWarnings(plan).some((w) => w.includes('stale build'))).toBe(false)
   })
 
-  // A workshop item ships no sources, and warning about the game's own Data/Core is noise.
   test('only local mods are checked', async () => {
     const dir = await modDir('WorkshopStale')
     await mkdir(join(dir, 'Source'), { recursive: true })
@@ -899,7 +950,6 @@ describe('staging', () => {
     await ensureProfileTree(plan)
     await writeFile(join(plan.stageDirHost, 'leftover.txt'), 'from the last launch')
 
-    // Core is never staged: it already lives at <install>/Data/Core inside the game-files mount.
     const mounts = await stageMods(plan)
     expect(mounts).toHaveLength(3)
     expect(mounts.every((m) => m.type === 'bind' && m.readonly === true)).toBe(true)
@@ -930,13 +980,14 @@ describe('staging', () => {
       plugins: PLUGINS,
       root: rootFor('atlas', game),
       index,
+      cwd: tmp,
     })
     await ensureProfileTree(plan)
     for (const dir of [
       plan.dataDirHost,
       join(plan.logsDirHost, 'runs'),
       plan.stageDirHost,
-      join(plan.profileDir, '.gamecrate'),
+      join(plan.instanceDir, '.gamecrate'),
     ]) {
       expect((await lstat(dir)).isDirectory()).toBe(true)
     }
@@ -971,15 +1022,12 @@ describe('generated config files', () => {
     await ensureProfileTree(plan)
     const written = await readFile(await generateModsConfig(plan), 'utf8')
     expect(written).toContain('version 1.6.4871 rev598')
-    // Every id is lowercased, whatever the manifest casing.
     expect(written).toContain('example.storyteller')
     const expansions = written.split('knownExpansions ')[1]!
     expect(expansions).toContain('Atlasco.Atlas.Royalty')
-    // Core lives in Data/ but is not an expansion.
     expect(expansions).not.toContain('Atlasco.Atlas ')
   })
 
-  // an image-sourced game carries its own Version.txt, and the host copy is a different release
   test('the version comes out of the image when the game is not mounted', async () => {
     const bin = await mkdtemp(join(tmp, 'fakedocker-'))
     await writeFile(join(bin, 'docker'), '#!/bin/sh\necho "1.9.9999 rev777"\n')
@@ -1032,7 +1080,6 @@ describe('generated config files', () => {
     expect(written).toContain('version 0.0.2145 rev1260')
     expect(written).toContain('activeMods [lib.bridge.beacon atlasco.beacon example.modmanager]')
 
-    // The other plugin cannot read that file at all, which is the point of per-plugin parsing.
     expect(ATLAS_PLUGIN.parseVersion('0.0.2145.1260')?.buildNumber).toBe(-1)
     expect(BEACON_PLUGIN.parseVersion('1.6.4871 rev598')).toBeNull()
   })
@@ -1095,7 +1142,6 @@ describe('generated config files', () => {
       index,
     })
     await ensureProfileTree(plan)
-    // Beacon's install has no Data/ at all, which is normal for it, not a problem to report.
     expect(existsSync(join(tmp, 'Beacon', 'Data'))).toBe(false)
 
     const written = await readFile(await generateModsConfig(plan), 'utf8')
@@ -1125,7 +1171,6 @@ describe('generated config files', () => {
     expect(merged).not.toContain('resetModsConfigOnCrash True')
     expect(merged).toContain('volumeMaster 0.8')
     expect(merged).toContain('langFolderName English')
-    // windowedPrefs comes from the plugin, so each game gets its own key.
     expect(merged).toContain('displayMode Windowed')
     expect(merged).toContain('screenWidth 1920')
   })
@@ -1170,7 +1215,6 @@ describe('generated config files', () => {
     const prefsPath = join(plan.dataDirHost, 'SaveData', 'Prefs.txt')
     await rm(prefsPath, { force: true, recursive: true })
     await mkdir(prefsPath, { recursive: true })
-    // A directory where the file belongs is EISDIR, which is not "no prefs yet".
     await expect(mergePrefs(plan)).rejects.toThrow(/EISDIR|illegal operation on a directory/i)
     expect((await lstat(prefsPath)).isDirectory()).toBe(true)
   })

@@ -5,9 +5,6 @@ import { dirname, join } from 'node:path'
 
 const built = { count: 0 }
 
-// bun's os.homedir() snapshots at startup and ignores a later HOME, unlike node's.
-// the suite sets HOME to a temp tree, so homedir() has to follow it or the fallback
-// branch reads the real ~/.steam/config/config.vdf.
 const realOs = { ...(await import('node:os')) }
 await mock.module('node:os', () => ({
   ...realOs,
@@ -15,7 +12,6 @@ await mock.module('node:os', () => ({
   homedir: () => process.env.HOME ?? realOs.homedir(),
 }))
 
-// the two collaborators past the session check. everything before them is the code under test
 await mock.module('../src/image/build', () => ({
   steamBuild: () => {
     built.count += 1
@@ -57,7 +53,6 @@ function fails(run: () => unknown): GamecrateError {
   throw new Error('expected a GamecrateError')
 }
 
-/** dataRoot and a fake home, with `~/.steam/config/config.vdf` written when `fallback` is given. */
 function tree(fallback?: string): { config: RootConfig; home: string; env: Record<string, string> } {
   const root = mkdtempSync(join(tmpdir(), 'gamecrate-steam-'))
   const home = join(root, 'home')
@@ -65,9 +60,12 @@ function tree(fallback?: string): { config: RootConfig; home: string; env: Recor
     mkdirSync(join(home, '.steam', 'config'), { recursive: true })
     writeFileSync(join(home, '.steam', 'config', 'config.vdf'), fallback)
   }
-  // os.homedir() reads HOME first on posix, so the fallback branch never touches the real home
   process.env.HOME = home
-  return { config: { dataRoot: join(root, 'data'), games: {} } as unknown as RootConfig, home, env: {} }
+  return {
+    config: { dataRoot: join(root, 'data'), games: { rimworld: {} } } as unknown as RootConfig,
+    home,
+    env: {},
+  }
 }
 
 function primeSteamHome(config: RootConfig, body: string): string {
@@ -114,13 +112,24 @@ describe('resolveSession', () => {
   })
 })
 
-/** The production entry point, with the build and the input resolution faked out. */
 function build(config: RootConfig): Promise<number> {
   const ctx: SteamContext = { config, plugins: new Map(), cwd: '/nowhere' }
   return steamBuildCommand({ subcommand: 'steam', game: 'rimworld' } as ParsedArgs, ctx)
 }
 
 describe('steamBuildCommand', () => {
+  test('a config that names no game still builds, because the plugin is the authority', async () => {
+    const { config } = tree()
+    const empty = { ...config, games: {} } as unknown as RootConfig
+    process.env.STEAM_CONFIG_VDF = Buffer.from('from-env').toString('base64')
+    process.env.STEAM_USERNAME = 'tester'
+    const ctx: SteamContext = { config: empty, plugins: new Map(), cwd: '/nowhere' }
+    const reason = await steamBuildCommand({ subcommand: 'steam', subverb: 'build', game: 'rimworld' } as ParsedArgs, ctx)
+      .then(() => 'resolved')
+      .catch((e: unknown) => (e as Error).message)
+    expect(reason).toBe('resolved')
+  })
+
   test('materializes STEAM_CONFIG_VDF onto disk before it builds anything', async () => {
     const { config } = tree()
     process.env.STEAM_CONFIG_VDF = Buffer.from('from-env').toString('base64')
@@ -139,8 +148,6 @@ describe('steamBuildCommand', () => {
 
     expect(await build(config)).toBe(Exit.Ok)
     expect(built.count).toBe(1)
-    // steamcmd runs with HOME=steamHome and the docker runner mounts only that, so a session the
-    // check found in the real home is unusable unless it lands here
     for (const seeded of sessionPaths(steamHome(config.dataRoot))) {
       expect(readFileSync(seeded, 'utf8')).toBe('from-home')
     }

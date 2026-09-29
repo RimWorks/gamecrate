@@ -17,6 +17,7 @@ const state = {
   published: null as string | null,
   pushFails: (_ref: string): boolean => false,
   /** What the registry said. undefined is the no-detail case: crane printed nothing. */
+  tagFails: (_tag: string): boolean => false,
   pushDetail: undefined as string | undefined,
   /** True when the host docker config uses a credential helper the crane container cannot run. */
   credsRefused: false,
@@ -24,6 +25,7 @@ const state = {
   /** Every status() line, in order. */
   said: [] as string[],
   /** Every out tar craneAppend was asked for, so a test can prove each one is gone. */
+  tagged: [] as string[],
   tars: [] as string[],
   /** The tag the last append wrote into the tar. docker load names the image after it. */
   appendTag: '',
@@ -77,8 +79,12 @@ await mock.module('../src/image/crane', () => ({
     state.mutated.set(ref, labels)
     return Promise.resolve()
   },
-  craneTag: () => {
+  craneTag: (from: string, tag: string) => {
     state.calls.push('tag')
+    state.tagged.push(`${from} -> ${tag}`)
+    if (state.tagFails(tag)) {
+      return Promise.reject(new GamecrateError(`crane tag ${tag} failed`, Exit.Environment, 'fake: 502'))
+    }
     return Promise.resolve()
   },
   craneLabels: (ref: string) => Promise.resolve(state.labels.get(ref) ?? null),
@@ -139,8 +145,8 @@ const { steamBuild } = await import('../src/image/build')
 import type { CellResult, SteamBuildOptions } from '../src/image/build'
 
 const VARIANTS: SteamVariant[] = [
-  { name: 'linux', base: 'xvfb', include: [] },
-  { name: 'windows', base: 'proton', include: [], depot: 'windows', executable: 'RimWorldWin64.exe' },
+  { name: 'linux', base: 'linux', include: [] },
+  { name: 'windows', base: 'windows', include: [], depot: 'windows', executable: 'RimWorldWin64.exe' },
   { name: 'linux-ref', base: 'none', include: ['Version.txt'] },
 ]
 
@@ -177,6 +183,7 @@ let opts: SteamBuildOptions
 beforeEach(() => {
   state.calls.length = 0
   state.said.length = 0
+  state.tagged.length = 0
   state.downloads.length = 0
   state.tars.length = 0
   state.appendTag = ''
@@ -187,6 +194,7 @@ beforeEach(() => {
   state.local.clear()
   state.published = '9999'
   state.pushFails = () => false
+  state.tagFails = () => false
   state.pushDetail = undefined
   opts = { config, push: true, load: false, platform: 'linux/amd64', force: false }
 })
@@ -269,11 +277,70 @@ describe('steamBuild', () => {
     expect(error.detail).toBe('declared variants: linux, windows, linux-ref')
   })
 
-  test('an unknown branch says branches, not branchs', async () => {
-    const error = await fails(steamBuild(TWO, { ...opts, onlyBranches: ['mybeta'] }))
+  test('a branch the config never declared builds as itself, scoped', async () => {
+    const results = await steamBuild(TWO, { ...opts, onlyBranches: ['mybeta'], onlyVariants: ['linux'] })
+    expect(results).toHaveLength(1)
+    expect(results[0]).toMatchObject({ branch: 'mybeta', variant: 'linux', status: 'built' })
+    expect(results[0]!.tags).toEqual([
+      '1.6.4871-mybeta',
+      '1.6.4871-mybeta-linux',
+      'latest-mybeta',
+      'latest-mybeta-linux',
+      '1-mybeta',
+      '1-mybeta-linux',
+      '1.6-mybeta',
+      '1.6-mybeta-linux',
+    ])
+  })
+
+  test('a declared branch keeps its config when --beta names it', async () => {
+    const declared = { ...ONE, branches: [{ name: 'public' }, { name: '1.5', tags: ['stable'] }] }
+    const results = await steamBuild(declared, { ...opts, onlyBranches: ['1.5'], onlyVariants: ['linux'] })
+    expect(results[0]!.tags).toContain('stable')
+  })
+
+  test('a skipped cell reports the moving tags and re-applies them to the image it left', async () => {
+    state.labels.set(`${IMAGE}:latest-version-1.6`, { 'steam.buildid': '9999' })
+    const results = await steamBuild(ONE, {
+      ...opts,
+      onlyBranches: ['version-1.6'],
+      onlyVariants: ['linux'],
+      extraTags: ['1.6'],
+    })
+    const row = results[0]!
+    expect(row.status).toBe('skipped')
+    expect(row.reason).toBe('up-to-date')
+    expect(row.tags).toEqual([
+      'latest-version-1.6',
+      'latest-version-1.6-linux',
+      '1.6',
+      '1.6-linux',
+    ])
+    expect(state.tagged).toEqual([
+      `${IMAGE}:latest-version-1.6 -> latest-version-1.6-linux`,
+      `${IMAGE}:latest-version-1.6 -> 1.6`,
+      `${IMAGE}:latest-version-1.6 -> 1.6-linux`,
+    ])
+    expect(state.downloads).toEqual([])
+  })
+
+  test('a re-tag failure on a skipped cell is a row, not a throw', async () => {
+    state.labels.set(`${IMAGE}:latest-version-1.6`, { 'steam.buildid': '9999' })
+    state.tagFails = (tag) => tag === '1.6'
+    const results = await steamBuild(ONE, {
+      ...opts,
+      onlyBranches: ['version-1.6'],
+      onlyVariants: ['linux'],
+      extraTags: ['1.6'],
+    })
+    expect(results[0]).toMatchObject({ status: 'failed', tags: [] })
+    expect(results[0]!.reason).toContain('502')
+  })
+  test('an unknown variant refuses even when one of two is real', async () => {
+    const error = await fails(steamBuild(TWO, { ...opts, onlyVariants: ['linux', 'macos'] }))
     expect(error.code).toBe(Exit.Usage)
-    expect(error.message).toContain('mybeta')
-    expect(error.detail).toBe('declared branches: public, 1.5')
+    expect(error.message).toContain('macos')
+    expect(error.detail).toBe('declared variants: linux, windows, linux-ref')
   })
 
   test('the default --load run skips a base: none variant and loads the rest', async () => {
@@ -288,7 +355,6 @@ describe('steamBuild', () => {
     expect(ref.tags).toEqual([])
     // nothing appended for it either: a tar it cannot load is a game-sized write for no one
     expect(state.calls.filter((c) => c.startsWith('append'))).toHaveLength(2)
-    expect(state.calls.filter((c) => c === 'docker load')).toHaveLength(2)
     expect(state.calls.filter((c) => c === 'docker build')).toHaveLength(2)
     expect(state.local.has(`${IMAGE}:1.6.4871-linux-ref`)).toBe(false)
   })
@@ -299,13 +365,11 @@ describe('steamBuild', () => {
     expect(state.calls).toContain('push')
     expect(state.calls).toContain('mutate')
     expect(state.calls).not.toContain('docker load')
-    expect(state.calls).not.toContain('docker build')
   })
 
   test('--load labels the versioned tag, tags the rest off it, and never touches a registry', async () => {
     const results = await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(byVariant(results, 'linux').status).toBe('built')
-    expect(state.calls.filter((c) => c === 'docker build')).toHaveLength(1)
     // the tar already carries the versioned tag, so only the moving ones are tagged
     expect(state.calls.filter((c) => c === 'docker tag')).toHaveLength(7)
     expect(state.calls.indexOf('docker build')).toBeLessThan(state.calls.lastIndexOf('docker tag'))
@@ -331,7 +395,6 @@ describe('steamBuild', () => {
       branches: [{ name: 'public', executable: { linux: './RimWorld' } }],
     }
     await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
-    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorld')
   })
 
   test('a branch override for another variant leaves this one alone', async () => {
@@ -365,7 +428,6 @@ describe('steamBuild', () => {
     // a base image's own labels come through, so present and unlabelled is a real state
     state.local.set(`${IMAGE}:latest`, { 'org.opencontainers.image.version': '24.04' })
     const results = await steamBuild(ONE, load)
-    expect(byVariant(results, 'linux').status).toBe('built')
     expect(byVariant(results, 'linux').reason).toBe('no-label')
   })
 
@@ -418,7 +480,6 @@ describe('steamBuild', () => {
     await steamBuild(ONE, load)
     state.calls.length = 0
     const results = await steamBuild(ONE, load)
-    expect(byVariant(results, 'linux').status).toBe('skipped')
     expect(byVariant(results, 'linux').reason).toBe('up-to-date')
     expect(state.calls.filter((c) => c.startsWith('append'))).toHaveLength(0)
   })

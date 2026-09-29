@@ -45,3 +45,9 @@ steamcmd
 [Uu]nscoped
 DLLs
 MSBuild
+[Ss]ubverb
+[Ss]ubverbs
+[Nn]amespace
+csproj
+Xvfb
+Proton

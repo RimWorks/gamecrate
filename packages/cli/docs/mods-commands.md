@@ -2,16 +2,34 @@
 
 Back to the [`@gamecrate/cli` README](../README.md).
 
-`gamecrate mods <game> [profile]` prints the resolved mod set: each mod's source kind and
+`gamecrate mods [profile]` prints the resolved mod set: each mod's source kind and
 absolute path. Three verbs write the [library](mod-sources.md#the-library-block) for you,
 so you never hand-edit a pin or look up a package id.
 
 ```sh
-gamecrate mods add rimworld --path ~/projects/yourmod --project
-gamecrate mods add rimworld --workshop 2009463077 --global
-gamecrate mods add rimworld --git https://github.com/someone/theirmod --tag v1.4.2 --global
-gamecrate mods rm rimworld yourname.yourmod --project
-gamecrate mods sync rimworld
+gamecrate mods dev
+gamecrate mods dev --only yourname.yourmod --without someone.theirmod
+```
+
+The list takes the same set flags a launch does, so you preview a mod set before you spend a
+launch on it:
+
+| Flag | Does |
+| --- | --- |
+| `--mod <id>` | Add one more mod to what the profile loads |
+| `--without <id>` | Leave one mod out |
+| `--only <id>` | Load these and none of the rest |
+| `--sort <topo\|none>` | Order by dependency, or as the profile lists them |
+| `--json` | Print the set as JSON instead of text |
+
+`--mod`, `--without`, and `--only` are repeatable. None of these flags write anything to disk.
+
+```sh
+gamecrate mods add --path ~/projects/yourmod --project
+gamecrate mods add --workshop 2009463077 --global
+gamecrate mods add --git https://github.com/someone/theirmod --tag v1.4.2 --global
+gamecrate mods rm yourname.yourmod --project
+gamecrate mods sync
 ```
 
 ## Where a write lands
@@ -19,17 +37,18 @@ gamecrate mods sync rimworld
 `add` and `rm` each need `--global` or `--project`, because one write lands in one file. Both,
 or neither, is a usage error.
 
-`--global` writes the global config. With nothing on disk yet it creates `profiles.yml`. It
+`--global` writes the global config. With nothing on disk yet it creates `config.yml`. It
 creates that file only once the write is certain, so a refusal never leaves an empty file behind.
 
 `--project` means the nearest `.gamecrate` file, walking up from the current directory. That
-file needs a top-level `game:` matching the game you named. Three refusals, each exit `3`:
+file needs a top-level `game:` matching the game the command acts on. Three refusals, each
+exit `3`:
 
 | Situation | Message |
 | --- | --- |
 | No `.gamecrate` file in scope | `no .gamecrate config in this directory or any parent; create one with a top-level game:` |
 | The file has no `game:` | `<file> has no top-level game:` |
-| The file names another game | `<file> belongs to <its game>, not <yours>` |
+| The file declares another game | `<file> belongs to <its game>, not <yours>` |
 
 A write never creates a project file, because creating one means choosing its `game:` for you.
 
@@ -56,7 +75,7 @@ With `--subdir` the walk starts there instead of at the root, and each pin recor
 `branch`, `tag`, or `commit`. With none, the pin follows the default branch.
 
 Two separate directories that declare the same package id are a different case. `add` refuses
-the whole batch with exit `3` and names both directories, because nothing tells it which one you
+the whole batch with exit `3` and lists both directories, because nothing tells it which one you
 meant. Start the walk lower down with `--subdir` to pick one. `--force` does not apply here; it
 only overwrites a pin that is already in the target file.
 
@@ -66,11 +85,10 @@ replacement never merges with what was there.
 
 A source with no readable manifest fails with `no mod manifest at <source>` and exit `4`.
 
-**One `add` is one write.** However many pins a repository yields, gamecrate checks all of them
-against the file first and writes once. A collision anywhere leaves the file untouched. The
-write goes to a temporary file that is renamed over the target, so a crash leaves the old config
-rather than half of one. gamecrate writes a symlinked config through to its target, and the file keeps
-its mode.
+**One `add` is one write.** gamecrate checks every pin against the file first, then writes them
+all at once. A collision anywhere leaves the file untouched. It writes to a temporary file and
+renames that over the target, so a crash leaves you the old config rather than half of one.
+gamecrate follows a symlinked config through to its target, and keeps the file's mode.
 
 ## `mods rm`
 
@@ -78,16 +96,15 @@ its mode.
 id is exit `3`, not a silent success, because a typo that reports success is worse than one
 that reports a miss. `rm` never touches the clone cache.
 
-Emptying a `library` map deletes the map too, and any parent the delete leaves empty. An empty
-YAML map re-emits as `{}`, and the next write into it would come out as a one-line flow map.
+Removing the last entry in a `library` map deletes the map itself, and any parent the delete
+leaves empty.
 
 ## `mods sync`
 
-`sync` takes an optional game, then any number of package ids. The first word after `sync` is
-always the game name, so `gamecrate mods sync some.mod` reads `some.mod` as a game and fails
-with `unknown game some.mod`. With no game, it walks every game. With no ids, it fetches every
-git- or workshop-pinned mod it finds. With nothing to do it prints `nothing to sync` and exits
-`0`.
+`sync` takes any number of package ids. It acts on one game when any of three say which:
+`--game`, the nearest `.gamecrate` file's `game:`, or a config that declares only one game. With
+none of the three, `sync` walks every game. With no ids, it fetches every git- or
+workshop-pinned mod it finds. With nothing to do it prints `nothing to sync` and exits `0`.
 
 An id you name that has neither a `git` nor a `workshop` entry stops the whole sync with exit
 `4`, listing every id it could not find. It fetches with force, so it moves tag and commit pins
@@ -118,5 +135,4 @@ To hold a mod still, pin it with `path:` or `git:` instead, and keep that checko
 original indentation and blank lines do not. A JSON or JSONC write changes only the bytes it
 has to, and matches the indent it finds in the file.
 
-`--help` works on all three verbs, even with the game missing, or the source missing. You can read the
-help for a command before you know how to type it.
+`--help` works on all three verbs, even with the source missing.

@@ -14,7 +14,6 @@ export async function stageMods(plan: LaunchPlan): Promise<Mount[]> {
 
   const mounts: Mount[] = []
   for (const mod of plan.mods) {
-    // Core and the official expansions already live inside the game-files mount.
     if (mod.kind === 'core' || mod.kind === 'official') continue
     let source: string
     try {
@@ -41,9 +40,7 @@ export async function ensureProfileTree(plan: LaunchPlan): Promise<void> {
     plan.profileDir,
     plan.instanceDir,
     plan.dataDirHost,
-    // .NET's GetFolderPath returns "" for a directory that does not exist, so an app asking
-    // for LocalApplicationData on an empty HOME gets nothing back. Create them, do not just
-    // point at them.
+    // .NET's GetFolderPath returns "" for a directory that does not exist
     join(plan.configDirHost, 'config'),
     join(plan.configDirHost, 'data'),
     join(plan.configDirHost, 'cache'),
@@ -56,16 +53,11 @@ export async function ensureProfileTree(plan: LaunchPlan): Promise<void> {
   }
 }
 
-/**
- * Bind-mount targets docker would otherwise create as root. A mods dir can sit inside
- * the data dir, so a missing one comes back root-owned and blocks the next run.
- */
 function engineDirs(plan: LaunchPlan): string[] {
   const { dataDir, modsDir } = plan.gameConfig
   if (!modsDir.container.startsWith(`${dataDir.container}/`)) return []
   return [join(plan.dataDirHost, modsDir.container.slice(dataDir.container.length + 1))]
 }
-
 
 /**
  * Walks with lstat semantics, so a dangling symlink inside a mounted tree is reported

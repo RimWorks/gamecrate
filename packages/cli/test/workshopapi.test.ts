@@ -17,7 +17,6 @@ afterAll(async () => {
   await rm(tmp, { recursive: true, force: true })
 })
 
-/** Tabs are what steam writes, and the text goes through the real parser in `mods/acf.ts`. */
 function acfText(items: Record<string, number>): string {
   const entries = Object.entries(items)
     .map(
@@ -28,10 +27,6 @@ function acfText(items: Record<string, number>): string {
   return `"AppWorkshop"\n{\n\t"appid"\t\t"294100"\n\t"WorkshopItemsInstalled"\n\t{\n${entries}\n\t}\n}\n`
 }
 
-/**
- * A workshop tree: the .acf steamcmd writes, plus a content directory per id in `onDisk`.
- * Returns a content root, the shape `checkDrift` is handed.
- */
 async function tree(items: Record<string, number>, onDisk: string[]): Promise<string> {
   const dir = await mkdtemp(join(tmp, 'workshop-'))
   await writeFile(join(dir, 'appworkshop_294100.acf'), acfText(items))

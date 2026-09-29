@@ -28,7 +28,6 @@ afterEach(() => {
   while (temps.length > 0) rmSync(temps.pop() as string, { recursive: true, force: true })
 })
 
-/** FIXTURE_DEFAULTS puts the manifest at About/About.txt, and the fixture codec is `key value`. */
 function writeMod(dir: string, packageId: string): void {
   mkdirSync(join(dir, 'About'), { recursive: true })
   writeFileSync(join(dir, 'About', 'About.txt'), `packageId ${packageId}\nname ${packageId}\n`)
@@ -38,11 +37,9 @@ function git(dir: string, ...argv: string[]): void {
   execFileSync('git', argv, { cwd: dir, stdio: 'pipe' })
 }
 
-/** A repo with one mod per named subdir, committed and tagged v1. No network, no mocks. */
 function modRepo(ids: string[]): { url: string; dir: string } {
   const dir = temp('gc-modrepo-')
   git(dir, 'init', '-b', 'main')
-  // a throwaway repo must not inherit the global hooksPath, its commit-msg hook blocks on a ui.
   git(dir, 'config', 'core.hooksPath', '/dev/null')
   git(dir, 'config', 'user.email', 'test@example.invalid')
   git(dir, 'config', 'user.name', 'gamecrate test')
@@ -53,7 +50,6 @@ function modRepo(ids: string[]): { url: string; dir: string } {
   return { url: `file://${dir}`, dir }
 }
 
-/** A repo with a mod at each named path, committed and tagged v1. */
 function repoAt(dirs: Record<string, string>): { url: string; dir: string } {
   const dir = temp('gc-modrepo-')
   git(dir, 'init', '-b', 'main')
@@ -67,7 +63,6 @@ function repoAt(dirs: Record<string, string>): { url: string; dir: string } {
   return { url: `file://${dir}`, dir }
 }
 
-/** A repo whose only content is f.txt, tagged v1, then moved on. Enough for sync. */
 function plainRepo(): { url: string; dir: string } {
   const dir = temp('gc-plain-')
   git(dir, 'init', '-b', 'main')
@@ -83,10 +78,6 @@ function plainRepo(): { url: string; dir: string } {
 
 const FAKE_STEAMCMD = fileURLToPath(new URL('./fixtures/fake-steamcmd.sh', import.meta.url))
 
-/**
- * The fake steamcmd, wrapped so the test can count its runs and so every item it writes carries
- * a manifest the fixture plugin can read: the fake writes a real game's About.xml.
- */
 function fakeSteamcmd(fail = ''): { path: string; runs: () => number } {
   const dir = temp('gc-steamcmd-')
   const log = join(dir, 'runs')
@@ -119,7 +110,6 @@ function fakeSteamcmd(fail = ''): { path: string; runs: () => number } {
   }
 }
 
-/** Steam's answer for every id, so no test reaches the network. */
 function steamSays(details: { id: string; timeUpdated: number; result?: number }[]): typeof fetch {
   const body = {
     response: {
@@ -133,14 +123,12 @@ function steamSays(details: { id: string; timeUpdated: number; result?: number }
   return (async () => new Response(JSON.stringify(body))) as unknown as typeof fetch
 }
 
-/** The .acf steamcmd writes beside the content root, listing what is installed. */
 function writeAcf(ctx: ModsContext, items: Record<string, number>): void {
   const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
   const entries = Object.entries(items)
     .map(([id, at]) => `\t\t"${id}"\n\t\t{\n\t\t\t"timeupdated"\t\t"${at}"\n\t\t\t"manifest"\t\t"102505266"\n\t\t}`)
     .join('\n')
   mkdirSync(root, { recursive: true })
-  // the acf sits one level above content/<appid>, wherever the pinned root is
   writeFileSync(
     join(dirname(dirname(root)), 'appworkshop_294100.acf'),
     `"AppWorkshop"\n{\n\t"WorkshopItemsInstalled"\n\t{\n${entries}\n\t}\n}\n`,
@@ -201,7 +189,7 @@ describe('modsAdd', () => {
     const remote = modRepo(['a.one', 'a.two', 'a.three'])
     const ctx = context()
 
-    const code = await modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
+    const code = await modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
 
     expect(code).toBe(Exit.Ok)
     const pins = library(ctx.globalPath, 'atlas')
@@ -214,26 +202,22 @@ describe('modsAdd', () => {
   })
 
   test('one id declared by two directories writes nothing, even with --force', async () => {
-    // one pair spelled the same, one pair spelled differently: ids match case-blind everywhere
-    // else in this codebase, so two spellings of one id are still one key in the library
     const remote = repoAt({ 'V14/Mod': 'a.one', 'V15/Mod': 'A.One', W1: 'a.three', W2: 'a.three', Two: 'a.two' })
     const ctx = context()
 
     const error = await fails(
-      modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx),
+      modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx),
     )
     expect(error.code).toBe(Exit.Config)
     expect(error.message).toContain('2 mod id(s) are declared by more than one directory')
     expect(error.detail).toContain('a.one: V14/Mod, V15/Mod')
     expect(error.detail).toContain('a.three: W1, W2')
     expect(error.detail).toContain('--subdir')
-    // the refusal is ahead of the write, so the global config is never created
     expect(existsSync(ctx.globalPath)).toBe(false)
 
-    // --force is for overwriting an existing pin, never for picking one of two directories
     const forced = context()
     const again = await fails(
-      modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global', '--force'), forced),
+      modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global', '--force'), forced),
     )
     expect(again.code).toBe(Exit.Config)
     expect(existsSync(forced.globalPath)).toBe(false)
@@ -243,9 +227,8 @@ describe('modsAdd', () => {
     const remote = repoAt({ 'V14/Mod': 'a.one', 'V15/Mod': 'A.One', Two: 'a.two' })
     const ctx = context()
 
-    // the other side: only a real duplicate refuses, and the message names the way out
     const code = await modsAdd(
-      args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--subdir', 'V15', '--global'),
+      args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--subdir', 'V15', '--global'),
       ctx,
     )
 
@@ -259,7 +242,7 @@ describe('modsAdd', () => {
     const remote = repoAt({ 'V14/Mod': 'a.one', 'V15/Mod': 'a.two' })
     const ctx = context()
 
-    const code = await modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
+    const code = await modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
 
     expect(code).toBe(Exit.Ok)
     expect(Object.keys(library(ctx.globalPath, 'atlas')).sort()).toEqual(['a.one', 'a.two'])
@@ -272,7 +255,7 @@ describe('modsAdd', () => {
     })
     const before = readFileSync(ctx.globalPath, 'utf8')
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx))
 
     expect(error.code).toBe(Exit.Config)
     expect(error.message).toContain('1 mod id(s) are already pinned')
@@ -296,7 +279,7 @@ describe('modsAdd', () => {
     })
     const before = readFileSync(ctx.globalPath, 'utf8')
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx))
 
     expect(error.message).toContain('2 mod id(s)')
     expect(error.detail).toContain('a.two')
@@ -311,7 +294,7 @@ describe('modsAdd', () => {
     })
 
     const code = await modsAdd(
-      args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global', '--force'),
+      args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global', '--force'),
       ctx,
     )
 
@@ -326,7 +309,7 @@ describe('modsAdd', () => {
     writeMod(join(work, 'mymod'), 'a.local')
     const ctx = context({ cwd: work })
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--global'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--global'), ctx)
 
     expect(library(ctx.globalPath, 'atlas')['a.local']).toEqual({ path: join(work, 'mymod') })
   })
@@ -336,7 +319,7 @@ describe('modsAdd', () => {
     mkdirSync(join(work, 'empty'))
     const ctx = context({ cwd: work })
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--path', './empty', '--global'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--path', './empty', '--global'), ctx))
 
     expect(error.code).toBe(Exit.Resolution)
     expect(existsSync(ctx.globalPath)).toBe(false)
@@ -350,7 +333,7 @@ describe('modsAdd', () => {
     const before = readFileSync(project, 'utf8')
     const ctx = context({ cwd: work })
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx))
 
     expect(error.code).toBe(Exit.Config)
     expect(error.message).toContain('has no top-level game:')
@@ -360,11 +343,10 @@ describe('modsAdd', () => {
   test('--workshop downloads the item and pins it, with workshopRoot null', async () => {
     const ctx = context({ steamcmd: fakeSteamcmd().path })
 
-    const code = await modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx)
+    const code = await modsAdd(args('mods', 'add', '--workshop', '12345', '--global'), ctx)
 
     expect(code).toBe(Exit.Ok)
     expect(ctx.config.games['atlas']!.workshopRoot).toBeNull()
-    // the recorded entry is the same one a workshopRoot read used to write
     expect(library(ctx.globalPath, 'atlas')['a.item12345']).toEqual({ workshop: 12345 })
     const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
     expect(existsSync(join(root, '12345'))).toBe(true)
@@ -373,7 +355,7 @@ describe('modsAdd', () => {
   test('a download steam refuses fails the add, naming the item and the reason', async () => {
     const ctx = context({ steamcmd: fakeSteamcmd('12345').path })
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--workshop', '12345', '--global'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--workshop', '12345', '--global'), ctx))
 
     expect(error.code).toBe(Exit.Resolution)
     expect(error.message).toContain('12345')
@@ -386,7 +368,7 @@ describe('modsAdd', () => {
     writeMod(join(work, 'mymod'), 'a.local')
     const ctx = context({ cwd: work })
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx))
 
     expect(error.code).toBe(Exit.Config)
     expect(error.message).toContain('no .gamecrate config in this directory or any parent')
@@ -402,7 +384,7 @@ describe('modsAdd', () => {
     const before = readFileSync(project, 'utf8')
     const ctx = context({ cwd: work })
 
-    const error = await fails(modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx))
+    const error = await fails(modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx))
 
     expect(error.code).toBe(Exit.Config)
     expect(error.message).toContain('belongs to other')
@@ -416,7 +398,7 @@ describe('modsAdd', () => {
     writeFileSync(project, 'game: atlas\nprofiles:\n  dev:\n    mods: []\n')
     const ctx = context({ cwd: work })
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx)
 
     expect(library(project)['a.local']).toEqual({ path: join(work, 'mymod') })
     expect(readFileSync(project, 'utf8')).toContain('dev:')
@@ -427,7 +409,7 @@ describe('modsAdd', () => {
     const ctx = context()
 
     await modsAdd(
-      args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--subdir', 'one', '--global'),
+      args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--subdir', 'one', '--global'),
       ctx,
     )
 
@@ -452,7 +434,7 @@ describe('modsRm', () => {
       ].join('\n'),
     })
 
-    const code = await modsRm(args('mods', 'rm', 'atlas', 'a.one', 'a.three', '--global'), ctx)
+    const code = await modsRm(args('mods', 'rm', 'a.one', 'a.three', '--global'), ctx)
 
     expect(code).toBe(Exit.Ok)
     expect(Object.keys(library(ctx.globalPath, 'atlas'))).toEqual(['a.two'])
@@ -464,7 +446,7 @@ describe('modsRm', () => {
     })
     const before = readFileSync(ctx.globalPath, 'utf8')
 
-    const error = await fails(modsRm(args('mods', 'rm', 'atlas', 'a.one', 'a.nope', '--global'), ctx))
+    const error = await fails(modsRm(args('mods', 'rm', 'a.one', 'a.nope', '--global'), ctx))
 
     expect(error.code).toBe(Exit.Config)
     expect(error.detail).toContain('a.nope')
@@ -478,12 +460,12 @@ describe('modsRm', () => {
     writeFileSync(project, 'game: atlas\nprofiles:\n  dev:\n    mods: []\n')
     const ctx = context({ cwd: work })
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx)
-    await modsRm(args('mods', 'rm', 'atlas', 'a.local', '--project'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx)
+    await modsRm(args('mods', 'rm', 'a.local', '--project'), ctx)
 
     expect(readFileSync(project, 'utf8')).not.toContain('library')
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--project'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--project'), ctx)
 
     expect(readFileSync(project, 'utf8')).not.toContain('library: {')
     expect(library(project)['a.local']).toEqual({ path: join(work, 'mymod') })
@@ -504,7 +486,7 @@ describe('modsRm', () => {
       ].join('\n'),
     })
 
-    await modsRm(args('mods', 'rm', 'atlas', 'a.one', '--global'), ctx)
+    await modsRm(args('mods', 'rm', 'a.one', '--global'), ctx)
 
     const text = readFileSync(ctx.globalPath, 'utf8')
     expect(text).not.toContain('library')
@@ -516,15 +498,13 @@ describe('modsRm', () => {
     writeMod(join(work, 'mymod'), 'a.local')
     const ctx = context({ cwd: work })
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--global'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--global'), ctx)
     expect(readFileSync(ctx.globalPath, 'utf8')).toContain('\n  atlas:')
 
-    // games was the file's only key, so the rm empties the root. a `{}` left there would make
-    // the next write a one-line flow map, and every write after that compounds it.
-    await modsRm(args('mods', 'rm', 'atlas', 'a.local', '--global'), ctx)
+    await modsRm(args('mods', 'rm', 'a.local', '--global'), ctx)
     expect(readFileSync(ctx.globalPath, 'utf8')).toBe('')
 
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--global'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--global'), ctx)
 
     const text = readFileSync(ctx.globalPath, 'utf8')
     expect(text).not.toContain('{')
@@ -536,11 +516,10 @@ describe('modsRm', () => {
     const work = temp('gc-work-')
     writeMod(join(work, 'mymod'), 'a.local')
     const ctx = context({ cwd: work })
-    await modsAdd(args('mods', 'add', 'atlas', '--path', './mymod', '--global'), ctx)
-    await modsRm(args('mods', 'rm', 'atlas', 'a.local', '--global'), ctx)
+    await modsAdd(args('mods', 'add', '--path', './mymod', '--global'), ctx)
+    await modsRm(args('mods', 'rm', 'a.local', '--global'), ctx)
     expect(readFileSync(ctx.globalPath, 'utf8')).toBe('')
 
-    // an empty file has to mean the same as no file at all, or emptying one bricks it
     const loaded = await loadConfig(ctx.globalPath)
 
     expect(loaded.config.games).toEqual({})
@@ -558,11 +537,11 @@ describe('modsRm', () => {
   test('the clone stays on disk afterwards', async () => {
     const remote = modRepo(['a.one'])
     const ctx = context()
-    await modsAdd(args('mods', 'add', 'atlas', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
+    await modsAdd(args('mods', 'add', '--git', remote.url, '--tag', 'v1', '--global'), ctx)
     const dir = cloneDir(ctx.config.dataRoot, remote.url, { kind: 'tag', value: 'v1' })
     expect(existsSync(dir)).toBe(true)
 
-    await modsRm(args('mods', 'rm', 'atlas', 'a.one', '--global'), ctx)
+    await modsRm(args('mods', 'rm', 'a.one', '--global'), ctx)
 
     expect(Object.keys(library(ctx.globalPath, 'atlas'))).toEqual([])
     expect(existsSync(dir)).toBe(true)
@@ -577,7 +556,7 @@ describe('modsSync', () => {
     const dir = cloneDir(ctx.config.dataRoot, remote.url, { kind: 'tag', value: 'v1' })
     expect(existsSync(dir)).toBe(false)
 
-    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync'), ctx)).toBe(Exit.Ok)
 
     expect(readFileSync(join(dir, 'f.txt'), 'utf8')).toBe('one')
   })
@@ -586,7 +565,7 @@ describe('modsSync', () => {
     const remote = plainRepo()
     const ctx = context()
     ctx.config.games['atlas']!.library = { 'a.one': { git: remote.url, tag: 'v1' } }
-    await modsSync(args('mods', 'sync', 'atlas'), ctx)
+    await modsSync(args('mods', 'sync'), ctx)
     const dir = cloneDir(ctx.config.dataRoot, remote.url, { kind: 'tag', value: 'v1' })
     expect(readFileSync(join(dir, 'f.txt'), 'utf8')).toBe('one')
 
@@ -595,7 +574,7 @@ describe('modsSync', () => {
     git(remote.dir, 'commit', '-m', 'two')
     git(remote.dir, 'tag', '-f', 'v1')
 
-    await modsSync(args('mods', 'sync', 'atlas'), ctx)
+    await modsSync(args('mods', 'sync'), ctx)
 
     expect(readFileSync(join(dir, 'f.txt'), 'utf8')).toBe('two')
   })
@@ -608,7 +587,7 @@ describe('modsSync', () => {
       'a.two': { git: 'file:///nowhere/at/all', tag: 'v1' },
     }
 
-    expect(await modsSync(args('mods', 'sync', 'atlas', 'a.one'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync', 'a.one'), ctx)).toBe(Exit.Ok)
 
     expect(existsSync(cloneDir(ctx.config.dataRoot, remote.url, { kind: 'tag', value: 'v1' }))).toBe(true)
   })
@@ -623,7 +602,7 @@ describe('modsSync', () => {
       'a.three': { path: '/three' },
     }
 
-    expect(await modsSync(args('mods', 'sync', 'atlas', 'a.one', 'a.two'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync', 'a.one', 'a.two'), ctx)).toBe(Exit.Ok)
 
     expect(existsSync(cloneDir(ctx.config.dataRoot, one.url, { kind: 'tag', value: 'v1' }))).toBe(true)
     expect(existsSync(cloneDir(ctx.config.dataRoot, two.url, { kind: 'tag', value: 'v1' }))).toBe(true)
@@ -634,7 +613,7 @@ describe('modsSync', () => {
     const ctx = context()
     ctx.config.games['atlas']!.library = { 'a.one': { git: one.url, tag: 'v1' } }
 
-    const error = await fails(modsSync(args('mods', 'sync', 'atlas', 'a.one', 'a.nope'), ctx))
+    const error = await fails(modsSync(args('mods', 'sync', 'a.one', 'a.nope'), ctx))
 
     expect(error.code).toBe(Exit.Resolution)
     expect(error.detail).toContain('a.nope')
@@ -656,7 +635,7 @@ describe('modsSync', () => {
       'a.three': { workshop: 33 },
     }
 
-    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync'), ctx)).toBe(Exit.Ok)
 
     const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
     for (const id of ['11', '22', '33']) expect(existsSync(join(root, id))).toBe(true)
@@ -671,7 +650,7 @@ describe('modsSync', () => {
     const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
     mkdirSync(join(root, '11'), { recursive: true })
 
-    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync'), ctx)).toBe(Exit.Ok)
 
     expect(fake.runs()).toBe(0)
   })
@@ -694,7 +673,7 @@ describe('modsSync', () => {
       return true
     }) as typeof process.stderr.write
     try {
-      expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+      expect(await modsSync(args('mods', 'sync'), ctx)).toBe(Exit.Ok)
     } finally {
       process.stderr.write = real
     }
@@ -713,7 +692,7 @@ describe('modsSync', () => {
     const root = downloadRoot(ctx.config.dataRoot, ctx.config.games['atlas'] as GameConfig)
     mkdirSync(join(root, '11'), { recursive: true })
 
-    expect(await modsSync(args('mods', 'sync', 'atlas'), ctx)).toBe(Exit.Ok)
+    expect(await modsSync(args('mods', 'sync'), ctx)).toBe(Exit.Ok)
 
     expect(fake.runs()).toBe(1)
   })
@@ -722,7 +701,7 @@ describe('modsSync', () => {
     const ctx = context()
     ctx.config.games['atlas']!.library = { 'a.one': { path: '/one' } }
 
-    const error = await fails(modsSync(args('mods', 'sync', 'atlas', 'a.one'), ctx))
+    const error = await fails(modsSync(args('mods', 'sync', 'a.one'), ctx))
 
     expect(error.code).toBe(Exit.Resolution)
   })

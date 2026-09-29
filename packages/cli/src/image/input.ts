@@ -52,7 +52,6 @@ export function branchPassword(branch: SteamBranch): string | undefined {
   return bare
 }
 
-/** A repo with no tag. A tag only exists after the last "/": before it a colon is a port. */
 function repoOf(ref: string): string {
   const at = ref.indexOf('@')
   const head = at > 0 ? ref.slice(0, at) : ref
@@ -80,10 +79,6 @@ export function resolveImage(
   return `gamecrate/${game}-game`
 }
 
-/**
- * The loader's merge, over one game. `steamBuild.branches` concatenates there and replaces in
- * deepMerge, so calling deepMerge here would give `steam build` a different branch set than `run`.
- */
 function mergeForGame(game: string, defaults: Partial<GameConfig>, config: RootConfig | null): Partial<GameConfig> {
   const base = { dataRoot: '', games: { [game]: defaults as GameConfig } } as RootConfig
   const user = { games: { [game]: config?.games?.[game] ?? {} } }
@@ -103,8 +98,6 @@ export async function resolveSteamBuildInput(
 ): Promise<SteamBuildInput> {
   const fromConfig = overrides.plugins === undefined && config?.plugins !== undefined
   const specs = overrides.plugins ?? config?.plugins ?? [`@gamecrate/${game}`]
-  // a config's specs resolve against that config, or doctor and steam build read one line two ways.
-  // --plugin and the convention get cwd: dirname of this path is where a bare package resolves from.
   const from = fromConfig && configFile !== undefined ? configFile : join(cwd, '.gamecrate.yaml')
   const plugins = await loadPlugins(specs, from)
   const plugin = plugins.get(game)
@@ -129,7 +122,6 @@ export async function resolveSteamBuildInput(
     return value
   }
 
-  // a config-less build never reaches validateConfig, so the same refusals run here instead
   const steamBuild = want(merged.steamBuild, 'steamBuild')
   const checked = steamBuildSchema.safeParse(steamBuild)
   if (!checked.success) {

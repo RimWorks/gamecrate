@@ -13,9 +13,6 @@ let treeA: string
 let treeB: string
 
 function git(cwd: string, ...argv: string[]): void {
-  // A global core.hooksPath applies to this throwaway repo too. The fixture commit would open
-  // the commit-msg review window and block, and only one of those can be open at a time, so it
-  // would also stall every other repo on the machine.
   const r = spawnSync('git', ['-C', cwd, '-c', 'core.hooksPath=', ...argv], { encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`git ${argv.join(' ')} failed: ${r.stderr}`)
 }
@@ -46,7 +43,6 @@ function args(over: Partial<ParsedArgs> = {}): Partial<ParsedArgs> {
   return { worktree: [], noWorktree: false, ...over }
 }
 
-/** cwd defaults to process.cwd(), which is a repo; every case states it explicitly. */
 function select(over: Partial<ParsedArgs>, profile?: ProfileConfig, cwd = '/tmp') {
   return resolveInstance({
     profileDir: PROFILE_DIR,
@@ -81,7 +77,6 @@ describe('resolveInstance', () => {
     expect(select({ worktree: [treeB] }).name).not.toBe(select({ worktree: [treeA] }).name!)
   })
 
-  // Two repos can each hold a `.worktrees/fix-thing`; sharing a save dir would be a data loss.
   test('the name carries a hash of the root, not just its basename', () => {
     const name = select({ worktree: [treeA] }).name!
     expect(name).toMatch(/^fix-thing-[0-9a-f]{6}$/)
@@ -95,7 +90,6 @@ describe('resolveInstance', () => {
     expect(got.dir).toBe(join(PROFILE_DIR, 'instances', got.name!))
   })
 
-  // The whole point: two checkouts of one profile must not share a save dir or a launch lock.
   test('two ambient worktrees of one profile are two instances', () => {
     expect(select({}, undefined, treeA).name).not.toBe(select({}, undefined, treeB).name!)
   })
@@ -104,7 +98,6 @@ describe('resolveInstance', () => {
     expect(select({}, undefined, treeA).name).toBe(select({ worktree: [treeA] }).name!)
   })
 
-  // Different mods are staged, so the two runs cannot land on the flag's instance alone.
   test('a flag and an ambient cwd together make a third instance', () => {
     const both = select({ worktree: [treeB] }, undefined, treeA)
     expect(both.requests.map((r) => r.root)).toEqual([treeB, treeA])

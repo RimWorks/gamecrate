@@ -52,9 +52,7 @@ export function steamAccount(dataRoot: string): string {
 
 /**
  * Where downloads land. `run` pins it with `+force_install_dir`, so this is our layout rather
- * than whichever one the steamcmd on this machine would have picked: measured 2026-09-21, the
- * arch wrapper writes .steam/SteamApps, the docker image writes .local/share/Steam/steamapps,
- * and a plain Valve tarball writes $HOME/Steam. Pinning makes all three land here.
+ * than whichever one the steamcmd on this machine would have picked.
  */
 export function downloadRoot(dataRoot: string, game: GameConfig): string {
   return join(steamHome(dataRoot), 'steamapps', 'workshop', 'content', String(game.steamAppId))
@@ -74,9 +72,7 @@ export async function removeDownloads(root: string, steamAppId: number): Promise
 
 /**
  * Configured path if set, else PATH, else the docker image. A configured path that is not an
- * executable file is an error, not a fallback. Docker gets `--user`: without it the tree
- * comes back root-owned and the next run with a host binary cannot write it. The bind is an
- * identity bind so the paths steamcmd prints are valid on the host too.
+ * executable file is an error, not a fallback.
  */
 export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
   const home = steamHome(config.dataRoot)
@@ -134,8 +130,7 @@ function onPath(name: string): string | undefined {
 /** The published file id out of a workshop url, or undefined if it is not one. */
 export function workshopUrlId(url: string | undefined): string | undefined {
   if (url === undefined) return undefined
-  // About.xml names the steam client form far more often than the web one: 251 against 72 in a
-  // real 367-mod library. StoreAppPage is a store page, not a workshop item, so it stays out.
+  // About.xml names the steam client form 251 times against 72 web ones in a real 367-mod library
   const client = /^steam:\/\/url\/CommunityFilePage\/(\d+)$/i.exec(url.trim())
   if (client !== null) return client[1]
   let parsed: URL
@@ -158,9 +153,6 @@ export interface DownloadReport {
   warnings: string[]
 }
 
-// steamcmd colours its own output, and a code lands mid-sentence in the lines below. the output is
-// also not newline separated per item: a real run put the second `Downloading item` on the same
-// line as the first `Success.`, so these run over the whole text rather than line by line
 const ANSI = new RegExp(String.raw`${String.fromCodePoint(27)}\[[0-9;?]*[ -/]*[@-~]`, 'g')
 const SUCCESS = /Success\. Downloaded item (\d+) to "([^"]+)" \((\d+) bytes\)/g
 const FAILED = /ERROR! Download item (\d+) failed \(([^)]+)\)/g

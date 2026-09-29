@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// bun's os.homedir() snapshots at process start and ignores a later HOME, unlike node's.
 const realOs = { ...(await import('node:os')) }
 const os = { ...realOs, homedir: () => process.env.HOME ?? realOs.homedir() }
 await mock.module('node:os', () => ({ ...os, default: os }))
@@ -37,7 +36,6 @@ afterEach(() => {
   process.env.PATH = realPath
 })
 
-/** An executable stub called `name` in its own directory, which is returned. */
 async function binDir(name: string): Promise<string> {
   const dir = await mkdtemp(join(tmp, 'bin-'))
   const path = join(dir, name)
@@ -67,7 +65,6 @@ describe('downloadRoot', () => {
 describe('removeDownloads', () => {
   const game = { steamAppId: 294100 } as GameConfig
 
-  /** A tree with two items, the acf beside them, and a steamcmd install above both. */
   async function tree(): Promise<{ data: string; root: string; acf: string; install: string }> {
     const data = await mkdtemp(join(tmp, 'dl-rm-'))
     const root = downloadRoot(data, game)
@@ -87,7 +84,6 @@ describe('removeDownloads', () => {
     expect(said).toBe(`removed ${t.root} (2 item(s))`)
     expect(existsSync(t.root)).toBe(false)
     expect(existsSync(t.acf)).toBe(false)
-    // 200MB of bootstrap: deleting it means the next launch re-downloads steamcmd for nothing
     expect(existsSync(join(t.install, 'steamcmd'))).toBe(true)
   })
 
@@ -202,7 +198,6 @@ describe('resolveSteamcmd', () => {
 describe('workshopUrlId', () => {
   const cases: [string | undefined, string | undefined][] = [
     ['https://steamcommunity.com/sharedfiles/filedetails/?id=818773962', '818773962'],
-    // the form 251 of 323 real About.xml dependencies use
     ['steam://url/CommunityFilePage/818773962', '818773962'],
     ['steam://url/communityfilepage/12', '12'],
     ['  steam://url/CommunityFilePage/77  ', '77'],
@@ -232,7 +227,6 @@ describe('workshopUrlId', () => {
 describe('downloadItems', () => {
   const FAKE = fileURLToPath(new URL('./fixtures/fake-steamcmd.sh', import.meta.url))
   const game = { steamAppId: 294100 } as GameConfig
-  /** Where the fake writes, which is the host layout. */
   const hostRoot = (root: string): string => downloadRoot(root, game)
   const fakeEnv = ['FAKE_FAIL_IDS', 'FAKE_SKIP_IDS', 'FAKE_FLAKY_IDS', 'FAKE_BYTES', 'FAKE_EXIT']
 
@@ -240,7 +234,6 @@ describe('downloadItems', () => {
     for (const key of fakeEnv) delete process.env[key]
   })
 
-  /** A data root of its own, wired to the fake, so the tests never touch the network. */
   async function fake(path = FAKE): Promise<{ root: string; cfg: RootConfig }> {
     const root = await mkdtemp(join(tmp, 'dl-'))
     return { root, cfg: { dataRoot: root, games: {}, steamcmd: { path } } }
@@ -306,7 +299,6 @@ describe('downloadItems', () => {
   test('locks the steam home while steamcmd runs', async () => {
     const { root, cfg } = await fake()
     await downloadItems(cfg, game, root, ['777'])
-    // the fake records what it saw, because the lock is gone by the time this test can look
     expect(existsSync(join(steamHome(root), 'lock-seen'))).toBe(true)
     expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
   })

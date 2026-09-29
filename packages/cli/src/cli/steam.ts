@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 
+import { namedGame } from './game'
 import { steamBuild } from '../image/build'
 import { resolveSteamBuildInput } from '../image/input'
 import { accountFile, resolveSteamcmd, steamAccount, steamHome } from '../mods/steamcmd'
@@ -11,6 +12,10 @@ import type { GamePlugin } from '../plugin'
 import { Exit, GamecrateError } from '../types'
 import type { ParsedArgs, RootConfig } from '../types'
 import { status } from './output'
+import { emit } from '../channels'
+import { startBoard } from './taskboard'
+import type { Board } from './taskboard'
+import { dashboardGate } from './tty'
 
 export interface SteamContext {
   config: RootConfig
@@ -37,7 +42,6 @@ export function findSession(home: string): string | undefined {
   return sessionPaths(home).find((path) => existsSync(path))
 }
 
-/** which layout steamcmd reads depends on which steamcmd runs, so seed all of them */
 function seedSession(home: string, body: Buffer): void {
   for (const path of sessionPaths(home)) {
     mkdirSync(dirname(path), { recursive: true })
@@ -60,7 +64,6 @@ export function resolveSession(config: RootConfig, env: Record<string, string | 
   if (mine !== undefined) return mine
   const fallback = findSession(homedir())
   if (fallback !== undefined) {
-    // steamcmd runs with HOME=steamHome, and the docker runner mounts only that
     seedSession(home, readFileSync(fallback))
     return fallback
   }
@@ -72,17 +75,13 @@ export function resolveSession(config: RootConfig, env: Record<string, string | 
 }
 
 export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Promise<number> {
-  const game = args.game
-  if (game === undefined) throw new GamecrateError('steam build needs a game', Exit.Usage)
+  const game = namedGame(args, ctx.config)
 
-  // both up front: steamcmd's own words for a missing session or account are far worse than these,
-  // and by the time it says them a multi-gigabyte download has already started
   status(`steam session from ${resolveSession(ctx.config)}`)
   steamAccount(ctx.config.dataRoot)
 
   const push = args.push === true
   const load = args.load === true || !push
-  // no --plugin has to read as unset, or the @gamecrate/<game> convention never gets a turn
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const input = await resolveSteamBuildInput(
     game,
@@ -92,6 +91,9 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
     ctx.configFile,
   )
 
+  const drawable = !args.json && !args.plain && dashboardGate()
+  let board: Board | undefined
+
   const results = await steamBuild(input, {
     config: ctx.config,
     push,
@@ -100,11 +102,23 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
     baseOverride: args.base,
     force: args.force === true,
     onlyBranches: args.branches,
+    extraTags: args.aliases,
     onlyVariants: args.variant,
-  })
+    ...(drawable
+      ? {
+          onPlan: (cells) => {
+            board = startBoard({
+              title: game,
+              subtitle: `${new Set(cells.map((c) => c.branch)).size} branch, ${cells.length} cells`,
+              tasks: cells.map((cell) => ({ id: cell.id, label: cell.variant, note: cell.base })),
+            })
+          },
+          onCell: (id, patch) => board?.update(id, patch),
+        }
+      : {}),
+  }).finally(() => board?.close())
 
-  // the table goes to stderr through status, because stdout belongs to machine-readable output
-  if (args.json) process.stdout.write(`${JSON.stringify(results, null, 2)}\n`)
+  if (args.json) emit('data', `${JSON.stringify(results, null, 2)}\n`)
   else for (const row of results) status(`${row.branch}/${row.variant}  ${row.status}  ${row.reason}`)
 
   return results.some((row) => row.status === 'failed') ? Exit.Environment : Exit.Ok
@@ -116,13 +130,11 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
  */
 export async function steamLogin(args: ParsedArgs, ctx: SteamContext): Promise<number> {
   const home = steamHome(ctx.config.dataRoot)
-  // docker creates a missing bind source as root, and then the --user process cannot write its own HOME
   mkdirSync(home, { recursive: true })
   const runner = resolveSteamcmd(ctx.config)
   const username = args.username ?? (await prompt('steam account name: '))
   if (username === '') throw new GamecrateError('steam login needs an account name', Exit.Usage)
 
-  // resolveSteamcmd builds the docker argv for a batch download, which needs no tty
   const argv = runner.kind === 'docker' ? [...runner.argv.slice(0, 2), '-it', ...runner.argv.slice(2)] : [...runner.argv]
   const result = spawnSync(argv[0] as string, [...argv.slice(1), '+login', username, '+quit'], {
     stdio: 'inherit',
@@ -140,10 +152,9 @@ export async function steamLogin(args: ParsedArgs, ctx: SteamContext): Promise<n
       `steamcmd exited ${result.status ?? 'on a signal'} and wrote no config.vdf under ${home}`,
     )
   }
-  // beside the session, so a later build never asks for STEAM_USERNAME again
   writeFileSync(accountFile(ctx.config.dataRoot), `${username}\n`)
   status(`session written to ${vdf}`)
-  if (args.print === true) process.stdout.write(`${readFileSync(vdf).toString('base64')}\n`)
+  if (args.print === true) emit('data', `${readFileSync(vdf).toString('base64')}\n`)
   return Exit.Ok
 }
 

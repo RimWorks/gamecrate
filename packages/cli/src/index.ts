@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync } from 'node:fs'
-import { chown, cp, mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { cp, lchown, mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -9,11 +9,18 @@ import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from
 import { requireGame } from './cli/game'
 import { currentRefs, extractRefs } from './image/refs'
 import { list } from './cli/list'
+import { initCommand } from './cli/init'
 import { globalConfigPath, modsAdd, modsRm, modsSync } from './cli/mods'
 import { launchProfile, profileOf } from './cli/profile'
 import { steamBuildCommand, steamLogin } from './cli/steam'
-import { renderCompletion, renderHelp } from './cli/help'
-import { currentLog, openRunLog, planWarnings, printPlan, redirectOutput, reportProblems, status, tailArgv, warn } from './cli/output'
+import { renderHelp } from './cli/help'
+import { dashboardFor } from './cli/tty'
+import { startSession } from './cli/session'
+import type { Session } from './cli/session'
+import { startBoard } from './cli/taskboard'
+import type { Board } from './cli/taskboard'
+import { complete, renderCandidates, renderCompletion } from './cli/complete'
+import { captureOutput, currentLog, openRunLog, planWarnings, printPlan, reportProblems, status, tailArgv, warn } from './cli/output'
 import {
   findGlobalConfig,
   globalConfigDir,
@@ -21,20 +28,22 @@ import {
   loadProjectDefaults,
   profileDataDir,
   profileDirs,
+  profileNames,
   resolveProfile,
 } from './config/load'
 import { resolveIdentity } from './docker/identity'
 import { preflight } from './docker/preflight'
-import { capture, exited, spawnArgv, runContainer, stopContainer, STDOUT_LOG, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
+import { capture, exited, spawnArgv, runContainer, stopContainer, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
 import { buildRunSpec, containerName, refuseProtonHeaded, windowIcon, windowTitle } from './docker/spec'
 import { adoptNewWindow } from './docker/window'
-import { generateModsConfig, mergePrefs } from './launch/generate'
+import { generateModsConfig, mergePrefs, writeModSettings } from './launch/generate'
 import { createInterface } from 'node:readline/promises'
 import { imageFor, imageLaunch, imageProblem, markerProblem, readImageFacts, withImageOverride } from './launch/image'
 import { offerRebuild } from './launch/updates'
 import { RUNTIME_BASE } from './image/base'
 import type { ImageFacts } from './launch/image'
 import type { ImageLaunch } from './docker/spec'
+import type { BuildHooks } from './launch/prepare'
 import {
   acquireImage,
   buildLocalMods,
@@ -57,6 +66,7 @@ import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
 import { downloadRoot, removeDownloads, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
+import { emit } from './channels'
 import type { SteamcmdRunner } from './mods/steamcmd'
 import { prepareWorkshop } from './mods/workshop'
 import type { PreparedWorkshop } from './mods/workshop'
@@ -64,14 +74,16 @@ import { requirePlugin } from './plugin'
 import type { GamePlugin } from './plugin'
 import { ago, decideStale, duration, scanBuildTimes, staleReport } from './mods/staleness'
 import { resolveWorktree } from './mods/worktree'
-import { GamecrateError, Exit, reasonFor } from './types'
+import { GamecrateError, Exit, NAME_PATTERN, reasonFor, STDOUT_LOG } from './types'
 import type {
+  BuildPolicy,
   DockerRunSpec,
   GameConfig,
   Identity,
   LaunchPlan,
   LaunchResult,
   ModEntry,
+  ModSettingsFile,
   ParsedArgs,
   Problem,
   ProfileConfig,
@@ -85,7 +97,6 @@ declare const __VERSION__: string | undefined
 const VERSION = typeof __VERSION__ === 'string' ? __VERSION__ : '0.0.0-dev'
 
 async function main(argv: string[]): Promise<number> {
-  // read off argv, so the recovery below sits above parseArgs and loadConfig too.
   const supervised = supervisedDir(argv)
   try {
     return await command(argv, supervised)
@@ -96,35 +107,44 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function command(argv: string[], supervised: string | undefined): Promise<number> {
-  const probe = parseArgs(argv)
-  if (probe.subcommand === 'version') {
-    process.stdout.write(`gamecrate ${VERSION}\n`)
+  if (argv[0] === '__complete') {
+    const { config } = await loadConfig(undefined, await loadProjectDefaults())
+    emit('data', renderCandidates(complete(argv.slice(1), config)))
     return Exit.Ok
   }
 
-  // no longer parallel: the splice needs the project fragment before the global config validates.
+  const probe = probeArgs(argv)
+  if (probe?.subcommand === 'version') {
+    emit('data', `gamecrate ${VERSION}\n`)
+    return Exit.Ok
+  }
+  if (probe?.subcommand === 'init' && probe.help !== true) return await initCommand(probe)
+
   const defaults = await loadProjectDefaults()
   const { config, plugins } = await loadConfig(undefined, defaults)
-  const args = parseArgs(argv, { games: Object.keys(config.games), defaults })
+  const args = parseArgs(argv, { games: Object.keys(config.games), profiles: profileNames(config), defaults })
 
   if (args.help) {
-    process.stdout.write(renderHelp(helpTopic(args), config))
+    emit('data', renderHelp(helpTopic(args), config))
     return Exit.Ok
   }
-  const redirect =
-    args.log !== undefined && (args.subcommand === 'run' || args.subcommand === 'shell')
-      ? redirectOutput(args.log, args.supervised)
+  const launching = args.subcommand === 'run' || args.subcommand === 'shell'
+  const sink =
+    launching && (args.log !== undefined || args.quiet)
+      ? captureOutput(args.log, {
+          append: args.supervised,
+          tee: !args.quiet,
+          always: ['status'],
+        })
       : undefined
 
   try {
     return await dispatch(argv, args, config, plugins, defaults)
   } catch (error) {
-    // Printed here, not at the top level: with --log the failure belongs in the log file,
-    // and the top-level printer only runs once the redirect is already closed.
     const code = reportFatal(error)
     return supervised === undefined ? code : await supervisorFailed(supervised, code)
   } finally {
-    redirect?.close()
+    sink?.close()
   }
 }
 
@@ -148,7 +168,6 @@ async function dispatch(
       return mods(args, config, plugins, defaults)
     }
     case 'steam': {
-      // the same path loadConfig read, so a relative plugin spec resolves the way doctor resolves it
       const ctx = { config, plugins, cwd: process.cwd(), configFile: await globalConfigPath() }
       if (args.subverb === 'login') return steamLogin(args, ctx)
       return steamBuildCommand(args, ctx)
@@ -177,8 +196,10 @@ async function dispatch(
       return waitFor(args, config, defaults)
     case 'shell':
       return run(argv, args, config, plugins, defaults, true)
+    case 'completion':
+      return completion(args)
     case 'config':
-      return configEdit(args)
+      return configEdit()
     case 'fix-perms':
       return fixPerms(args, config)
     case 'run':
@@ -188,36 +209,34 @@ async function dispatch(
   }
 }
 
-/** Spread into the adopt options, so no icon means no key rather than an undefined one. */
 function iconOption(plan: LaunchPlan, configFile: string): { icon?: string } {
   const icon = windowIcon(plan, dirname(configFile))
   return icon === undefined ? {} : { icon }
 }
 
-function helpTopic(args: ParsedArgs): string | undefined {
-  if (args.subcommand === 'help') return args.rest[0]
-  if (args.subcommand === 'run') return args.game
-  return args.subcommand
+function helpTopic(args: ParsedArgs): string[] {
+  if (args.subcommand === 'help') return args.rest
+  if (args.subcommand !== 'run') {
+    return args.subverb === undefined ? [args.subcommand] : [args.subcommand, args.subverb]
+  }
+  if (args.verbTyped) return ['run']
+  return args.game === undefined ? [] : [args.game]
 }
 
 function help(args: ParsedArgs, config: RootConfig): number {
-  const topic = args.rest[0]
-  if (topic === 'completion') {
-    const shell = args.rest[1]
-    if (shell !== 'bash' && shell !== 'zsh') {
-      throw new GamecrateError('help completion takes bash or zsh', Exit.Usage)
-    }
-    process.stdout.write(renderCompletion(shell))
-    return Exit.Ok
-  }
-  process.stdout.write(renderHelp(topic, config))
+  emit('data', renderHelp(args.rest, config))
   return Exit.Ok
 }
 
-/**
- * Where a subcommand should look when `--instance` or `--worktree` names one. Resolving the
- * profile can throw on a name that was never defined, which is not this helper's business.
- */
+function completion(args: ParsedArgs): number {
+  const shell = args.rest[0]
+  if (shell !== 'bash' && shell !== 'zsh') {
+    throw new GamecrateError('completion takes bash or zsh', Exit.Usage, 'gamecrate completion zsh')
+  }
+  emit('data', renderCompletion(shell))
+  return Exit.Ok
+}
+
 function instanceDir(args: ParsedArgs, config: RootConfig, game: string, profile: string): string {
   const dir = profileDataDir(config, game, profile)
   let spec: ProfileConfig | undefined
@@ -229,7 +248,6 @@ function instanceDir(args: ParsedArgs, config: RootConfig, game: string, profile
   return resolveInstance({ profileDir: dir, ...(spec === undefined ? {} : { profile: spec }), args }).dir
 }
 
-/** Environment problems are exit 5, never 4: they are about this machine, not the config. */
 function reportEnvironment(problems: Problem[]): never {
   const out: string[] = []
   for (const problem of problems) {
@@ -243,10 +261,6 @@ function reportEnvironment(problems: Problem[]): never {
   )
 }
 
-/**
- * config -> index -> resolve -> stage -> generate -> run spec -> execute.
- * `--dry-run` and `--print-plan` stop after validation, before the first write.
- */
 async function run(
   argv: string[],
   args: ParsedArgs,
@@ -260,7 +274,6 @@ async function run(
 
   const gameConfig = gameForImage(args, config, defaults, game)
   config.games[game] = gameConfig
-  // --dry-run and --print-plan resolve without side effects, and a clone is a side effect.
   const allowFetch = !args.dryRun && !args.printPlan
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
   try {
@@ -271,10 +284,6 @@ async function run(
   }
 }
 
-/**
- * An item a real launch would fetch is a provisional plan, not a failure, so it warns and the
- * plan still prints. Everything else stays fatal.
- */
 function warnUnfetched(problems: Problem[], unfetched: string[]): Problem[] {
   const provisional = new Set(unfetched.map(notFetched))
   const fatal: Problem[] = []
@@ -308,8 +317,6 @@ async function resolved(inputs: ResolveInputs): Promise<number> {
     sourcesRoot(config.dataRoot),
     config.dataRoot,
   )
-  // an id still missing after a real fetch is a download failure, already warned about, so it
-  // gets the plain missing-mod problem instead of the "a real launch would fetch it" wording.
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, index, sources: sources.dirs, unfetched: allowFetch ? undefined : workshop.unfetched })
   const fatal = warnUnfetched([...workshop.problems, ...problems], allowFetch ? [] : workshop.unfetched)
   if (fatal.length > 0) reportProblems(fatal)
@@ -324,7 +331,6 @@ async function resolved(inputs: ResolveInputs): Promise<number> {
   await ensureProfileTree(plan)
   const profileSpec = resolveProfile(config.games[game]!, profile)
   if (wantsReplace(args, profileSpec)) await replacePrevious(plan)
-  // only a typed --detach refuses shell; a config-level one lands here and just skips the fork.
   if (!asShell && wantsDetach(args, profileSpec)) return await forkSupervisor(plan, argv)
 
   const lock = args.supervised ? heldLock(plan) : await takeLock(plan)
@@ -337,7 +343,6 @@ async function resolved(inputs: ResolveInputs): Promise<number> {
   }
 }
 
-/** --print-plan and --dry-run stop here, after validation and before the first write. */
 async function reportPlanOnly(
   plan: LaunchPlan,
   args: ParsedArgs,
@@ -346,7 +351,6 @@ async function reportPlanOnly(
   asShell: boolean,
 ): Promise<number> {
   const environment = await preflight(plan, asShell)
-  // buildRunSpec is a validation gate of its own: the "=" landmine throws here.
   buildRunSpec(plan, [], identity)
   if (args.printPlan) printPlan(plan, args.json)
   for (const warning of planWarnings(plan)) warn(warning)
@@ -367,22 +371,20 @@ async function launch(
   profileSpec: ProfileConfig,
   releaseSources: () => Promise<void>,
 ): Promise<LaunchResult> {
-  const game = plan.game
   const profile = plan.profile
   const foreign = await detectForeignOwnership(plan.dataDirHost, identity.uid, 5)
   if (foreign.length > 0) {
     throw new GamecrateError(
       `${foreign.length} path(s) under ${plan.dataDirHost} are not owned by uid ${identity.uid}`,
       Exit.Environment,
-      `${foreign.join('\n')}\nrun: gamecrate fix-perms ${game} ${profile}`,
+      `${foreign.join('\n')}\nrun: gamecrate fix-perms ${profile}`,
     )
   }
 
   const runDir = openRunLog(plan.logsDirHost)
   plan.runDirHost = runDir
-  // the supervisor has no terminal. --log already redirected in main(), so never both.
   const supervisorLog =
-    args.supervised && args.log === undefined ? redirectOutput(join(runDir, 'supervisor.log')) : undefined
+    args.supervised && args.log === undefined ? captureOutput(join(runDir, 'supervisor.log')) : undefined
 
   try {
     return await execute({ plan, args, config, identity, asShell, profileSpec, runDir, releaseSources })
@@ -402,20 +404,44 @@ interface ExecuteInputs {
   releaseSources: () => Promise<void>
 }
 
+async function buildOnBoard(plan: LaunchPlan, policy: BuildPolicy, drawable: boolean): Promise<void> {
+  let board: Board | undefined
+  const hooks: BuildHooks = {
+    onPlan: (tasks) => {
+      board = startBoard({
+        title: `building ${plan.game} mods`,
+        subtitle: tasks.length === 1 ? '1 project' : `${tasks.length} projects`,
+        tasks,
+      })
+    },
+    onCell: (id, patch) => board?.update(id, patch),
+  }
+  await buildLocalMods(plan, policy, currentRefs(plan.game), drawable ? hooks : undefined).finally(
+    () => board?.close(),
+  )
+}
+
 async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   const { plan, args, config, identity, asShell, profileSpec, runDir, releaseSources } = inputs
-  await buildLocalMods(plan, buildPolicy(args, profileSpec), currentRefs(plan.game))
-  // the build writes into the clones, so their lock only comes off once it is done. it covers
-  // fetch and build, not the session: stageMods bind-mounts a clone subdir into the container,
-  // and nothing stops another launch resetting that tree while the game holds it.
-  // TODO(a session-long lock would serialize every launch): delete this when a clone is staged
-  // by copy, or by a read-lock a resetting writer has to wait on.
+  const wantsDashboard = dashboardFor({
+    plain: args.plain,
+    json: args.json,
+    quiet: args.quiet,
+    detach: args.detach,
+    asShell,
+    marker: plan.marker !== undefined,
+    mode: plan.mode,
+  })
+  await buildOnBoard(plan, buildPolicy(args, profileSpec), wantsDashboard)
+  // TODO(perf): drop when a clone is staged by copy, or behind a read-lock a resetting writer waits on
   await releaseSources()
   const { facts, imageStart } = await readyImage(plan, config, args, asShell)
 
   const modMounts = await stageMods(plan)
   await generateModsConfig(plan)
   await mergePrefs(plan)
+  const settingsBlocks = [...(profileSpec.modSettings ?? []), ...recordSettings(plan)]
+  for (const file of await writeModSettings(plan, settingsBlocks)) status(`wrote ${file}`)
   for (const warning of planWarnings(plan)) warn(warning)
 
   const spec = buildRunSpec(plan, modMounts, identity, imageStart)
@@ -425,21 +451,15 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
   }
   await writeLaunchRecord(plan, spec.image)
 
-  // wine's exit code is wineserver's, not the game's, so a proton container that dies on boot
-  // still exits 0. Only the marker can call a proton run a success.
   const trustExit = facts.launcher !== 'proton'
 
   try {
-    return await dispatchRun(spec, plan, runDir, trustExit, asShell)
+    return await dispatchRun(spec, plan, runDir, trustExit, asShell, wantsDashboard)
   } finally {
     await copyOutLogs(plan)
   }
 }
 
-/**
- * Acquire the image and clear every gate, before stageMods wipes anything. A bad image costs
- * a message this way, not a wiped stage tree.
- */
 async function readyImage(
   plan: LaunchPlan,
   config: RootConfig,
@@ -451,7 +471,6 @@ async function readyImage(
   try {
     await acquireImage(game, config.games[game]!, args.pull ?? 'missing')
   } catch (error) {
-    // acquireImage only knows docker failed. imageProblem knows steam build is how you get one
     const absent = imageProblem({ game, ref, mode: plan.mode, facts: await readImageFacts(ref) })
     if (absent === null) throw error
     throw new GamecrateError(absent.message, Exit.Environment, absent.suggestion)
@@ -462,10 +481,7 @@ async function readyImage(
   if (problem !== null) {
     throw new GamecrateError(problem.message, Exit.Environment, problem.suggestion)
   }
-  // a shell replaces the command with bash, so neither gate below applies to it
   const imageStart = asShell ? undefined : imageLaunch(facts)
-  // mode first: headed is the default, so a marker-first order asks for a flag you then have to
-  // keep while you fix the real problem
   refuseProtonHeaded(game, plan.mode, imageStart)
   const needsMarker = asShell ? null : markerProblem({ game, facts, marker: plan.marker })
   if (needsMarker !== null) {
@@ -474,10 +490,6 @@ async function readyImage(
   return { facts, imageStart }
 }
 
-/**
- * A rebuild is gigabytes, so it needs a person saying yes. Anything without a terminal warns
- * and launches on the old image instead of blocking forever on a prompt nobody can answer.
- */
 async function rebuiltForUpdate(plan: LaunchPlan, config: RootConfig, args: ParsedArgs): Promise<boolean> {
   const facts = await readImageFacts(config.games[plan.game]!.image.ref)
   let rebuilt = false
@@ -510,23 +522,18 @@ async function rebuiltForUpdate(plan: LaunchPlan, config: RootConfig, args: Pars
   return rebuilt
 }
 
-/**
- * Which runner ends the container. Every branch hands it to runContainer, which owns
- * SIGINT and SIGTERM: it stops the container, returns 130, and still flushes the log.
- */
 async function dispatchRun(
   spec: DockerRunSpec,
   plan: LaunchPlan,
   runDir: string,
   trustExit: boolean,
   asShell: boolean,
+  wantsDashboard = false,
 ): Promise<LaunchResult> {
   if (plan.marker !== undefined && !asShell) return await runWithMarker(spec, plan, runDir, trustExit)
   if (plan.mode === 'screenshot' && !asShell) return await runWithScreenshot(spec, plan, runDir, trustExit)
-  // an offscreen run has nobody to close the window, so --timeout is the only thing that ends it
   if (plan.mode !== 'headed' && !asShell) return await runBounded(spec, plan, runDir, trustExit)
 
-  // only X11 lets us touch the window from out here; a wayland client owns its own caption
   let windowClosed = false
   const window =
     asShell || plan.settings.display !== 'x11'
@@ -541,20 +548,71 @@ async function dispatchRun(
             void stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
           },
         })
+  let session: Session | undefined
   try {
-    const code = await runContainer(spec, { logDir: runDir, stopTimeoutSeconds: STOP_TIMEOUT_SECONDS })
+    session = wantsDashboard ? openSession(spec, plan) : undefined
+    const code = await runContainer(spec, {
+      logDir: runDir,
+      stopTimeoutSeconds: STOP_TIMEOUT_SECONDS,
+      ...(session === undefined ? {} : { stdin: 'ignore' as const }),
+    })
+    session?.setPhase(`exited ${code}`)
+    if (session !== undefined && code !== 0 && !windowClosed && !session.quitRequested) {
+      await session.waitForQuit()
+    }
     if (windowClosed) return { code: Exit.Ok, reason: 'window-closed' }
-    // asShell lands here too, and bash's code is its own, so this path keeps the raw code
     return { code: normalize(code), reason: reasonFor(code) }
   } finally {
+    session?.close()
     window?.stop()
   }
 }
 
-/**
- * Where a marker can appear. An engine may route its own log away from stdout, and a
- * copy-out dir is bind-mounted, so both are readable live.
- */
+function modCounts(plan: LaunchPlan): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const mod of plan.mods) counts[mod.kind] = (counts[mod.kind] ?? 0) + 1
+  return counts
+}
+
+function recordDir(plan: LaunchPlan): string | undefined {
+  const records = plan.gameConfig.records
+  if (records === undefined) return undefined
+  const writers = new Set(records.mods.map((id) => id.toLowerCase()))
+  if (!plan.mods.some((mod) => writers.has(mod.packageId.toLowerCase()))) return undefined
+  return join(plan.configDirHost, records.dir)
+}
+
+function probeArgs(argv: string[]): ParsedArgs | undefined {
+  try {
+    return parseArgs(argv)
+  } catch {
+    return undefined
+  }
+}
+
+function recordSettings(plan: LaunchPlan): ModSettingsFile[] {
+  const enable = plan.gameConfig.records?.enable
+  if (enable === undefined || recordDir(plan) === undefined) return []
+  return [enable]
+}
+
+function openSession(spec: DockerRunSpec, plan: LaunchPlan): Session {
+  const dir = recordDir(plan)
+  const session = startSession({
+    identity: {
+      game: plan.game,
+      profile: plan.profile,
+      container: spec.name,
+      mode: plan.mode,
+      mods: modCounts(plan),
+    },
+    container: spec.name,
+    onStop: () => void stopContainer(spec.name, STOP_TIMEOUT_SECONDS),
+    ...(dir === undefined ? {} : { recordDir: dir }),
+  })
+  return session
+}
+
 function markerSources(plan: LaunchPlan, logDir: string): string[] {
   const sources = [join(logDir, STDOUT_LOG)]
   const { logFile } = plan.gameConfig
@@ -563,7 +621,6 @@ function markerSources(plan: LaunchPlan, logDir: string): string[] {
   return sources
 }
 
-/** Offscreen run with no marker: the deadline is the only thing that can end it. */
 async function runBounded(
   spec: DockerRunSpec,
   plan: LaunchPlan,
@@ -583,7 +640,6 @@ async function runBounded(
   return { code: Exit.Ok, reason: 'timeout' }
 }
 
-/** Waits for the game to render, grabs one frame, then stops the container. */
 async function runWithScreenshot(
   spec: DockerRunSpec,
   plan: LaunchPlan,
@@ -605,7 +661,6 @@ async function runWithScreenshot(
   const shot = await grabFrame(spec.name, plan)
   await stopContainer(spec.name, STOP_TIMEOUT_SECONDS)
   await container
-  // we stopped it right after the grab, so this is never a crash, even when the grab failed.
   return { code: shot === null ? Exit.Environment : Exit.Ok, reason: 'stopped' }
 }
 
@@ -615,10 +670,8 @@ async function grabFrame(container: string, plan: LaunchPlan): Promise<string | 
   else status(`screenshot: ${path}`)
   return path
 }
-/** How long a dead container waits for the marker watch to catch up on its last poll. */
 const MARKER_GRACE_MS = 1000
 
-/** The marker races the container; whichever finishes first decides the exit code. */
 async function runWithMarker(
   spec: DockerRunSpec,
   plan: LaunchPlan,
@@ -641,15 +694,12 @@ async function runWithMarker(
   ])
   if (winner.kind === 'exit') {
     if (trustExit || winner.code === Exit.Interrupted) return exitResult(winner.code, trustExit)
-    // the watch polls, so a marker written right before the container died can still be unseen.
     const hit = await Promise.race([seen, sleep(MARKER_GRACE_MS).then(() => false)])
     if (hit) {
       status(`marker seen: ${marker}`)
       return { code: Exit.Ok, reason: 'marker' }
     }
     status(`container exited before the marker "${marker}" appeared`)
-    // waited === false is the watch's full timeout elapsing; undefined means it is still
-    // polling, so the container stopped first and that is the game failing.
     return waited === false
       ? { code: Exit.MarkerTimeout, reason: 'marker-timeout' }
       : { code: Exit.GameFailed, reason: 'exited' }
@@ -666,7 +716,6 @@ async function runWithMarker(
   return { code: Exit.MarkerTimeout, reason: 'marker-timeout' }
 }
 
-/** An untrusted exit code can only mean failure: under proton a 0 says wineserver drained. */
 function exitResult(code: number, trustExit: boolean): LaunchResult {
   if (trustExit || code === Exit.Interrupted) {
     return { code: normalize(code), reason: reasonFor(code) }
@@ -678,7 +727,6 @@ function normalize(code: number): number {
   return Number.isInteger(code) && code >= 0 && code <= 255 ? code : Exit.GameFailed
 }
 
-/** A copy-out game writes logs under its own data root with no flag, so they move after. */
 async function copyOutLogs(plan: LaunchPlan): Promise<void> {
   const spec = plan.gameConfig.logFile
   if (spec.mode !== 'copy-out') return
@@ -692,7 +740,6 @@ async function copyOutLogs(plan: LaunchPlan): Promise<void> {
   }
 }
 
-
 async function mods(
   args: ParsedArgs,
   config: RootConfig,
@@ -702,7 +749,6 @@ async function mods(
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
-  // listing never downloads, so an id a launch would fetch comes back as unfetched, not missing.
   const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game), sources)
   for (const warning of workshop.warnings) warn(warning)
   const index = await buildIndex(
@@ -719,14 +765,8 @@ async function mods(
   return Exit.Ok
 }
 
-/**
- * doctor resolves the modless profile, so no workshop ref reaches the plan. Read the config
- * instead, so a config with no workshop mods never gets a steamcmd check.
- */
 function usesWorkshop(game: GameConfig): boolean {
   if (Object.values(game.library ?? {}).some((entry) => entry.workshop !== undefined)) return true
-  // preCore, core, dlc and base reach a launch too, so a workshop ref parked in one of them
-  // needs steamcmd just as much as one named in a profile
   const slots = [...(game.preCore ?? []), game.core, ...game.dlc, ...(game.base ?? [])]
   if (slots.some((ref) => ref.startsWith('workshop:'))) return true
   return Object.values(game.profiles).some((profile) => (profile.mods ?? []).some(isWorkshopEntry))
@@ -743,35 +783,28 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
   return `${runner.argv[0]} (${where})`
 }
 
-/**
- * The image a launch from here would bind. Without this a csproj references one build while
- * the container runs another, which is the disagreement refs exists to stop.
- */
 function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
   const base = config.games[game]!
   const ref = args.image ?? imageFor(base, launchProfile(args, defaults, base))
   return withImageOverride(base, ref)
 }
 
-/** The path alone on stdout, so an MSBuild Exec can capture it without stripping anything. */
 async function refs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
   const found = await extractRefs(game, gameForImage(args, config, defaults, game))
   if (args.json) {
-    process.stdout.write(`${JSON.stringify(found, null, 2)}\n`)
+    emit('data', `${JSON.stringify(found, null, 2)}\n`)
     return Exit.Ok
   }
   status(`${found.count} assemblies from ${found.source} at ${found.digest}`)
   status(`stable path: ${found.link}`)
-  process.stdout.write(`${found.dir}\n`)
+  emit('data', `${found.dir}\n`)
   return Exit.Ok
 }
 
 async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Promise<number> {
   let failed = false
   for (const game of Object.keys(config.games)) {
-    // same map mods and verify get: without it doctor drops a pin's subdir and can name the
-    // wrong directory of a repinned clone.
     const gameConfig = config.games[game]!
     const sources = cachedSources(gameConfig, 'modless', {}, config.dataRoot)
     const { plan, problems } = await resolvePlan({ game, profile: 'modless', root: config, plugins, sources })
@@ -786,19 +819,14 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
   return failed ? Exit.Environment : Exit.Ok
 }
 
-/**
- * An image carries the base digest it was appended onto. Nothing compares it, so an image built
- * on an older base fails later as a missing entrypoint with no hint of why.
- */
 async function baseDriftProblems(game: string, gameConfig: GameConfig): Promise<Problem[]> {
   const ref = gameConfig.image.ref
   if (ref.trim() === '') return []
   const facts = await readImageFacts(ref)
   if (!facts.present || facts.runtime === null) return []
 
-  const base = RUNTIME_BASE[facts.launcher === 'proton' ? 'proton' : 'xvfb']
+  const base = RUNTIME_BASE[facts.launcher === 'proton' ? 'windows' : 'linux']
   const current = await repoDigest(base)
-  // no local copy of the base is nothing to compare against, not a problem
   if (current === null) return []
   if (facts.runtime.endsWith(current)) return []
 
@@ -806,7 +834,7 @@ async function baseDriftProblems(game: string, gameConfig: GameConfig): Promise<
     {
       where: `/games/${game}/image/ref`,
       message: `${ref} was built on an older ${base}`,
-      suggestion: `gamecrate steam build ${game} to rebuild it on the base you have`,
+      suggestion: `gamecrate steam build --game ${game} to rebuild it on the base you have`,
     },
   ]
 }
@@ -828,7 +856,6 @@ function steamcmdProblems(game: string, gameConfig: GameConfig, config: RootConf
   return problems
 }
 
-/** False once the game has something to fix, which is what makes doctor exit non-zero. */
 function reportDoctor(game: string, all: Problem[]): boolean {
   if (all.length === 0) {
     status(`${game}: ok`)
@@ -836,8 +863,8 @@ function reportDoctor(game: string, all: Problem[]): boolean {
   }
   status(`${game}: ${all.length} problem(s)`)
   for (const problem of all) {
-    process.stderr.write(`  ${problem.where}\n    ${problem.message}\n`)
-    if (problem.suggestion) process.stderr.write(`      try: ${problem.suggestion}\n`)
+    emit('status', `  ${problem.where}\n    ${problem.message}\n`)
+    if (problem.suggestion) emit('status', `      try: ${problem.suggestion}\n`)
   }
   return false
 }
@@ -852,7 +879,7 @@ async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefau
   const latest = (await readdir(runs, { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort()
+    .sort((a, b) => Number(a > b) - Number(a < b))
     .at(-1)
   if (latest === undefined) {
     throw new GamecrateError(`no runs recorded for ${game} ${profile}`, Exit.Usage, runs)
@@ -862,10 +889,10 @@ async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefau
   const files = (await readdir(runDir, { withFileTypes: true }))
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
-    .sort()
+    .sort((a, b) => Number(a > b) - Number(a < b))
 
   if (args.json) {
-    process.stdout.write(`${JSON.stringify({ run: latest, dir: runDir, files }, null, 2)}\n`)
+    emit('data', `${JSON.stringify({ run: latest, dir: runDir, files }, null, 2)}\n`)
     return Exit.Ok
   }
 
@@ -873,7 +900,7 @@ async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefau
   for (const name of files) {
     const text = await readFile(join(runDir, name), 'utf8').catch(() => '')
     for (const line of text.split('\n')) {
-      if (line.length > 0) process.stdout.write(`${name}: ${line}\n`)
+      if (line.length > 0) emit('data', `${name}: ${line}\n`)
     }
   }
   return Exit.Ok
@@ -931,10 +958,6 @@ function boundStatus(mod: BoundMod): string {
   return mod.hasSources ? 'STALE - never built' : '(xml only)'
 }
 
-/**
- * What the container is running right now, read off its own mounts. A green build proves the
- * compiler ran somewhere, not that it wrote into the directory this container bound.
- */
 async function verify(
   args: ParsedArgs,
   config: RootConfig,
@@ -957,7 +980,6 @@ async function verify(
     )
   }
 
-  // Per-mod binds are one level under the mods dir; the staged tree itself is the parent.
   const prefix = `${plan.gameConfig.modsDir.container}/`
   const bound = info.mounts
     .filter((m) => m.destination.startsWith(prefix))
@@ -999,11 +1021,11 @@ async function verify(
         ...(mod.report === null ? {} : { report: mod.report }),
       })),
     }
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+    emit('data', `${JSON.stringify(payload, null, 2)}\n`)
     return stale.length > 0 ? Exit.Stale : Exit.Ok
   }
 
-  process.stdout.write(`${renderVerify(name, info, plan, boundMods)}\n`)
+  emit('data', `${renderVerify(name, info, plan, boundMods)}\n`)
   return stale.length > 0 ? Exit.Stale : Exit.Ok
 }
 
@@ -1047,7 +1069,6 @@ function shortenHome(path: string): string {
   return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
 }
 
-/** Tiered on purpose: the default tier can never reach a save. */
 async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults)
@@ -1056,14 +1077,12 @@ async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
   const tier = args.cleanTier ?? 'staging'
   const saveSuffixes = config.games[game]!.saveExtensions.map((ext) => `.${ext.replace(/^\./, '')}`.toLowerCase())
 
-  // Downloads belong to the game, not one profile: every profile of it reads the same tree.
   const downloads = downloadRoot(config.dataRoot, config.games[game]!)
   if (tier === 'downloads') {
     status(await removeDownloads(downloads, config.games[game]!.steamAppId))
     return Exit.Ok
   }
 
-  // The cheap tiers belong to one instance; --all takes the profile and every instance with it.
   if (tier !== 'all') {
     const target = join(instanceDir(args, config, game, profile), tier === 'logs' ? 'logs' : '.stage')
     await rm(target, { recursive: true, force: true })
@@ -1085,7 +1104,6 @@ async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
   return Exit.Ok
 }
 
-
 async function countSaves(dir: string, suffixes: string[]): Promise<number> {
   let count = 0
   const queue = [dir]
@@ -1105,12 +1123,14 @@ async function countSaves(dir: string, suffixes: string[]): Promise<number> {
   return count
 }
 
-/** `cp -a --reflink=auto`: on btrfs the precious tier copies in constant time. */
 async function clone(args: ParsedArgs, config: RootConfig): Promise<number> {
   const game = requireGame(args, config)
   const [src, dst] = args.rest
   if (src === undefined || dst === undefined) {
     throw new GamecrateError('clone needs a source and a destination profile', Exit.Usage)
+  }
+  for (const name of [src, dst]) {
+    if (!NAME_PATTERN.test(name)) throw new GamecrateError(`${name} is not a valid profile name`, Exit.Usage)
   }
 
   const from = join(profileDataDir(config, game, src), 'game')
@@ -1130,7 +1150,7 @@ async function clone(args: ParsedArgs, config: RootConfig): Promise<number> {
 async function ps(args: ParsedArgs, config: RootConfig): Promise<number> {
   const runs = await listRuns(config.dataRoot)
   if (args.json) {
-    process.stdout.write(`${JSON.stringify(runs, null, 2)}\n`)
+    emit('data', `${JSON.stringify(runs, null, 2)}\n`)
     return Exit.Ok
   }
   if (runs.length === 0) {
@@ -1147,7 +1167,7 @@ async function ps(args: ParsedArgs, config: RootConfig): Promise<number> {
   ])
   const widths = rows[0]!.map((_, i) => Math.max(...rows.map((row) => row[i]!.length)))
   for (const row of rows) {
-    process.stdout.write(`${row.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd()}\n`)
+    emit('data', `${row.map((cell, i) => cell.padEnd(widths[i]!)).join('  ').trimEnd()}\n`)
   }
   if (runs.some((entry) => entry.status === 'orphaned')) {
     warn('some locks have no container; run gamecrate stop to clear them')
@@ -1175,8 +1195,6 @@ async function stop(
     warn(`pid ${record.pid} still holds ${file}; ${record.container} did not stop in time`)
     return Exit.Refused
   }
-  // the orphan path stopped a container nobody was supervising, which is not the same as
-  // ending a live run and should not read like one
   status(outcome === 'signalled' ? `stopped ${record.container}` : `cleared the stale lock for ${record.container}`)
   return Exit.Ok
 }
@@ -1191,10 +1209,6 @@ async function attach(
   return await follow(instanceDir(args, config, game, profile), true, `${game} ${profile}`)
 }
 
-/**
- * One follower for attach and logs -f; they differ only in where they start reading. A live
- * holder is waited on first, because `current` lags the lock by however long staging takes.
- */
 async function follow(dir: string, fromStart: boolean, what: string): Promise<number> {
   const lock = await readLock(join(dir, '.gamecrate', 'lock'))
   const held = lock !== undefined && isRunning(lock.pid, lock.startedAt)
@@ -1221,14 +1235,14 @@ async function waitFor(
     throw new GamecrateError(
       `${game} ${profile}: the lock holder is gone and recorded no exit`,
       Exit.Refused,
-      `run: gamecrate stop ${game} ${profile}`,
+      `run: gamecrate stop ${profile}`,
     )
   }
   if (record === 'absent') {
     throw new GamecrateError(`no run recorded for ${game} ${profile}`, Exit.Usage, dir)
   }
 
-  if (args.json) process.stdout.write(`${JSON.stringify(record)}\n`)
+  if (args.json) emit('data', `${JSON.stringify(record)}\n`)
   else status(`${game} ${profile}: ${record.reason} (${record.code})`)
   return record.code
 }
@@ -1241,11 +1255,9 @@ async function build(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
   return Exit.Ok
 }
 
-async function configEdit(args: ParsedArgs): Promise<number> {
-  if (args.rest[0] !== 'edit') throw new GamecrateError('config takes one word: edit', Exit.Usage)
-
+async function configEdit(): Promise<number> {
   const existing = await findGlobalConfig()
-  const path = existing ?? join(globalConfigDir(), 'profiles.yml')
+  const path = existing ?? join(globalConfigDir(), 'config.yml')
   await mkdir(dirname(path), { recursive: true })
   if (!existsSync(path)) {
     await writeFile(
@@ -1265,11 +1277,6 @@ async function configEdit(args: ParsedArgs): Promise<number> {
   return Exit.Ok
 }
 
-/** Never silently chowns: it reports what it found and only acts under --yes. */
-/**
- * chown of a foreign-owned path needs root either way, so an empty directory whose parent we
- * own is recovered by removing it: the next launch recreates it as the caller.
- */
 async function repairOwnership(
   found: string[],
   identity: Identity,
@@ -1277,7 +1284,7 @@ async function repairOwnership(
   let fixed = 0
   const stuck: string[] = []
   for (const path of found) {
-    const chowned = await chown(path, identity.uid, identity.gid).then(
+    const chowned = await lchown(path, identity.uid, identity.gid).then(
       () => true,
       () => false,
     )
@@ -1309,7 +1316,7 @@ async function fixPerms(args: ParsedArgs, config: RootConfig): Promise<number> {
     return Exit.Ok
   }
   if (args.dryRun || !args.yes) {
-    for (const path of found) process.stdout.write(`would chown ${identity.uid}:${identity.gid} ${path}\n`)
+    for (const path of found) emit('data', `would chown ${identity.uid}:${identity.gid} ${path}\n`)
     status(`${found.length} foreign-owned path(s); re-run with --yes to chown them`)
     return Exit.Environment
   }
@@ -1327,10 +1334,9 @@ async function fixPerms(args: ParsedArgs, config: RootConfig): Promise<number> {
   return Exit.Ok
 }
 
-/** Removing needs write on the parent, not ownership of the directory itself. */
 async function removeIfEmptyDir(path: string): Promise<boolean> {
   const info = await stat(path).catch(() => null)
-  if (info === null || !info.isDirectory()) return false
+  if (!info?.isDirectory()) return false
   const entries = await readdir(path).catch((): string[] | null => null)
   if (entries === null || entries.length > 0) return false
   // fs.rm on a directory needs recursive:true; rmdir is the one that removes an empty dir.
@@ -1349,20 +1355,18 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** Prints a failure and returns its exit code. Shared, so --log and the bare path agree. */
 function reportFatal(error: unknown): number {
   if (error instanceof GamecrateError) {
-    process.stderr.write(`gamecrate: ${error.message}\n`)
-    if (error.detail) process.stderr.write(`${error.detail}\n`)
+    emit('status', `gamecrate: ${error.message}\n`)
+    if (error.detail) emit('status', `${error.detail}\n`)
     return error.code
   }
-  process.stderr.write(`gamecrate: ${describe(error)}\n`)
+  emit('status', `gamecrate: ${describe(error)}\n`)
   return Exit.GameFailed
 }
 
 try {
   process.exit(await main(process.argv.slice(2)))
 } catch (error) {
-  // Only reachable for failures before dispatch: arg parsing and config loading.
   process.exit(reportFatal(error))
 }

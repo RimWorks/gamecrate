@@ -12,7 +12,6 @@ function isSpace(c: string): boolean {
   return c === ' ' || c === '\t' || c === '\r' || c === '\n'
 }
 
-/** Advances past whitespace and `//` comments. */
 function skip(text: string, start: number): number {
   let i = start
   for (;;) {
@@ -24,16 +23,15 @@ function skip(text: string, start: number): number {
   }
 }
 
-/** Reads the quoted string at `start`. Null when it never closes. */
 function quoted(text: string, start: number): { value: string; next: number } | null {
   let out = ''
   let i = start + 1
   while (i < text.length) {
     const c = text[i]!
     if (c === '\\') {
-      // Only `\\` and `\"` are real escapes; anything else passes through as itself.
       if (i + 1 >= text.length) return null
-      out += text[i + 1]!
+      const escaped = text[i + 1]!
+      out += escaped === '\\' || escaped === '"' ? escaped : `\\${escaped}`
       i += 2
       continue
     }
@@ -44,7 +42,6 @@ function quoted(text: string, start: number): { value: string; next: number } | 
   return null
 }
 
-/** The root: entries until EOF. A close brace out here is malformed, same as anywhere else. */
 function root(text: string): AcfNode | null {
   const node: AcfNode = {}
   let i = skip(text, 0)
@@ -57,7 +54,6 @@ function root(text: string): AcfNode | null {
   return node
 }
 
-/** A nested block, ended by its own close brace. Running out of text is an unterminated one. */
 function block(text: string, start: number, depth: number): { node: AcfNode; next: number } | null {
   if (depth > MAX_DEPTH) return null
   const node: AcfNode = {}
@@ -72,7 +68,6 @@ function block(text: string, start: number, depth: number): { node: AcfNode; nex
   return null
 }
 
-/** Reads one `"key" "value"` or `"key" { ... }` into node. Returns the index after it. */
 function readEntry(text: string, start: number, depth: number, node: AcfNode): number | null {
   const key = quoted(text, start)
   if (key === null) return null
@@ -98,7 +93,6 @@ export function parseAcf(text: string): AcfNode {
   return root(text) ?? {}
 }
 
-/** Finds a section on the root itself or on one of its direct children. */
 function section(node: AcfNode, name: string): AcfNode | undefined {
   const direct = node[name]
   if (typeof direct === 'object') return direct

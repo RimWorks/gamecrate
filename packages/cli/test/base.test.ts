@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { RUNTIME_BASE, resolveBase } from '../src/image/base'
+import { applyDefaultImage } from '../src/config/builtin'
 import type { BaseKind } from '../src/image/base'
 import { Exit, GamecrateError } from '../src/types'
 
@@ -13,13 +14,13 @@ describe('resolveBase', () => {
   })
 
   test('a known kind resolves to its pinned tag', () => {
-    expect(resolveBase('xvfb')).toBe(RUNTIME_BASE.xvfb)
-    expect(resolveBase('proton')).toBe(RUNTIME_BASE.proton)
+    expect(resolveBase('linux')).toBe(RUNTIME_BASE.linux)
+    expect(resolveBase('windows')).toBe(RUNTIME_BASE.windows)
   })
 
   test('an override replaces the pin', () => {
     const ref = 'ghcr.io/example/base@sha256:abc'
-    expect(resolveBase('proton', ref)).toBe(ref)
+    expect(resolveBase('windows', ref)).toBe(ref)
   })
 
   test('an unknown kind is a config error that lists the real ones', () => {
@@ -32,18 +33,44 @@ describe('resolveBase', () => {
     expect(error).toBeInstanceOf(GamecrateError)
     expect((error as GamecrateError).code).toBe(Exit.Config)
     expect((error as GamecrateError).message).toContain('wayland')
-    expect((error as GamecrateError).detail).toContain('xvfb')
-    expect((error as GamecrateError).detail).toContain('proton')
+    expect((error as GamecrateError).detail).toContain('linux')
+    expect((error as GamecrateError).detail).toContain('windows')
     expect((error as GamecrateError).detail).toContain('none')
   })
 })
 
 describe('RUNTIME_BASE', () => {
-  // a major tag, so an apt fix reaches a released cli. never latest: that lets a breaking
-  // base change reach one too, and never a digest, which needs a release per rebuild
   test('every pin is a major tag on the gamecrate ghcr path', () => {
     for (const ref of Object.values(RUNTIME_BASE)) {
       expect(ref).toMatch(/^ghcr\.io\/rimworks\/gamecrate\/[a-z-]+:[0-9]+$/)
     }
+  })
+})
+
+describe('applyDefaultImage', () => {
+  function game(extra: Record<string, unknown>): Record<string, unknown> {
+    return { games: { atlas: { gameFiles: { container: '/game' }, ...extra } } }
+  }
+
+  test('a mounted install gets the published linux runtime', () => {
+    const out = applyDefaultImage(game({ gameFiles: { source: 'mount', host: '/games/atlas' } })) as {
+      games: { atlas: { image: { ref: string; acquire: string } } }
+    }
+    expect(out.games.atlas.image.ref).toBe(RUNTIME_BASE.linux)
+    expect(out.games.atlas.image.acquire).toBe('pull')
+  })
+
+  test('an image that carries the game gets no default, since no ref can stand in', () => {
+    const out = applyDefaultImage(game({ gameFiles: { source: 'image' } })) as {
+      games: { atlas: { image?: unknown } }
+    }
+    expect(out.games.atlas.image).toBeUndefined()
+  })
+
+  test('a ref already written is left alone', () => {
+    const out = applyDefaultImage(
+      game({ gameFiles: { source: 'mount', host: '/x' }, image: { ref: 'mine:1', acquire: 'pull' } }),
+    ) as { games: { atlas: { image: { ref: string } } } }
+    expect(out.games.atlas.image.ref).toBe('mine:1')
   })
 })

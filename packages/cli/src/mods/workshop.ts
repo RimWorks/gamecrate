@@ -17,10 +17,6 @@ import type {
   RootConfig,
 } from '../types'
 
-/**
- * A workshop item can depend on another workshop item, so one pass is never enough. Five rounds
- * clears every real chain measured so far and bounds a broken or hostile one.
- */
 const ROUNDS = 5
 
 export interface PreparedWorkshop {
@@ -51,8 +47,6 @@ export async function prepareWorkshop(
   const problems: Problem[] = []
 
   const profile = resolveProfile(game, profileName)
-  // a mod you pin yourself declares workshop dependencies too, and that is the whole point of a
-  // dev profile: the local mod is the thing under test, and HugsLib is what it needs to boot
   const seeded = await localSeeds(game, profile, args, sources, plugin, problems)
   let frontier = [...new Set([...wantedIds(game, profile, args), ...seeded])]
   for (let round = 0; round < ROUNDS && frontier.length > 0; round++) {
@@ -71,7 +65,6 @@ export async function prepareWorkshop(
   return { ids, warnings, problems, unfetched: [...ids].filter((id) => itemDir(roots, id) === undefined) }
 }
 
-/** Downloads whatever this round is missing. Returns warnings; it never throws. */
 async function fetchRound(
   config: RootConfig,
   game: GameConfig,
@@ -83,13 +76,10 @@ async function fetchRound(
     const downloaded = await downloadItems(config, game, config.dataRoot, drift.needed)
     return [...drift.warnings, ...downloaded.warnings]
   } catch (error) {
-    // a launch downloads on the side, so no downloader is a warning here. what is missing
-    // comes back through unfetched. `mods add` and `mods sync` still throw.
     return [`could not download workshop items: ${error instanceof Error ? error.message : String(error)}`]
   }
 }
 
-/** The workshop ids this round's manifests name, minus everything already walked. */
 async function dependenciesOf(
   frontier: string[],
   seen: Set<string>,
@@ -109,11 +99,6 @@ async function dependenciesOf(
   return [...next]
 }
 
-/**
- * The roots a launch actually mounts, in the order buildIndex scans them: the download root
- * first, then the steam client's own tree. A copy the user is subscribed to counts as on
- * disk, so it neither downloads again nor reports unfetched.
- */
 function mountedRoots(dataRoot: string, game: GameConfig): string[] {
   return [downloadRoot(dataRoot, game), ...(game.workshopRoot === null ? [] : [game.workshopRoot])]
 }
@@ -122,8 +107,6 @@ function itemDir(roots: string[], id: string): string | undefined {
   return roots.map((root) => join(root, id)).find((dir) => existsSync(dir))
 }
 
-// a directory with no manifest is not a mod, the same call scanWorkshopRoot makes. a manifest that
-// throws is a broken file and worth reporting, which is what parseAll does with one.
 async function manifestOf(
   roots: string[],
   id: string,
@@ -151,7 +134,6 @@ async function manifestAt(
   }
 }
 
-/** Workshop ids the profile's own path- and git-pinned mods declare as dependencies. */
 async function localSeeds(
   game: GameConfig,
   profile: ProfileConfig,
@@ -171,7 +153,6 @@ async function localSeeds(
   return [...out]
 }
 
-// `sources` is keyed by lowercased packageId, the map prepareSources hands resolvePlan
 function localDirs(
   game: GameConfig,
   profile: ProfileConfig,
@@ -186,7 +167,6 @@ function localDirs(
   return [...out]
 }
 
-/** Where one entry's own files sit, or undefined when it is not pinned locally. */
 function localDirOf(
   entry: ModEntry,
   game: GameConfig,
@@ -198,8 +178,6 @@ function localDirOf(
   if (object.id.includes(':')) return undefined
   const pin = libraryPin(game, object.id)
   const clone = sources.get(object.id.toLowerCase())
-  // the map holds clone roots, and a pin's subdir sits under one. refFor joins it the same
-  // way, and without it the manifest is looked for in the wrong directory
   if (clone !== undefined) return pin?.subdir === undefined ? clone : join(clone, pin.subdir)
   return pin?.path === undefined ? undefined : resolvePath(expandHome(pin.path))
 }
@@ -213,7 +191,6 @@ function wantedIds(game: GameConfig, profile: ProfileConfig, args: Partial<Parse
   return [...out]
 }
 
-/** The published file id an entry names, resolving library pins in the order `refFor` does. */
 function workshopIdOf(entry: ModEntry, game: GameConfig): string | undefined {
   if (typeof entry !== 'string' && 'match' in entry) return undefined
   const object = typeof entry === 'string' ? { id: entry } : entry
@@ -226,7 +203,6 @@ function workshopIdOf(entry: ModEntry, game: GameConfig): string | undefined {
   return pin?.workshop === undefined ? undefined : published(String(pin.workshop))
 }
 
-// a `workshop:` ref is user text, and steamcmd takes anything handed to it
 function published(value: string): string | undefined {
   return /^\d+$/.test(value) ? value : undefined
 }

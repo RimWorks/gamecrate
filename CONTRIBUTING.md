@@ -50,7 +50,7 @@ npm test                                   # bun test, both packages
 bun test packages/cli/test/args.test.ts    # one file
 npm run lint                               # oxlint
 npm run typecheck                          # tsc --noEmit, both packages
-vale README.md packages/*/README.md        # prose, after one vale sync
+vale README.md packages/*/README.md packages/cli/docs   # prose, after one vale sync
 ```
 
 - Run the full suite before committing. All tests must pass.
@@ -88,11 +88,13 @@ only makes one lag behind does not count. Bump it, and say why in the commit.
 
 Two resolver details exist because the compiled binary behaves differently from Node:
 
-- `entryOf` reads the target's own `package.json`. Bun's resolver never reads it inside a
-  compiled binary, so it would otherwise find only `index.js`.
-- `packageDir` walks `node_modules` upward by hand. `require.resolve` refuses
-  `<pkg>/package.json` once a package has an exports map, and that file is the only thing that
-  tells `entryOf` where to go.
+- `entryOf` in `src/plugin.ts` reads the target's own `package.json`. Bun's resolver never reads
+  it inside a compiled binary, so it would otherwise find only `index.js`.
+- `packageDir`, in the same file, resolves a bare name by hand rather than with
+  `require.resolve`, which refuses `<pkg>/package.json` once a package has an exports map. That
+  file is the only thing that tells `entryOf` where to go. It tries three places in order: up
+  from the config directory, up from the running executable, then `npm root -g`. A global
+  install is the normal one, so the second and third have to be there.
 
 ## Config
 
@@ -105,7 +107,8 @@ only what is theirs.
 is how you edit the wrong file for twenty minutes. A duplicate `profiles` key is refused for
 the same reason: it drops a profile and leaves source order a guess.
 
-`modless` is a reserved built-in profile, not a subcommand. It resolves to an empty mod set.
+`modless` is a reserved built-in profile, not a subcommand. It resolves to the core game plus
+its official DLC, and skips `preCore` and `base`.
 
 ## The launch pipeline
 
@@ -121,16 +124,18 @@ the same reason: it drops a profile and leaves source order a guess.
 **Staging never creates a symlink.** A host symlink into a mod checkout dangles inside the
 container, so the stage copies or binds instead.
 
-The staleness walk stops at `ENTRY_LIMIT` entries. A mod's `Textures` tree alone runs to five
+The staleness walk stops at `ENTRY_LIMIT` entries, set in `src/mods/staleness.ts`. A mod's `Textures` tree alone runs to five
 figures, so the cap has to clear it. A walk that stops before it reaches `Source/` reports
 "fresh" for a mod it never looked at.
 
-`gitDir !== gitCommonDir` is the exact linked-worktree test. One `git` spawn answers where the
-tree starts, whether it is linked, and what branch it is on.
+`gitDir !== gitCommonDir` is the exact linked-worktree test, in `src/mods/worktree.ts`. A
+primary checkout has its own `.git` directory, so the two are equal. A linked worktree's `.git`
+points back at the parent repository, so they differ. One `git` spawn answers where the tree
+starts, whether it is linked, and what branch it is on.
 
 ## Exit codes
 
-Every failure the tool raises deliberately carries one of these. Anything else is a bug.
+Every failure gamecrate raises itself exits with one of these. Anything else is a bug.
 
 | Code | Name | Means |
 | --- | --- | --- |
@@ -144,14 +149,16 @@ Every failure the tool raises deliberately carries one of these. Anything else i
 | `7` | `Refused` | This profile and instance already run. `--replace` is the way past it |
 | `8` | `Stale` | `verify` found a bound mod whose sources beat its assemblies |
 | `130` | `Interrupted` | SIGINT |
+| `128+n` | | A child died on signal `n`, so `137` is SIGKILL and `143` is SIGTERM |
 
-`--replace` returning `1` is normal when it stopped a previous container. Never read a piped
-exit code: `... | tail -3` returns tail's status, not the tool's.
+A container stopped by `--replace` returns `143`, not `1`. Never read a piped exit code:
+`... | tail -3` returns tail's status, not the tool's.
 
 ## Code style
 
 - Linter: oxlint, configured in `.oxlintrc.json`. Run it; do not hand-format.
-- Vale checks prose in `README.md` and both package READMEs. Run `vale sync` once first.
+- Vale checks prose in `README.md`, both package READMEs, and `packages/cli/docs`. Run
+  `vale sync` once first.
 - Follow the patterns already in neighboring files.
 - Do not add comments that restate the code.
 - Do not reformat code you are not otherwise changing.
@@ -165,7 +172,8 @@ exit code: `... | tail -3` returns tail's status, not the tool's.
 
 ## Other
 
-- A new subcommand means two edits: the entry in `SUBCOMMANDS` and its handler. The table
+- A new subcommand means two edits: the entry in `SUBCOMMANDS` in `src/cli/args.ts`, and its
+  handler. The table
   drives both parsing and help, so a handler with no row is unreachable.
 - `doctor` collects every precondition and reports them together. Add a new check there rather
   than failing late inside a launch.

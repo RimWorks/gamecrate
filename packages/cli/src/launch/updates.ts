@@ -25,7 +25,7 @@ export type SkipReason = 'disabled' | 'not-ours' | 'throttled'
 
 /**
  * An update check spends four seconds and needs a steam session, so it runs only for an image
- * gamecrate built, only when asked, and only once per window.
+ * gamecrate built, only once per window, and never when `check: false`.
  */
 export function shouldCheck(input: CheckInput): { check: boolean; reason?: SkipReason } {
   if (input.spec?.check === false) return { check: false, reason: 'disabled' }
@@ -39,7 +39,6 @@ export function shouldCheck(input: CheckInput): { check: boolean; reason?: SkipR
   return input.now >= due ? { check: true } : { check: false, reason: 'throttled' }
 }
 
-/** Keyed by image id, so a rebuilt image is never judged by the old one's answer. */
 function stampFile(imageId: string): string {
   const root = process.env['XDG_CACHE_HOME'] ?? join(homedir(), '.cache')
   return join(root, 'gamecrate', 'updates', `${imageId.replace(/[^A-Za-z0-9]/g, '-')}.json`)
@@ -62,14 +61,12 @@ export function recordCheck(imageId: string, now: number): void {
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, JSON.stringify({ at: now }))
   } catch {
-    // a stamp that cannot be written costs one repeated check, never a failed launch
   }
 }
 
 /**
  * The throttled staleness check a launch runs. Rebuilds the one cell this image came from,
- * after asking, because a rebuild is a multi-gigabyte download nobody asked for by typing a
- * game name.
+ * after asking.
  */
 export async function offerRebuild(input: {
   game: string
@@ -89,7 +86,6 @@ export async function offerRebuild(input: {
   const verdict = shouldCheck({ facts, spec, lastCheckedAt: lastCheckedAt(id), now })
   if (!verdict.check) return
 
-  // args.plugin is [] when the flag was never typed, and an empty list would resolve nothing
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const built = await resolveSteamBuildInput(game, config, { plugins }, input.cwd, input.configFile)
   const published = await publishedBuildId(config, built.steamAppId, facts.branch!)
@@ -100,7 +96,7 @@ export async function offerRebuild(input: {
   const cell = `${facts.branch!}/${facts.variant ?? 'default'}`
   warn(`${game} ${cell} is at build ${facts.buildid}, steam publishes ${published}`)
   if (!(await input.ask(`rebuild ${ref} now? this downloads the game again [y/N] `))) {
-    status(`keeping the current image. gamecrate steam build ${game} rebuilds it later`)
+    status(`keeping the current image. gamecrate steam build --game ${game} rebuilds it later`)
     return
   }
   await steamBuild(built, {
@@ -110,6 +106,6 @@ export async function offerRebuild(input: {
     platform: args.platform ?? 'linux/amd64',
     force: true,
     onlyBranches: [facts.branch!],
-    onlyVariants: facts.variant === null ? [] : [facts.variant],
+    onlyVariants: [facts.variant ?? built.variants[0]!.name],
   })
 }

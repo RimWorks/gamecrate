@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
-import { buildRunSpec, refuseProtonHeaded, toDockerArgs, windowTitle } from '../src/docker/spec'
+import { buildRunSpec, driNodes, gpuPassthrough, refuseProtonHeaded, renderGroups, toDockerArgs, windowTitle } from '../src/docker/spec'
 import { iconProperty } from '../src/docker/icon'
 import { resolveIdentity } from '../src/docker/identity'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { capture, waitForMarker } from '../src/docker/run'
+import { capture, exited, runContainer, spawnArgv, waitForMarker } from '../src/docker/run'
 import { isPeerClaim, newMatches, parseAtoms, parseWindowPid } from '../src/docker/window'
 import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { deadPid } from './pids'
@@ -114,7 +114,6 @@ function plan(
   }
 }
 
-/** Every value that follows an occurrence of `flag`. */
 function valuesOf(args: string[], flag: string): string[] {
   const found: string[] = []
   for (let i = 0; i < args.length; i++) if (args[i] === flag) found.push(args[i + 1] ?? '')
@@ -158,7 +157,6 @@ describe('buildRunSpec: invariants', () => {
     ])
   })
 
-  // Two instances of one profile run side by side, so nothing here may collide.
   test('an instance gets its own container name, label and mounts', () => {
     const scoped = toDockerArgs(
       buildRunSpec(plan('atlas', atlas, {}, 'headless', 'wt-a'), [], identity),
@@ -201,7 +199,6 @@ describe('buildRunSpec: invariants', () => {
   })
 
   test('headed: the executable becomes --entrypoint; the image is followed only by its args', () => {
-    // The image ENTRYPOINT is ["/bin/bash"], which would run the ELF as a shell script.
     const headed = toDockerArgs(buildRunSpec(plan('atlas', atlas, {}, 'headed'), [], identity))
     const entry = headed.indexOf('--entrypoint')
     expect(entry).toBeGreaterThan(0)
@@ -213,7 +210,6 @@ describe('buildRunSpec: invariants', () => {
   })
 
   test('offscreen: xvfb-run is the entrypoint and the game becomes its argument', () => {
-    // Nothing else starts an X server, so running the binary directly dies at GLFW/Unity init.
     const entry = args.indexOf('--entrypoint')
     expect(args[entry + 1]).toBe('xvfb-run')
 
@@ -223,7 +219,6 @@ describe('buildRunSpec: invariants', () => {
       '--server-args=-screen 0 1920x1080x24',
       './AtlasLinux',
     ])
-    // -a chooses the display, so we must not pin one.
     expect(args.join(' ')).not.toContain('DISPLAY=:99')
   })
 })
@@ -402,11 +397,52 @@ describe('buildRunSpec: tmpfs', () => {
 })
 
 describe('buildRunSpec: devices and display', () => {
-  test('GPU goes through CDI and no vulkan ICD is bound', () => {
+  test('the gpu devices match what this host offers, and no vulkan ICD is bound', () => {
     const args = toDockerArgs(buildRunSpec(plan('atlas', atlas), [], identity))
-    expect(valuesOf(args, '--device')).toEqual(['nvidia.com/gpu=all'])
+    expect(valuesOf(args, '--device')).toEqual(gpuPassthrough().devices)
     expect(args.some((a) => a.includes('icd.d') || a.includes('nvidia_icd'))).toBe(false)
     expect(args.some((a) => a.startsWith('VK_ICD_FILENAMES'))).toBe(false)
+  })
+
+  test('an nvidia host passes one CDI device and joins no group', () => {
+    expect(gpuPassthrough(['/dev/dri/renderD128'], true)).toEqual({
+      kind: 'nvidia',
+      devices: ['nvidia.com/gpu=all'],
+      groups: [],
+    })
+  })
+
+  test('an amd or intel host passes its render nodes instead', () => {
+    const got = gpuPassthrough(['/dev/dri/card0', '/dev/dri/renderD128'], false)
+    expect(got.kind).toBe('dri')
+    expect(got.devices).toEqual(['/dev/dri/card0', '/dev/dri/renderD128'])
+  })
+
+  test('a world-writable render node needs no group, a restricted one does', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gamecrate-dri-'))
+    const open = join(dir, 'renderD128')
+    const shut = join(dir, 'card0')
+    writeFileSync(open, '')
+    writeFileSync(shut, '')
+    chmodSync(open, 0o666)
+    chmodSync(shut, 0o660)
+
+    const nodes = driNodes(dir)
+    expect(nodes).toEqual([shut, open])
+
+    expect(renderGroups(nodes)).toEqual([String(statSync(shut).gid)])
+
+    chmodSync(shut, 0o666)
+    expect(renderGroups(nodes)).toEqual([])
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test('a directory that is not there is no nodes, not a throw', () => {
+    expect(driNodes('/nope/not/here')).toEqual([])
+  })
+
+  test('no card at all renders in software rather than passing a device that is not there', () => {
+    expect(gpuPassthrough([], false)).toEqual({ kind: 'software', devices: [], groups: [] })
   })
 
   test('no GPU means no device and software GL', () => {
@@ -482,7 +518,6 @@ describe('buildRunSpec: devices and display', () => {
     }
   })
 
-  // A caption is only renameable on X11, and only headed opens a window at all.
   test('an offscreen run reaches for no display server and names no hostname', () => {
     const spec = buildRunSpec(plan('atlas', atlas, { display: 'x11' }), [], identity)
     expect(spec.env.DISPLAY).toBeUndefined()
@@ -509,7 +544,6 @@ describe('buildRunSpec: devices and display', () => {
     }
   })
 
-  // The whole point of retitling: two worktrees of one profile must read differently.
   test('the window title carries the profile, and the instance when there is one', () => {
     expect(windowTitle(plan('atlas', atlas))).toBe('atlas kitted')
     expect(windowTitle(plan('atlas', atlas, {}, 'headed', 'wt-a'))).toBe(
@@ -524,7 +558,6 @@ describe('buildRunSpec: devices and display', () => {
     expect(args.indexOf('--cap-drop')).toBeLessThan(args.indexOf('atlas-build:latest'))
   })
 
-  // A miss here silently strips the wrong protocol, or none, and the close button stays dead.
   test('WM_PROTOCOLS parses out of xprop, and reads empty when the property is missing', () => {
     expect(parseAtoms('WM_PROTOCOLS(ATOM): protocols  WM_DELETE_WINDOW, WM_TAKE_FOCUS\n')).toEqual([
       'WM_DELETE_WINDOW',
@@ -565,7 +598,6 @@ describe('buildRunSpec: what the image says', () => {
     expect(spec.env.DESKTOP).toBe('1920x1080')
   })
 
-  // wine reads a bare unix path as a windows one, and --rm then takes the save with it.
   test('a proton image converts every path it hands the game, not just the executable', () => {
     const spec = buildRunSpec(plan('atlas', atlas), [], identity, { launcher: 'proton' })
     expect(spec.command).toContain(String.raw`-savedatafolder=Z:\data`)
@@ -608,7 +640,6 @@ describe('buildRunSpec: what the image says', () => {
     )
   })
 
-  // `gamecrate shell` passes no ImageLaunch, so the refusal must not fire: bash starts no game.
   test('a shell run against a proton image is not refused', () => {
     expect(() => refuseProtonHeaded('atlas', 'headed', undefined)).not.toThrow()
     expect(() => buildRunSpec(plan('atlas', atlas, {}, 'headed'), [], identity)).not.toThrow()
@@ -620,8 +651,6 @@ describe('buildRunSpec: what the image says', () => {
   })
 })
 
-// index.ts exits the process at import, so nothing can call execute() or runWithMarker. The
-// wiring is pinned by reading the source, the way image.test.ts already pins the check order.
 describe('run wires the launch path', () => {
   const source = readFileSync(
     join(fileURLToPath(new URL('.', import.meta.url)), '../src/index.ts'),
@@ -646,7 +675,6 @@ describe('run wires the launch path', () => {
     expect(marker).toBeGreaterThan(mode)
   })
 
-  // Swapped arms are a silent bug: CI reads 6 as "the game died" and 1 as "it timed out".
   const arms = /waited === false \? \{ code: (Exit\.\w+).+?: \{ code: (Exit\.\w+)/.exec(
     source.slice(source.indexOf('container exited before the marker')).replace(/\s+/g, ' '),
   )
@@ -677,7 +705,6 @@ describe('waitForMarker', () => {
   })
 
   test('matches a marker that only ever reaches the game log, never stdout', async () => {
-    // Atlas routes Verse.Log to -logfile, so a stdout-only watch can never see this.
     const dir = mkdtempSync(join(tmpdir(), 'gamecrate-log-'))
     const stdout = join(dir, 'stdout.log')
     const player = join(dir, 'Player.log')
@@ -698,14 +725,12 @@ describe('waitForMarker', () => {
   test('finds a marker split across two appends', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gamecrate-log-'))
     const log = join(dir, 'stdout.log')
-    // Both writes land after the watch starts, the way a live log actually grows.
     setTimeout(() => appendFileSync(log, 'DSD: re'), 250)
     setTimeout(() => appendFileSync(log, 'ady\n'), 600)
     expect(await waitForMarker([log], 'DSD: ready', 5)).toBe(true)
   })
 
   test('ignores what a log already held before the watch started', async () => {
-    // Logs/Player-prev.log carries the previous run's marker; matching it is a false pass.
     const dir = mkdtempSync(join(tmpdir(), 'gamecrate-log-'))
     const stale = join(dir, 'Player-prev.log')
     writeFileSync(stale, 'Bridge v1.2 loaded from the LAST run\n')
@@ -726,7 +751,6 @@ describe('entrypoint', () => {
     const at = argv.indexOf('--entrypoint')
     expect(at).toBeGreaterThan(-1)
     expect(argv[at + 1]).toBe('./AtlasLinux')
-    // The executable must not also appear after the image name.
     expect(argv.slice(argv.indexOf('img'))).toEqual(['img', '-savedatafolder=/data'])
   })
 })
@@ -750,7 +774,6 @@ describe('capture', () => {
   test('both streams arrive whole, stderr past the pipe buffer included, with the real exit code', async () => {
     const script = [
       String.raw`process.stdout.write("  out \n\n")`,
-      // the exit waits on the write callback, so the child cannot leave stderr buffered.
       'process.stderr.write("e".repeat(400000), () => process.exit(3))',
     ].join(';')
     const result = await capture([process.execPath, '-e', script])
@@ -777,11 +800,6 @@ describe('window claims', () => {
     expect(parseWindowPid('')).toBeUndefined()
   })
 
-  // Deliberately a spawned gamecrate rather than process.pid: the test runner only has
-  // 'gamecrate' in its cmdline because this checkout sits under a directory of that name, so
-  // this test would quietly lose its teeth from a checkout named anything else. The precondition
-  // is asserted because everything after it reads false when the child is not a gamecrate, so a
-  // construction that failed would pass rather than go red.
   test('a pid does not count as a peer claim against itself', async () => {
     const child = fakeSupervisor()
     try {
@@ -866,7 +884,6 @@ describe('window candidates', () => {
     expect(newMatches(windows, all, '/game/RimWorldLinux')).toEqual([])
   })
 
-  // measured: the game opens a window classed RimWorld.RimWorld while its binary is RimWorldLinux
   test('a window classed after the product still belongs to the binary that opened it', () => {
     const real = [{ id: '0x09', wmClass: 'RimWorld.RimWorld' }]
     expect(newMatches(real, new Set(), '/game/RimWorldLinux').map((w) => w.id)).toEqual(['0x09'])
@@ -878,7 +895,6 @@ describe('window candidates', () => {
   })
 })
 
-/** argv0 rather than `exec -a`: dash has no such builtin, and /bin/sh is dash on debian. */
 function fakeSupervisor(): ChildProcess {
   return spawn('sleep', ['30'], { stdio: 'ignore', argv0: 'gamecrate --supervised' })
 }
@@ -901,15 +917,56 @@ describe('iconProperty', () => {
     const rgba = Buffer.alloc(2 * 2 * 4)
     rgba.set([0x11, 0x22, 0x33, 0xff], 0)
     const body = iconProperty(rgba, 2)
-    expect(body.length).toBe(8 + 4 * 4)
+    expect(body).toHaveLength(8 + 4 * 4)
     expect(body.readUInt32LE(0)).toBe(2)
     expect(body.readUInt32LE(4)).toBe(2)
   })
 
-  // the wire format is ARGB, and ImageMagick hands over RGBA. swapping them silently tints
-  // every icon, which no test of the byte count would notice.
   test('packs RGBA into ARGB, not the order it arrived in', () => {
     const rgba = Buffer.from([0x11, 0x22, 0x33, 0xff])
     expect(iconProperty(rgba, 1).readUInt32LE(8)).toBe(0xff112233)
+  })
+})
+
+describe('exited', () => {
+  test('a signal becomes 128 plus its number, the way a shell reports it', async () => {
+    for (const [signal, want] of [['SIGKILL', 137], ['SIGTERM', 143], ['SIGINT', 130]] as const) {
+      const proc = spawnArgv(['sh', '-c', 'sleep 5'], ['ignore', 'pipe', 'pipe'])
+      setTimeout(() => proc.kill(signal), 30)
+      expect(await exited(proc)).toBe(want)
+    }
+  })
+
+  test('a normal exit keeps its own code', async () => {
+    expect(await exited(spawnArgv(['sh', '-c', 'exit 3'], ['ignore', 'pipe', 'pipe']))).toBe(3)
+    expect(await exited(spawnArgv(['sh', '-c', 'exit 0'], ['ignore', 'pipe', 'pipe']))).toBe(0)
+  })
+})
+
+describe('runContainer spawn failures', () => {
+  test('a missing docker names itself, and leaves no unhandled rejection', async () => {
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    const path = process.env['PATH']
+    process.env['PATH'] = '/nonexistent'
+    try {
+      const spec = {
+        name: 'gc-test', image: 'busybox', labels: {}, env: {}, mounts: [], devices: [],
+        deviceCgroupRules: [], network: 'none', memory: '1g', memorySwap: '1g', cpus: 1,
+        pidsLimit: 100, ulimits: [], workdir: '/', extraArgs: [], command: [],
+        identity: { uid: 1000, gid: 1000, user: 'x', home: '/tmp' },
+      }
+      await expect(
+        runContainer(spec as never, { logDir: mkdtempSync(join(tmpdir(), 'gc-run-')) }),
+      ).rejects.toThrow(/not found in \$PATH/)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      expect(unhandled).toEqual([])
+    } finally {
+      process.env['PATH'] = path
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 })

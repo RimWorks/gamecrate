@@ -7,7 +7,7 @@ import type { LaunchPlan, Problem } from '../types'
 import { GamecrateError } from '../types'
 import { resolveIdentity } from './identity'
 import { capture } from './run'
-import { buildRunSpec, refuseProtonHeaded, waylandSocket, x11Session } from './spec'
+import { buildRunSpec, gpuPassthrough, refuseProtonHeaded, waylandSocket, x11Session } from './spec'
 
 const CDI_SPEC = '/etc/cdi/nvidia.yaml'
 
@@ -21,7 +21,7 @@ export async function preflight(plan: LaunchPlan, asShell = false): Promise<Prob
     await checkImage(plan, problems, asShell)
   }
 
-  if (plan.settings.gpu) checkCdi(problems)
+  if (plan.settings.gpu) checkGpu(problems)
   checkGameDir(plan, problems)
   checkBindSources(plan, problems)
   if (plan.mode === 'headed') checkDisplay(plan, problems)
@@ -48,10 +48,6 @@ async function checkDocker(problems: Problem[]): Promise<boolean> {
   return false
 }
 
-/**
- * `docker image inspect` succeeds on an image whose layers are missing from the content
- * store, so presence is not runnability. Actually starting it is the only honest check.
- */
 async function checkImageRunnable(
   ref: string,
   where: string,
@@ -69,7 +65,7 @@ async function checkImageRunnable(
       ? `image ${ref} is present but unrunnable; its layers are missing from the content store`
       : `image ${ref} is present but failed to start: ${err || exitCode(run.code)}`,
     suggestion: corrupt
-      ? `docker image rm ${ref} && docker builder prune -f, then gamecrate build ${game}`
+      ? `docker image rm ${ref} && docker builder prune -f, then gamecrate build --game ${game}`
       : undefined,
   })
 }
@@ -84,18 +80,12 @@ async function checkImage(plan: LaunchPlan, problems: Problem[], asShell: boolea
   if (facts.present) {
     await checkImageRunnable(image.ref, where, plan.game, problems)
     if (problem) problems.push(problem)
-    // a shell replaces the command with bash and never starts the game, so execute() exempts it
-    // from both gates. preflight runs first, so it has to exempt the same two.
     if (asShell) return
-    // same order execute() uses: a marker-first answer asks for a flag the person then has to
-    // keep while they fix the mode, which is the real problem.
     const mode = protonHeadedProblem(plan, facts, where)
     if (mode) {
       problems.push(mode)
       return
     }
-    // a missing marker is a precondition like any other, and finding it here beats finding it
-    // after buildLocalMods has spent minutes compiling assemblies.
     const marker = markerProblem({ game: plan.game, facts, marker: plan.marker })
     if (marker) problems.push(marker)
     return
@@ -104,7 +94,6 @@ async function checkImage(plan: LaunchPlan, problems: Problem[], asShell: boolea
   await checkAbsentImage(plan, problems, where, problem)
 }
 
-/** The image is not in the daemon. Whether that is fixable depends on how it was meant to arrive. */
 async function checkAbsentImage(
   plan: LaunchPlan,
   problems: Problem[],
@@ -121,7 +110,7 @@ async function checkAbsentImage(
     problems.push({
       where,
       message: `image ${image.ref} is not present locally`,
-      suggestion: `gamecrate build ${plan.game}`,
+      suggestion: `gamecrate build --game ${plan.game}`,
     })
     return
   }
@@ -134,7 +123,7 @@ async function checkAbsentImage(
     problems.push({
       where,
       message: `not authenticated to ${host}, so ${image.ref} cannot be pulled`,
-      suggestion: `docker login ${host}, or gamecrate steam build ${plan.game} to make it locally`,
+      suggestion: `docker login ${host}, or gamecrate steam build --game ${plan.game} to make it locally`,
     })
     return
   }
@@ -147,7 +136,6 @@ async function checkAbsentImage(
   }
 }
 
-/** refuseProtonHeaded throws and preflight collects, so catching it keeps one copy of the text. */
 function protonHeadedProblem(plan: LaunchPlan, facts: ImageFacts, where: string): Problem | null {
   try {
     refuseProtonHeaded(plan.game, plan.mode, imageLaunch(facts))
@@ -158,7 +146,6 @@ function protonHeadedProblem(plan: LaunchPlan, facts: ImageFacts, where: string)
   }
 }
 
-/** A headed run with no display server opens nothing and reports no error of its own. */
 function checkDisplay(plan: LaunchPlan, problems: Problem[]): void {
   if (plan.settings.display === 'x11') {
     if (x11Session()) return
@@ -178,7 +165,22 @@ function checkDisplay(plan: LaunchPlan, problems: Problem[]): void {
   })
 }
 
-/** Docker's own failure here is "could not select device driver", which names nothing useful. */
+/** Only an NVIDIA host needs a CDI spec. A DRI host needs a render node, and it already has one. */
+function checkGpu(problems: Problem[]): void {
+  const plan = gpuPassthrough()
+  if (plan.kind === 'nvidia') {
+    checkCdi(problems)
+    return
+  }
+  if (plan.kind === 'software') {
+    problems.push({
+      where: '/dev/dri',
+      message: 'gpu is on, but this host has no NVIDIA card and no render node, so the game renders in software',
+      suggestion: 'set settings.gpu to false to say so on purpose, or check the host drivers',
+    })
+  }
+}
+
 function checkCdi(problems: Problem[]): void {
   if (!existsSync(CDI_SPEC)) {
     problems.push({

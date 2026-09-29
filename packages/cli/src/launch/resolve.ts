@@ -55,7 +55,6 @@ interface Staged {
 interface Slot {
   entry: ModEntry
   where: string
-  /** Declared DLC: known to the game, not necessarily owned here. A miss is normal. */
   dlc?: boolean
 }
 
@@ -63,7 +62,6 @@ export function notFetched(id: string): string {
   return `workshop item ${id} is not fetched, and fetching is off for this command; a real launch would fetch it`
 }
 
-/** A ref the index understands, with library pins applied. */
 function refFor(
   entry: string | { id: string; workshop?: number; path?: string },
   game: GameConfig,
@@ -76,8 +74,6 @@ function refFor(
   const pin = libraryPin(game, object.id)
   if (pin?.path !== undefined) return `path:${pin.path}`
   if (pin?.workshop !== undefined) return `workshop:${pin.workshop}`
-  // prepared before the index was built, so this is a directory lookup, never a network call.
-  // `verify` and `mods` prepare from the cache alone, and a failed fetch still leaves a map.
   if (pin?.git !== undefined) {
     const dir = sources.get(object.id.toLowerCase())
     if (dir !== undefined) return `path:${pin.subdir === undefined ? dir : join(dir, pin.subdir)}`
@@ -170,11 +166,6 @@ function insertDependencies(
   }
 }
 
-/**
- * Kahn's algorithm over loadAfter/loadBefore/forceLoad*, profile order as tiebreak. Anything
- * that must precede core is emitted first: a patching runtime that loads after an ordinary
- * mod has already missed its window, and the symptom is a black screen, not an error.
- */
 function topoSort(list: Staged[], problems: Problem[], core?: string): Staged[] {
   const position = new Map<string, number>()
   for (const [i, mod] of list.entries()) position.set(mod.record.packageId.toLowerCase(), i)
@@ -205,7 +196,6 @@ function topoSort(list: Staged[], problems: Problem[], core?: string): Staged[] 
   return sorted
 }
 
-/** The next node with no edges left pointing at it, core-side first. -1 when none is left. */
 function nextReady(done: boolean[], indegree: number[], phase: (i: number) => number): number {
   let next = -1
   for (let i = 0; i < done.length; i++) {
@@ -218,7 +208,6 @@ function nextReady(done: boolean[], indegree: number[], phase: (i: number) => nu
 interface LoadGraph {
   indegree: number[]
   outgoing: number[][]
-  /** How the pre-core walk follows the edges backwards. */
   incoming: number[][]
 }
 
@@ -246,7 +235,6 @@ function graph(list: Staged[], position: Map<string, number>): LoadGraph {
   return { indegree, outgoing, incoming }
 }
 
-/** Everything that has to precede core, walked backwards from core along the edges. */
 function reachesCore(incoming: number[][], coreIndex: number | undefined): Set<number> {
   const preCore = new Set<number>()
   if (coreIndex === undefined) return preCore
@@ -269,7 +257,10 @@ function incompatibilityWarnings(list: Staged[]): string[] {
     for (const id of mod.record.manifest.incompatibleWith) {
       const other = byId.get(id.toLowerCase())
       if (!other) continue
-      const pair = [mod.record.packageId, other].map((s) => s.toLowerCase()).sort().join('|')
+      const pair = [mod.record.packageId, other]
+        .map((s) => s.toLowerCase())
+        .sort((a, b) => Number(a > b) - Number(a < b))
+        .join('|')
       if (seen.has(pair)) continue
       seen.add(pair)
       warnings.push(`${mod.record.packageId} declares it is incompatible with ${other}; both are active`)
@@ -333,7 +324,6 @@ function slotRefs(slot: Slot, input: StageInputs): SlotRef[] {
 }
 
 function reportMissing(slot: Slot, ref: string, optional: boolean, input: StageInputs): void {
-  // A declared DLC is what the game can have, not what this machine owns.
   if (slot.dlc === true) return
   if (optional) {
     input.warnings.push(`optional mod ${ref} is not installed; skipped`)
@@ -360,7 +350,6 @@ async function describeMod(
   index: ModIndex,
   warnings: string[],
 ): Promise<ResolvedMod> {
-  // Every local mod, not just a worktree: the primary checkout goes stale exactly as easily.
   const times = record.kind === 'local' ? await scanBuildTimes(record.dir) : null
   const report = times === null ? null : staleReport(times)
   if (record.worktree) {
@@ -387,7 +376,6 @@ async function describeMod(
   }
 }
 
-/** RimWorld silently ignores a malformed override, so a bad one is a config problem here. */
 function checkDataDir(problems: Problem[], gameName: string, game: GameConfig): void {
   if (game.dataDir.mode === 'arg' && game.dataDir.arg.split('=').length !== 2) {
     problems.push({
@@ -420,7 +408,6 @@ export async function resolvePlan(
   if (!NAME_PATTERN.test(requestedProfile)) {
     throw new GamecrateError(`invalid profile name "${requestedProfile}"`, Exit.Usage)
   }
-  // An alias resolves to its profile's own name, so both spellings share one data dir.
   const profileName = canonicalProfile(game, requestedProfile)
 
   const profile: ProfileConfig =
@@ -449,10 +436,7 @@ export async function resolvePlan(
     game, gameName, profileName, profile, args, index, sources, unfetched, problems, warnings,
   })
 
-  // on by default: a mod that declares a dependency does not work without it, and gamecrate
-  // downloads the declared ones anyway. set autoDependencies: false to keep a list literal.
   if (profile.autoDependencies !== false) insertDependencies(staged, present, index, game, problems)
-  // insertDependencies stays network-free, so relabel its misses here instead of teaching it.
   relabelUnfetched(problems, unfetched)
 
   const ordered = args.sort === 'none' ? staged : topoSort(staged, problems, game.core)
@@ -489,13 +473,13 @@ export async function resolvePlan(
     configDirHost: join(profileDir, 'config'),
     stageDirHost: join(instance.dir, '.stage'),
     logsDirHost: join(instance.dir, 'logs'),
-    // Replaced with the real logs/runs/<ts> directory once a run actually opens one.
     runDirHost: join(instance.dir, 'logs'),
     mode,
     ...(args.marker === undefined ? {} : { marker: args.marker }),
     timeoutSeconds: args.timeout ?? DEFAULT_TIMEOUT_SECONDS,
     renderWaitSeconds: args.renderWait ?? DEFAULT_RENDER_WAIT_SECONDS,
     warnOnStale: args.noStaleCheck !== true,
+    ...(root.buildConcurrency === undefined ? {} : { buildConcurrency: root.buildConcurrency }),
     warnings,
   }
   return { plan, problems }

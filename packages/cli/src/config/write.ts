@@ -13,7 +13,6 @@ export interface ConfigEdit {
   value: unknown
 }
 
-/** Mirrors read.ts: a suffix the loader would refuse to parse is one the writer must refuse. */
 function isYaml(path: string): boolean {
   const suffix = extname(path).toLowerCase()
   if (suffix === '.yml' || suffix === '.yaml') return true
@@ -30,7 +29,6 @@ function isYaml(path: string): boolean {
  * handed. A file indented with tabs and edited with spaces reads as two files.
  */
 export function detectIndent(text: string): { tabSize: number; insertSpaces: boolean } {
-  // anchored on a quoted key, so a block comment's continuation line is not read as the indent.
   const lead = /\n([ \t]+)"/.exec(text)?.[1]
   if (lead === undefined) return { tabSize: 2, insertSpaces: true }
   return lead.startsWith('\t')

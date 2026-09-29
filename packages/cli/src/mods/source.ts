@@ -49,9 +49,6 @@ export function normalizeUrl(url: string): string {
     `${user ?? ''}${host.toLowerCase()}:`)
 }
 
-// derived, never interpolated: `git reset --hard` runs in here and a url path segment of `..`
-// would aim it outside the cache. the hash also covers file:// and ssh urls, which have no
-// host/owner/repo triple.
 export function cloneDir(dataRoot: string, url: string, ref: GitRef): string {
   const normal = normalizeUrl(url)
   const name = `${slug(lastSegment(normal))}-${hash(normal, 12)}`
@@ -107,8 +104,6 @@ export function defaultBranch(url: string): GitRef {
   return { kind: 'branch', value: match[1] as string }
 }
 
-// `ref` is a parameter, never derived here. working it out needs `ls-remote`, and resolution does
-// that once per launch, so deriving it here would put a network call inside `verify`
 export async function ensureClone(dataRoot: string, pin: GitPin, ref: GitRef, mode: SyncMode): Promise<SyncResult> {
   const dir = cloneDir(dataRoot, pin.url, ref)
   if (!cloned(dir)) return await create(dir, pin.url, ref, mode)
@@ -121,10 +116,6 @@ export async function ensureClone(dataRoot: string, pin: GitPin, ref: GitRef, mo
   return { dir }
 }
 
-// `.git` presence is not validity: a clone killed with SIGKILL leaves HEAD, config, objects and refs
-// behind with no commit and no fetch refspec, so every later fetch exits 0 writing only FETCH_HEAD and
-// every reset fails, forever. HEAD resolving is the real test, and `existsSync` keeps the common
-// absent case from paying for a spawn
 function cloned(dir: string): boolean {
   if (!existsSync(join(dir, '.git'))) return false
   return git(dir, ['rev-parse', '--verify', 'HEAD']).code === 0
@@ -134,7 +125,6 @@ async function create(dir: string, url: string, ref: GitRef, mode: SyncMode): Pr
   if (mode === 'use') {
     throw new GamecrateError(`no clone of ${url} on disk`, Exit.Resolution, 'fetch it with: gamecrate mods sync')
   }
-  // git refuses to clone into a non-empty directory, so a half-created one goes first
   await rm(dir, { recursive: true, force: true })
   await mkdir(dirname(dir), { recursive: true })
   const clone = git(undefined, ['clone', url, dir])
@@ -147,14 +137,12 @@ async function create(dir: string, url: string, ref: GitRef, mode: SyncMode): Pr
   return { dir }
 }
 
-// a tag needs `--force` to move at all, and a commit has to be fetched by name to reset toward
 function syncSteps(ref: GitRef): string[][] {
   if (ref.kind === 'branch') return [['fetch', 'origin', ref.value], ['reset', '--hard', `origin/${ref.value}`]]
   if (ref.kind === 'tag') return [['fetch', '--tags', '--force', 'origin'], ['reset', '--hard', ref.value]]
   return [['fetch', 'origin', ref.value], ['reset', '--hard', ref.value]]
 }
 
-// a clone already on disk is usable, so a dead remote is a warning naming what we fell back to
 function staleWarning(dir: string, url: string, step: string): string {
   const what = step === 'fetch' ? `could not fetch ${url}` : `could not reset the clone of ${url}`
   const r = git(dir, ['log', '-1', '--format=%h %ct'])
@@ -164,9 +152,7 @@ function staleWarning(dir: string, url: string, step: string): string {
 }
 
 // scope is the caller's call: `prepareSources` holds it across a whole build, `mods sync` wraps
-// it tightly around one `ensureClone`. the record is the launch lock's pid/startedAt shape, so
-// `isRunning` can tell a live holder from a crashed one and this takes the lock over rather than
-// wedging the directory forever
+// it tightly around one `ensureClone`
 export async function lockDir(dir: string): Promise<() => Promise<void>> {
   const path = `${dir}.lock`
   await mkdir(dirname(path), { recursive: true })
@@ -194,9 +180,6 @@ export async function lockDir(dir: string): Promise<() => Promise<void>> {
   }
 }
 
-// a lock naming no live holder is one nobody will ever release. an unreadable one is left alone on
-// purpose: a lock is created empty and written a moment later, so stealing on a parse failure would
-// race the holder that just took it
 async function orphaned(path: string): Promise<string | undefined> {
   const text = await readFile(path, 'utf8').catch(() => undefined)
   if (text === undefined) return undefined
@@ -211,9 +194,6 @@ async function orphaned(path: string): Promise<string | undefined> {
   return isRunning(pid as number, held.startedAt) ? undefined : text
 }
 
-// unlinks only while the lock still reads as the dead record we saw, so two processes stealing one
-// orphan cannot both end up holding it
-// residual: the re-read and the unlink are two syscalls, the same window `unlinkHeld` carries
 export async function unlinkOrphan(path: string, seen: string): Promise<boolean> {
   const now = await readFile(path, 'utf8').catch(() => undefined)
   if (now !== seen) return false
@@ -221,7 +201,6 @@ export async function unlinkOrphan(path: string, seen: string): Promise<boolean>
   return true
 }
 
-// once only, a second call would unlink whatever lock the next holder has since taken
 function releaser(path: string): () => Promise<void> {
   let done = false
   return async (): Promise<void> => {
@@ -250,8 +229,6 @@ export function reachedEntries(
   profile: ProfileConfig,
   args: Partial<ParsedArgs>,
 ): ModEntry[] {
-  // every slot collectSlots emits, not just base: a pin named from preCore, core or dlc is
-  // still a pin, and one that never clones fails the launch it was added for.
   const out: ModEntry[] = [...(game.preCore ?? []), game.core, ...game.dlc]
   if (profile.includeBase !== false) out.push(...(game.base ?? []))
   const only = args.only ?? []
@@ -264,8 +241,6 @@ export function reachedEntries(
   })
 }
 
-// only ids a library pin could name: a `workshop:`/`path:` ref and an inline path or workshop id
-// already say where the mod lives, and a `match:` glob needs the index the clone has to precede.
 function pinnableIds(game: GameConfig, profile: ProfileConfig, args: Partial<ParsedArgs>): string[] {
   const out: string[] = []
   for (const entry of reachedEntries(game, profile, args)) {
@@ -279,13 +254,7 @@ function pinnableIds(game: GameConfig, profile: ProfileConfig, args: Partial<Par
   return out
 }
 
-/**
- * The map `prepareSources` builds, read off the cache alone: no lock, no clone, no network.
- * `mods` and `verify` must not fetch, but with no map at all a git pin's `subdir` is dropped and
- * the scan answers by packageId instead, which is a coin flip between two directories of one
- * repo. An unpinned entry has no ref to derive a directory from, so it takes the one `branch-*`
- * clone already on disk.
- */
+/** The map `prepareSources` builds, read off the cache alone: no lock, no clone, no network. */
 export function cachedSources(
   game: GameConfig,
   profileName: string,
@@ -305,8 +274,6 @@ export function cachedSources(
   return dirs
 }
 
-// two default-branch clones of one url is not worth guessing at: no entry leaves the scan in
-// charge, which is where an unmapped id was already.
 function soleBranchClone(dataRoot: string, url: string): string | undefined {
   const repo = dirname(cloneDir(dataRoot, url, { kind: 'branch', value: 'x' }))
   let names: string[]
@@ -322,8 +289,7 @@ function soleBranchClone(dataRoot: string, url: string): string | undefined {
 
 /**
  * Clones or fetches every git-pinned mod the run will ask for, before the index is built, and
- * keeps one lock per clone until the caller releases it. `git()` is spawnSync, so these
- * serialize whatever this function looks like.
+ * keeps one lock per clone until the caller releases it.
  */
 export async function prepareSources(
   game: GameConfig,
@@ -339,7 +305,6 @@ export async function prepareSources(
   const release = async (): Promise<void> => {
     for (const unlock of locks) await unlock()
   }
-  // one ls-remote per url, not per pin
   const branches = new Map<string, GitRef>()
   const jobs = new Map<string, { pin: GitPin; ref: GitRef }>()
   for (const id of pinnableIds(game, resolveProfile(game, profileName), args)) {
@@ -360,9 +325,7 @@ export async function prepareSources(
   }
 
   try {
-    // ordered by clone directory, never by id: two ids can name one clone, so sorting ids lets
-    // two runs take the same pair of locks in opposite order and sit on the timeout
-    for (const dir of [...jobs.keys()].sort()) {
+    for (const dir of [...jobs.keys()].sort((a, b) => Number(a > b) - Number(a < b))) {
       const job = jobs.get(dir) as { pin: GitPin; ref: GitRef }
       locks.push(await lockDir(dir))
       const result = await ensureClone(dataRoot, job.pin, job.ref, allowFetch ? 'fetch' : 'use')

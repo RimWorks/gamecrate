@@ -8,13 +8,8 @@ type Bag = Record<string, unknown>
 
 const MODES = ['headed', 'headless', 'screenshot'] as const
 
-/** Marks a message as our hint payload. Zod's own messages never start with it. */
 const HINTS = '\u0000gamecrate/hints:'
 
-/**
- * Zod reports unrecognized keys as one issue with no room for a did-you-mean, so the message
- * carries a JSON hint per key, in the same order as the issue's `keys`.
- */
 function obj<T extends z.ZodRawShape>(shape: T) {
   const known = Object.keys(shape)
   return z.strictObject(shape, {
@@ -25,7 +20,6 @@ function obj<T extends z.ZodRawShape>(shape: T) {
   })
 }
 
-/** Never falls back to reading a Zod message as a hint: no payload means no suggestions. */
 function hintsFor(message: string): (string | null)[] {
   if (!message.startsWith(HINTS)) return []
   try {
@@ -35,7 +29,6 @@ function hintsFor(message: string): (string | null)[] {
   }
 }
 
-/** A key the discriminant next to it makes required. */
 function requiredWhen(key: string, when: (v: Bag) => boolean) {
   return (ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): void => {
     if (!when(ctx.value) || ctx.value[key] !== undefined) return
@@ -95,6 +88,13 @@ const dynamicModEntry = obj({
   minMatches: num.optional(),
 })
 
+const modSettingsFile = obj({
+  file: str,
+  class: str,
+  values: z.record(z.string(), z.unknown()),
+  replace: strArray.optional(),
+})
+
 const objectModEntry = obj({
   id: str,
   workshop: num.optional(),
@@ -102,7 +102,6 @@ const objectModEntry = obj({
   optional: bool.optional(),
 })
 
-/** A bare string, a `match` pattern, or a pinned entry; the shape picks itself. */
 const modEntry = z.unknown().check((ctx) => {
   const value = ctx.value
   if (typeof value === 'string') {
@@ -130,6 +129,9 @@ const profile = obj({
     .record(z.string(), obj({ worktree: str.optional(), settings: settings.optional() }), {
       error: 'expected an object',
     })
+    .optional(),
+  modSettings: z
+    .array(modSettingsFile, { error: 'expected a list of mod settings files' })
     .optional(),
   alias: str.optional(),
   aliases: strArray.optional(),
@@ -185,7 +187,6 @@ const libraryEntry = obj({
   }
 })
 
-/** Reports the second occurrence of a repeated name: the first one is the definition. */
 function repeats(entries: unknown[], key: string): { index: number; name: string }[] {
   const seen = new Set<string>()
   const found: { index: number; name: string }[] = []
@@ -198,11 +199,6 @@ function repeats(entries: unknown[], key: string): { index: number; name: string
   return found
 }
 
-/**
- * The docker tag charset, not gamecrate's own name rule: steam picks a branch name, and it
- * lands in a tag as `<version>-<branch>-<variant>`, so a space or a slash is fatal there.
- */
-/** A config value in a message. It reaches here unvalidated, so a bare cast could print an object. */
 function describe(value: unknown): string {
   return typeof value === 'string' ? value : JSON.stringify(value)
 }
@@ -235,7 +231,6 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
       if (typeof name === 'string' && !TAG_COMPONENT.test(name)) {
         push(`branch name "${name}" must match ${TAG_COMPONENT.source}`, ['branches', index, 'name'])
       }
-      // an alias is a whole tag on its own, so it takes the same charset the name does
       const tags = (branch as Bag | null)?.['tags']
       if (!Array.isArray(tags)) return
       tags.forEach((tag, at) => {
@@ -251,7 +246,7 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
   variants.forEach((variant, index) => {
     const v = variant as Bag | null
     const base = v?.['base']
-    if (base !== 'xvfb' && base !== 'proton') return
+    if (base !== 'linux' && base !== 'windows') return
     const depot = v?.['depot'] ?? 'linux'
     if (depot === 'macos') {
       push(
@@ -261,14 +256,13 @@ function steamBuildRules(ctx: { value: Bag; issues: z.core.$ZodRawIssue[] }): vo
       )
       return
     }
-    const wants = depot === 'windows' ? 'proton' : 'xvfb'
-    if (base === wants) return
+    if (base === depot) return
     push(
       `a ${describe(depot)} depot cannot run on the "${base}" base`,
       ['variants', index, 'base'],
       depot === 'windows'
-        ? 'set base to "proton"; it is the only base with wine'
-        : 'set base to "xvfb", or set depot to "windows" if the image should run under wine',
+        ? 'set base to "windows"; it is the only base with wine'
+        : 'set base to "linux", or set depot to "windows" if the image should run under wine',
     )
   })
 }
@@ -289,7 +283,7 @@ export const steamBuildSchema = obj({
     obj({
       name: str,
       depot: oneOf(['linux', 'windows', 'macos']).optional(),
-      base: oneOf(['xvfb', 'proton', 'none']),
+      base: oneOf(['linux', 'windows', 'none']),
       include: strArray,
       executable: str.optional(),
     }),
@@ -333,8 +327,10 @@ const game = obj({
   manifest: obj({ file: str }),
   modsConfig: obj({ file: str }),
   prefs: obj({ file: str }),
+  modSettingsDir: str.optional(),
   version: obj({ file: str }),
   steamBuild: steamBuildSchema,
+  records: obj({ dir: str, mods: strArray, enable: modSettingsFile.optional() }).optional(),
   saveExtensions: strArray,
   core: str,
   dlc: strArray,
@@ -360,8 +356,8 @@ const root = obj({
   plugins: strArray.optional(),
   dataRoot: str,
   defaults: obj({ settings: settings.optional() }).optional(),
+  buildConcurrency: num.optional(),
   steamcmd: obj({ path: str.optional() }).optional(),
-  // Checked per game below, so the pointers stay rooted at each game's name.
   games: z.unknown(),
 })
 
@@ -436,7 +432,6 @@ function valueAt(root_: unknown, path: readonly PropertyKey[]): unknown {
 }
 
 function crossReference(p: Problem[], games: Bag): void {
-  // one map across every game: container names carry the game, so two games can collide too
   const containers = new Map<string, string>()
   for (const [gameName, game_] of Object.entries(games)) {
     const where = `/games/${esc(gameName)}`
@@ -456,7 +451,6 @@ function crossReference(p: Problem[], games: Bag): void {
   }
 }
 
-/** A variant name becomes a docker tag suffix, so it gets the same check a profile name gets. */
 function checkVariantNames(p: Problem[], where: string, game_: Bag): void {
   const steamBuild = game_['steamBuild']
   const variants = isObj(steamBuild) ? steamBuild['variants'] : undefined
@@ -499,10 +493,6 @@ function checkAlias(p: Problem[], w: string, name: string, prof: Bag, profiles: 
   }
 }
 
-/**
- * An alias is a name you can type, so it gets the checks a profile key gets, and it must not
- * shadow a real profile.
- */
 function checkAliases(p: Problem[], w: string, prof: Bag, names: string[]): void {
   const aliases = prof['aliases']
   if (!Array.isArray(aliases)) return
@@ -516,7 +506,6 @@ function checkAliases(p: Problem[], w: string, prof: Bag, names: string[]): void
   }
 }
 
-/** The name becomes a directory and a container name, so it gets the checks a profile does. */
 function checkInstances(p: Problem[], w: string, prof: Bag): void {
   const instances = prof['instances']
   if (!isObj(instances)) return
@@ -525,32 +514,11 @@ function checkInstances(p: Problem[], w: string, prof: Bag): void {
   }
 }
 
-/**
- * The same name a user types at runtime. `profileKey` lowercases and falls through to every
- * profile's `aliases`, and `resolveNamed` answers "modless" before it looks at all, so anything
- * stricter here rejects configs the launcher runs happily.
- */
 function resolves(profiles: Bag, name: string): boolean {
   if (name.toLowerCase() === 'modless') return true
   return profileKey({ profiles } as unknown as GameConfig, name) !== undefined
 }
 
-/**
- * checkName sees one name at a time, so it cannot catch two names that fight. This walks a
- * game's whole name space and reports the second occurrence, which is the key to delete.
- *
- * The container check is here rather than in `containerName` because there is no separator to
- * switch to: NAME_PATTERN and docker allow the same `-._` set, so `dev--wt` is a legal profile
- * too. Refusing the config needs no migration and leaves existing container names valid.
- *
- * `containers` is keyed on the whole docker name and shared across games, because the game is
- * part of that name: `rim` + `world-dev` and `rim-world` + `dev` both make
- * `gamecrate-rim-world-dev`, which is two runs on one container, not a refusal.
- *
- * One gap stays: `derive()` in launch/instance.ts builds `<slug>-<hash6>` from a worktree path,
- * which no config can know, so a profile named exactly that still collides at runtime. Not
- * worth defending against.
- */
 function checkCollisions(
   p: Problem[],
   where: string,
@@ -619,7 +587,6 @@ function checkInstanceContainers(
   const declared = prof['instances']
   for (const instance of instanceNames(profiles, name, prof)) {
     const container = `${prefix}-${instance.toLowerCase()}`
-    // An inherited instance has no key of its own to point at, so blame the profile.
     const at = isObj(declared) && Object.hasOwn(declared, instance) ? `${w}/instances/${esc(instance)}` : w
     const first = containers.get(container)
     if (first !== undefined) {
@@ -633,13 +600,6 @@ function checkInstanceContainers(
   }
 }
 
-/**
- * A child inherits its parent's `instances`, so the declared block is not the set of containers
- * the profile can run. `resolveProfile` is the same walk the launcher does, which is the point:
- * a second rule that walked the chain its own way is what put the hole here to begin with. It
- * throws on an unknown parent or an extends cycle, and both already fail elsewhere, so a throw
- * means fall back to what this profile declares.
- */
 function instanceNames(profiles: Bag, name: string, prof: Bag): string[] {
   try {
     const resolved = resolveProfile({ profiles } as unknown as GameConfig, name).instances
@@ -651,9 +611,6 @@ function instanceNames(profiles: Bag, name: string, prof: Bag): string[] {
 }
 
 function checkName(p: Problem[], where: string, name: string, kind: string): void {
-  // Case-insensitive: `canonicalProfile` lowercases, so `MODLESS` is just as reserved as `modless`.
-  // NAME_PATTERN below still matches case-sensitively. Harmless, it accepts both cases, but the
-  // two rules disagree about what a name is, and that disagreement is this bug class.
   if (RESERVED_NAMES.includes(name.toLowerCase())) {
     p.push({ where, message: `"${name}" is a reserved name and cannot be used as a ${kind} name` })
     return

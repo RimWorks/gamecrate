@@ -49,7 +49,6 @@ beforeAll(async () => {
   await git(primary, 'commit', '-m', 'fixture')
   await git(primary, 'worktree', 'add', '-b', BRANCH, worktree)
 
-  // A pruned worktree: the .git file survives, the gitdir it points at does not.
   await mkdir(dead, { recursive: true })
   await writeFile(join(dead, '.git'), `gitdir: ${join(root, 'gone', 'worktrees', 'dead')}\n`)
 
@@ -69,8 +68,6 @@ function isRequest(v: unknown): v is WorktreeRequest {
 }
 
 describe('resolveWorktree', () => {
-  // The tilde expansion is shared with config/load now; the old private copy dropped a bare `~`
-  // on the floor and looked for `<cwd>/~` instead.
   test.skipIf(existsSync(join(homedir(), '.git')))('a bare ~ means the home directory', () => {
     const got = resolveWorktree('~', 'flag', 0)
     expect(isRequest(got)).toBe(false)

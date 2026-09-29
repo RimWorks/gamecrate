@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -6,10 +7,10 @@ import { exports as exportsField, legacy } from 'resolve.exports'
 
 import { expandHome } from './config/load'
 import { GamecrateError, Exit } from './types'
-import type { GameConfig, ModManifest } from './types'
+import type { GameConfig, ModManifest, ModSettingsFile } from './types'
 
 /** Bumped when a change would make an older plugin misbehave rather than merely lag. */
-export const PLUGIN_API_VERSION = 2
+export const PLUGIN_API_VERSION = 3
 
 export interface ModsConfigInput {
   version: string
@@ -33,6 +34,8 @@ export interface GamePlugin {
   parseManifest(text: string): ModManifest | null
   renderModsConfig(input: ModsConfigInput): string
   mergePrefs(existing: string | null, owned: Record<string, string>): string
+  /** One mod's settings file, for a game that has them. `block.replace` names the keys that overwrite. */
+  renderModSettings?(existing: string | null, block: ModSettingsFile): string
   /** Prefs keys that put the game in a window instead of fullscreen. */
   windowedPrefs: Record<string, string>
   /** Version.txt as the engine writes it. null when it does not parse. */
@@ -50,33 +53,23 @@ function fail(spec: string, message: string, detail?: string): never {
   throw new GamecrateError(`plugin "${spec}": ${message}`, Exit.Config, detail)
 }
 
-/**
- * A directory's entry point, read from its own package.json. A compiled binary must do this by
- * hand: Bun's resolver never reads the target package.json there, so it only finds index.js.
- */
 function entryOf(dir: string): string {
   let manifest: unknown
   try {
     manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   } catch {
-    // A directory with no package.json still has an index to try.
     return resolve(dir, 'index.js')
   }
   let entry: string | undefined
   try {
     entry = exportsField(manifest, '.', { conditions: ['bun'] })?.[0]
   } catch {
-    // No condition matched, so fall through to the legacy fields.
   }
   entry ??= legacy(manifest, { fields: ['module', 'main'] }) as string | undefined
   return resolve(dir, entry ?? 'index.js')
 }
 
-/**
- * Walks node_modules upward by hand. require.resolve refuses "<pkg>/package.json" the moment a
- * package has an exports map, and that file is the only thing that tells entryOf where to go.
- */
-function packageDir(spec: string, from: string): string | null {
+function walkUp(spec: string, from: string): string | null {
   let dir = resolve(from)
   for (;;) {
     const candidate = join(dir, 'node_modules', spec)
@@ -87,7 +80,34 @@ function packageDir(spec: string, from: string): string | null {
   }
 }
 
-/** A path is anything that looks like one; everything else is a package. */
+let globalRootCache: string | null | undefined
+
+/** Where `npm install -g` puts packages. Asked once, and only when the local walk found nothing. */
+function globalRoot(): string | null {
+  if (globalRootCache !== undefined) return globalRootCache
+  const run = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+  const path = run.status === 0 ? run.stdout.trim() : ''
+  globalRootCache = path !== '' && statSync(path, { throwIfNoEntry: false })?.isDirectory() ? path : null
+  return globalRootCache
+}
+
+/**
+ * The config directory first, then wherever this executable lives, then the global npm root.
+ * A plugin installed with `-g` sits beside the CLI, so the second lookup usually answers.
+ */
+function packageDir(spec: string, from: string): string | null {
+  const local = walkUp(spec, from)
+  if (local !== null) return local
+
+  const beside = walkUp(spec, dirname(process.execPath))
+  if (beside !== null) return beside
+
+  const root = globalRoot()
+  if (root === null) return null
+  const candidate = join(root, spec)
+  return statSync(join(candidate, 'package.json'), { throwIfNoEntry: false })?.isFile() ? candidate : null
+}
+
 function locate(spec: string, from: string): string {
   const expanded = expandHome(spec)
   let target: string | null
@@ -96,7 +116,7 @@ function locate(spec: string, from: string): string {
   } else {
     target = packageDir(expanded, from)
     if (target === null) {
-      fail(spec, `cannot be resolved from ${from}`, 'install it, or give a path starting with ./')
+      fail(spec, `cannot be resolved from ${from}`, 'install it globally, beside your config, or give a path starting with ./')
     }
   }
   return statSync(target, { throwIfNoEntry: false })?.isDirectory() ? entryOf(target) : target

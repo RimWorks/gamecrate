@@ -19,7 +19,6 @@ await mock.module('../src/docker/run', () => {
   return {
     ...real,
     capture: (argv: string[]) => {
-      // presence: `docker image inspect --format {{.Id}}`. the label reads pass their own format.
       if (argv.includes('{{.Id}}')) {
         return Promise.resolve(state.present ? { ...ok, stdout: 'sha256:abc\n' } : gone)
       }
@@ -119,7 +118,7 @@ describe('preflight image preconditions', () => {
   test('an image that is neither local nor pullable points at steam build', async () => {
     await withImage({ present: false }, async () => {
       const problems = await preflight(plan('headed'))
-      expect(problems.some((p) => p.suggestion === 'gamecrate steam build atlas')).toBe(true)
+      expect(problems.some((p) => p.suggestion === 'gamecrate steam build --game atlas')).toBe(true)
     })
   })
 

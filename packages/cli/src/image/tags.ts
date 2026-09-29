@@ -1,5 +1,6 @@
 export interface TagInput {
-  version: string
+  /** null when the version is unknown, as on a skipped cell. The versioned forms drop out. */
+  version: string | null
   branch: string
   variant: string
   /** True when this branch is the first entry of steamBuild.branches. */
@@ -19,6 +20,7 @@ export function sanitizeVersion(raw: string, fallback: string): string {
   const mapped = first.replaceAll(/[^\w.-]/g, '-')
   // trimmed by hand: /-+$/ backtracks from every position on an all-dash string, which is what
   // a version of nothing but invalid characters becomes
+  // /-+$/ backtracks from every position on an all-dash string
   let end = mapped.length
   while (end > 0 && mapped.charAt(end - 1) === '-') end -= 1
   const trimmed = mapped.slice(0, end)
@@ -36,18 +38,22 @@ export function versionPrefixes(version: string): string[] {
 }
 
 /** Every tag this cell writes. Versioned forms first, latest forms after. */
+/**
+ * Every tag this cell writes, versioned forms first. A null version leaves only the moving
+ * forms, so the first entry is this cell's own `latest`.
+ */
 export function tagsFor(input: TagInput): string[] {
   const scope = input.defaultBranch ? '' : `-${input.branch}`
   const versioned: string[] = []
   const latest: string[] = []
   if (input.defaultVariant) {
-    versioned.push(`${input.version}${scope}`)
+    if (input.version !== null) versioned.push(`${input.version}${scope}`)
     latest.push(`latest${scope}`)
   }
-  versioned.push(`${input.version}${scope}-${input.variant}`)
+  if (input.version !== null) versioned.push(`${input.version}${scope}-${input.variant}`)
   latest.push(`latest${scope}-${input.variant}`)
   // scoped like every other moving tag: two branches on one repo must not race for "1.6"
-  for (const prefix of versionPrefixes(input.version)) {
+  for (const prefix of versionPrefixes(input.version ?? '')) {
     if (input.defaultVariant) latest.push(`${prefix}${scope}`)
     latest.push(`${prefix}${scope}-${input.variant}`)
   }

@@ -18,7 +18,6 @@ async function scratch(): Promise<string> {
   return dir
 }
 
-/** Returns the file path so a test can read it back. */
 async function seed(name: string, text: string): Promise<string> {
   const file = join(await scratch(), name)
   await writeFile(file, text)
@@ -27,8 +26,6 @@ async function seed(name: string, text: string): Promise<string> {
 
 describe('writeConfig json', () => {
   test('leaves comments and untouched bytes alone', async () => {
-    // irregular on purpose: a re-serializer cannot reproduce `   :   `, the blank line, or a
-    // 3-space indent, so byte equality here is a real byte-minimality check.
     const before = [
       '{',
       '   // which game this is',
@@ -87,9 +84,6 @@ describe('writeConfig yaml', () => {
   })
 
   test('a seeded empty map does not collapse the branch it grows', async () => {
-    // `config edit` seeds `games: {}`; without the un-flow, the first mods add writes
-    // `games: { rimworld: { library: { acme.mod: { path: /a/b } } } }` and every later write
-    // compounds it.
     const file = await seed('gamecrate.yml', 'games: {}\n')
 
     await writeConfig(file, [{ path: ['games', 'rimworld', 'library', 'acme.mod'], value: { path: '/a/b' } }])
@@ -149,7 +143,6 @@ describe('writeConfig file handling', () => {
   test('restores mode bits the umask would have masked off', async () => {
     const file = await seed('gamecrate.json', '{\n  "game": "rimworld"\n}\n')
     await chmod(file, 0o666)
-    // safe only because bun runs one file at a time per worker, and the finally puts it back.
     const umask = process.umask(0o022)
     try {
       await writeConfig(file, [{ path: ['profile'], value: 'dev' }])
@@ -195,8 +188,6 @@ describe('writeConfig file handling', () => {
 
 describe('writeConfig guards', () => {
   test('an empty edit list neither reflows a yaml file nor touches a missing one', async () => {
-    // both halves of the early return: it runs before the yaml round trip and before realpath,
-    // and each of those is destructive on its own.
     const before = 'game:    rimworld\n#   kept\nprofiles:   {dev:   1}\n'
     const file = await seed('gamecrate.yml', before)
     await writeConfig(file, [])
@@ -204,8 +195,6 @@ describe('writeConfig guards', () => {
 
     const missing = join(await scratch(), 'gamecrate.yml')
     await expect(writeConfig(missing, [])).resolves.toBeUndefined()
-    // the other side: with an edit, the same missing file is an error, so the guard is what
-    // made the zero-edit call safe rather than the file being writable
     await expect(writeConfig(missing, [{ path: ['game'], value: 'rimworld' }])).rejects.toThrow()
   })
 

@@ -29,7 +29,6 @@ describe('shouldCheck', () => {
     expect(out).toEqual({ check: false, reason: 'disabled' })
   })
 
-  // the check costs four seconds and a steam session, so an image we did not build never pays
   test('an image with no buildid label is not ours to check', () => {
     const foreign = { ...ours, buildid: null }
     expect(shouldCheck({ facts: foreign, spec: undefined, lastCheckedAt: null, now: NOW }).reason).toBe('not-ours')

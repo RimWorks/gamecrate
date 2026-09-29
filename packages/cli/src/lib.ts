@@ -13,6 +13,7 @@ export type {
   ModEntry,
   ModEntryObject,
   ModManifest,
+  ModSettingsFile,
   ModeName,
   ModsDirSpec,
   NetworkPolicy,

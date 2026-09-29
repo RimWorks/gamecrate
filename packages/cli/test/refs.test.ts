@@ -67,7 +67,6 @@ describe('extractRefs', () => {
 })
 
 describe('the version link', () => {
-  // Version.txt carries a build too, and a folder named after the build would pin nothing
   test('takes major.minor out of a rimworld version line', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-ver-'))
     await writeFile(join(dir, 'Version.txt'), '1.6.4633 rev1254\n')

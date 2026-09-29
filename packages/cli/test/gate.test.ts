@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 
 import { decideGate } from '../src/image/gate'
 
-/** A present, labelled, current image. Each test changes only what it is about. */
 const current = { published: '19283746', imagePresent: true, labelled: '19283746', force: false }
 
 describe('decideGate', () => {
@@ -25,7 +24,6 @@ describe('decideGate', () => {
   })
 
   test('an absent image beats a label left over from an earlier read', () => {
-    // labelled matches published here. reading it would skip a cell that has no image
     expect(decideGate({ ...current, imagePresent: false })).toEqual({
       build: true,
       reason: 'no-image',

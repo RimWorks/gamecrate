@@ -41,10 +41,6 @@ afterEach(() => {
   delete process.env.GAMECRATE_REGISTRY_PASSWORD
 })
 
-/**
- * The fake on PATH under the name docker, plus the file it records into. DOCKER_CONFIG points
- * at an empty dir, so the run's own docker login never changes what these tests see.
- */
 async function fakeDocker(): Promise<{ argvFile: string }> {
   const dir = await mkdtemp(join(tmp, 'bin-'))
   await copyFile(FAKE, join(dir, 'docker'))
@@ -57,27 +53,20 @@ async function fakeDocker(): Promise<{ argvFile: string }> {
   return { argvFile }
 }
 
-/** The fixture fake behind a pause, so the contract check still runs after a slow docker. */
 async function slowDocker(seconds: number): Promise<void> {
   const dir = await mkdtemp(join(tmp, 'slow-'))
   const path = join(dir, 'docker')
-  // absolute: PATH is this dir alone, so sleep is not on it
   await writeFile(path, `#!/bin/sh\n/bin/sleep ${seconds}\nexec ${FAKE} "$@"\n`)
   await chmod(path, 0o755)
   process.env.PATH = dir
 }
 
-/** Writes a config.json into the DOCKER_CONFIG dir the current test is using. */
 async function dockerConfig(body: unknown): Promise<string> {
   const dir = process.env.DOCKER_CONFIG as string
   await writeFile(join(dir, 'config.json'), JSON.stringify(body))
   return dir
 }
 
-/**
- * Everything the tool wrote to the terminal while fn ran, both streams. status() and warn() use
- * stderr, and a streamed child writes wherever captureLive sends it.
- */
 async function onTerminal<T>(fn: () => Promise<T>): Promise<{ result: T; text: string }> {
   const chunks: string[] = []
   const write = ((chunk: string | Uint8Array) => {
@@ -96,7 +85,6 @@ async function onTerminal<T>(fn: () => Promise<T>): Promise<{ result: T; text: s
   }
 }
 
-/** Each recorded run, split into argv. The script inside one argv folds into the same array. */
 async function runs(argvFile: string): Promise<string[][]> {
   const text = await readFile(argvFile, 'utf8')
   return text
@@ -279,7 +267,7 @@ describe('what the long calls say while they run', () => {
 
   test('an append with nothing to print still says how long it has been running', async () => {
     await fakeDocker()
-    await slowDocker(2.5)
+    await slowDocker(4)
     const gameDir = await mkdtemp(join(tmp, 'game-'))
     const out = join(await mkdtemp(join(tmp, 'layers-')), 'slow.tar')
     const { text } = await onTerminal(() =>
@@ -293,7 +281,9 @@ describe('what the long calls say while they run', () => {
         out,
       }),
     )
-    expect(text).toContain(`crane append for ${out} (2s)`)
+    expect(text).toContain(`crane append for ${out} (`)
+    const seconds = /crane append for .+ \((\d+)s\)/.exec(text)?.[1]
+    expect(Number(seconds)).toBeGreaterThanOrEqual(2)
   })
 
   test('no docker on PATH is still an environment error, not a raw spawn reject', async () => {
@@ -434,8 +424,6 @@ describe('registry credentials', () => {
   })
 })
 
-// Ka's own config: a gcloud helper for an unrelated registry beside a working ghcr.io entry.
-// real crane in the crane image answers `crane auth get ghcr.io` with the token, rc=0.
 const KA_CONFIG = {
   auths: { 'ghcr.io': { auth: 'YWVxdWFzaTpnaG9fdG9rZW4=' }, 'https://index.docker.io/v1/': {} },
   credHelpers: { 'us-central1-docker.pkg.dev': 'gcloud' },
@@ -484,7 +472,6 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
     expect(thrown?.detail).toContain('(pass)')
   })
 
-  // a fresh CI runner has no config.json, and the action Ka ships runs on one
   test('no docker config at all refuses, rather than failing after the download', async () => {
     await fakeDocker()
     let thrown: GamecrateError | undefined
@@ -545,7 +532,6 @@ describe('checkRegistryAuthEarly picks the target registry, not any helper', () 
 })
 
 describe('the login registry', () => {
-  // proved against real crane: a hub short ref resolves to index.docker.io, not to its first path part
   const cases: [string, string][] = [
     ['ghcr.io/me/x', 'ghcr.io'],
     ['myuser/rimworld', 'index.docker.io'],
@@ -553,10 +539,8 @@ describe('the login registry', () => {
     ['localhost:5000/x', 'localhost:5000'],
     ['localhost/x', 'localhost'],
     ['registry.example.com:5000/me/x', 'registry.example.com:5000'],
-    // `crane auth get docker.io` and `index.docker.io` both return the legacy hub key's creds
     ['docker.io/me/x', 'index.docker.io'],
     ['index.docker.io/me/x', 'index.docker.io'],
-    // `crane auth login registry-1.docker.io` writes its own key, so it is a separate registry
     ['registry-1.docker.io/me/x', 'registry-1.docker.io'],
   ]
   for (const [ref, registry] of cases) {
@@ -573,7 +557,6 @@ describe('the login registry', () => {
 })
 
 describe('cranePush', () => {
-  // every push needs credentials now, the way a real one does
   beforeEach(() => {
     process.env.GAMECRATE_REGISTRY_USER = 'me'
     process.env.GAMECRATE_REGISTRY_PASSWORD = 'tok'

@@ -91,8 +91,6 @@ export async function listRuns(dataRoot: string, docker: Docker = dockerPs): Pro
   return out
 }
 
-// on a shared container name a live lock beats a dead one, and a merged live pid is never
-// replaced, so readdir order stops mattering either way
 function mergeLock(match: RunRecord, lock: LockRecord): void {
   const stale = match.pid !== undefined && !isRunning(match.pid, match.startedAt)
   if (match.pid !== undefined && !(stale && isRunning(lock.pid, lock.startedAt))) return

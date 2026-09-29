@@ -1,15 +1,11 @@
 import { readdir, stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import { join, relative } from 'node:path'
 
 import type { StaleReport } from '../types'
 
-/** Directories that never hold a mod's own sources or shipped assemblies. */
 const SKIP_DIRS = new Set(['.git', '.retired', '.vs', 'bin', 'node_modules', 'obj'])
 
-/**
- * A mod's Textures tree alone runs to five figures, so the cap has to clear it. A walk that
- * stops before it reaches Source/ reports "fresh" for a mod it never looked at.
- */
 const ENTRY_LIMIT = 20_000
 
 export interface Timestamped {
@@ -26,8 +22,8 @@ export interface BuildTimes {
 }
 
 /** One walk answers both questions: is this stale, and which files say so. */
-export async function scanBuildTimes(dir: string): Promise<BuildTimes> {
-  const state: WalkState = { root: dir, times: { sourceTimes: [] }, budget: ENTRY_LIMIT }
+export async function scanBuildTimes(dir: string, limit = ENTRY_LIMIT): Promise<BuildTimes> {
+  const state: WalkState = { root: dir, times: { sourceTimes: [] }, budget: limit }
   await walk(state, dir, false)
   return state.times
 }
@@ -45,11 +41,11 @@ async function walk(state: WalkState, current: string, inAssemblies: boolean): P
   } catch {
     return
   }
-  for (const entry of entries) {
+  for (const entry of ordered(entries)) {
     if (state.budget-- <= 0) return
     const path = join(current, entry.name)
     if (entry.isDirectory()) {
-      // RimWorld ships per-version Assemblies dirs, so it is any depth, not just the root.
+      // RimWorld ships per-version Assemblies dirs, at any depth
       if (!SKIP_DIRS.has(entry.name.toLowerCase())) {
         await walk(state, path, inAssemblies || entry.name === 'Assemblies')
       }
@@ -57,6 +53,16 @@ async function walk(state: WalkState, current: string, inAssemblies: boolean): P
     }
     if (entry.isFile()) await record(state, path, entry.name, inAssemblies)
   }
+}
+
+const WANTED_DIRS = new Set(['source', 'assemblies'])
+
+function ordered(entries: Dirent[]): Dirent[] {
+  const rank = (entry: Dirent): number => {
+    if (entry.isDirectory()) return WANTED_DIRS.has(entry.name.toLowerCase()) ? 0 : 2
+    return 1
+  }
+  return [...entries].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
 }
 
 async function record(state: WalkState, path: string, name: string, inAssemblies: boolean): Promise<void> {
@@ -81,11 +87,6 @@ async function record(state: WalkState, path: string, name: string, inAssemblies
   }
 }
 
-/**
- * One build writes a dll and touches a source microseconds apart, so a bare `>` calls a clean
- * build stale. Measured on two real mods: 0.054ms and 7ms. A forgotten rebuild is minutes old
- * at least, so a second separates the two without hiding one.
- */
 const SKEW_MS = 1000
 
 function newerThan(source: number, assembly: number): boolean {
@@ -119,7 +120,6 @@ export function staleReport(times: BuildTimes): StaleReport | null {
   }
 }
 
-/** Lines up the continuation under the message, past the `warning: ` that warn() adds. */
 const INDENT = ' '.repeat('warning: '.length)
 
 export function staleWarning(packageId: string, report: StaleReport, now = Date.now()): string {

@@ -2,7 +2,7 @@
 
 Back to the [`@gamecrate/cli` README](../README.md).
 
-A profile names mods by package id. This page explains where gamecrate looks for each id. It
+A profile lists mods by package id. This page explains where gamecrate looks for each id. It
 also covers how the `library` block pins one id to one place, and what a git-backed pin does on
 every launch.
 The commands that write the library for you are on [their own page](mods-commands.md).
@@ -14,10 +14,10 @@ The scan visits, in this order:
 
 1. The `Data/` directory inside the game install, which holds the core game and the official DLC.
 2. Every `scanRoots` entry, in the order you wrote them. A root walks down to its `maxDepth`,
-   never descends into a mod once it finds one, and skips any `exclude` glob you gave it.
+never descends into a mod once it finds one, and skips any `exclude` glob you gave it.
 3. The git clone cache under `<dataRoot>/sources`, described below.
 4. The workshop download root under `<dataRoot>/steam`, then `workshopRoot`. Each one goes one
-   level deep, numeric directories only.
+level deep, numeric directories only.
 
 A bare id resolves as an exact package id first, then through the game's `aliases` map, then as
 the last dot-segment of an id. A short name that fits more than one mod fails with `"<name>" is
@@ -28,11 +28,11 @@ When two directories declare the same package id, one wins:
 
 1. A `--use <packageId>=<path>` override.
 2. A directory inside a worktree you selected with `--worktree`, `$GAMECRATE_WORKTREE`, or by
-   standing in it.
+standing in it.
 3. A non-workshop copy over a workshop copy.
 4. A primary checkout over a linked git worktree the scan wandered into.
 5. The earlier scan root. The game install beats every root you configured, and every root you
-   configured beats the clone cache.
+configured beats the clone cache.
 6. Between two clones of one repository in the cache, the one cloned most recently.
 
 Two candidates that tie on every rule fail the command with `resolved by directory name: N
@@ -60,13 +60,13 @@ games:
         subdir: Mod
 ```
 
-Each entry carries exactly one of `path`, `workshop`, or `git`. Two of them is a config error
-that names both keys. An entry with none of the three fails the same way.
+Each entry has exactly one of `path`, `workshop`, or `git`. Two of them is a config error
+that lists both keys. An entry with none of the three fails the same way.
 
 `branch`, `tag`, and `commit` pin a git entry to one ref. An entry takes at most one of the
-three. `subdir` names the mod folder inside the repository, for a repo that holds the mod
+three. `subdir` is the mod folder inside the repository, for a repo that holds the mod
 somewhere below its root. All four keys need a `git` URL beside them, so a `path` or `workshop`
-entry that carries one fails with `"tag" needs a "git" url`. A `subdir` starting with `/`, or
+entry that has one fails with `"tag" needs a "git" url`. A `subdir` starting with `/`, or
 holding a `..` segment, fails as well.
 
 A pin resolves by its target directory and never consults the precedence ladder. So a pinned id
@@ -85,7 +85,7 @@ need no Steam account, no Steam client running, and no subscription to the item.
 A launch fetches every workshop item the profile reaches, then reads each downloaded manifest
 for workshop dependencies and fetches those too. That repeats for up to five rounds, so a
 dependency of a dependency still arrives. A chain still unresolved after five rounds is a
-launch problem that names the ids left over. Name them in the profile to get them in the first
+launch problem that lists the ids left over. Name them in the profile to get them in the first
 round.
 
 Mods you pin yourself count as well. A launch reads the manifest of every `path:` and `git:`
@@ -108,15 +108,13 @@ Every item lands in one place:
 <dataRoot>/steam/steamapps/workshop/content/<appId>/<id>
 ```
 
-gamecrate pins that with `+force_install_dir`, so the path does not change with the `steamcmd`
-you point it at. Left alone, each build picks its own: a host binary writes `.steam/SteamApps`,
-the `steamcmd/steamcmd` image writes `.local/share/Steam/steamapps`, and a Valve tarball writes
-`$HOME/Steam`.
+gamecrate pins that with `+force_install_dir`, so the path is the same whichever `steamcmd`
+build you point it at. Left alone, each build picks a different directory of its own.
 
 gamecrate scans that root, then `workshopRoot`. So for one item id, its own copy wins over the
 copy the Steam client downloaded.
 
-`gamecrate clean <game> --downloads` reclaims the space. It drops this game's item tree and the
+`gamecrate clean --downloads` reclaims the space. It drops this game's item tree and the
 `.acf` beside it. It keeps the `steamcmd` install, which is 200 MB that would re-download for
 nothing. The next launch fetches only what the profile asks for.
 
@@ -137,15 +135,14 @@ about the game, so no plugin guesses it. The key still has to appear in the merg
 `null` is the value a plugin ships.
 
 A null root costs you nothing but the Steam client's own copies, because gamecrate downloads
-its own. It is not a cause of failure, so nothing reports it. When a workshop item does not
-resolve, the message names the item, not this key:
+its own. When a workshop item does not resolve, the message points at the item, not this key:
 
 ```
 no mod matches "workshop:2009463077"
 ```
 
-Read the download warning printed with it for the reason. A failed download and a mod whose manifest
-does not parse both land here.
+Read the download warning printed with it for the reason. A failed download and a mod whose
+manifest does not parse both land here.
 
 For a game with workshop ids, `doctor` prints which `steamcmd` it would run and the download
 root, marking it when it does not exist yet.
@@ -199,18 +196,17 @@ says how old it is:
 warning: could not fetch https://example.com/mod.git, using 4f9c21e from 3d ago
 ```
 
-**A commit pin needs the server's cooperation.** gamecrate runs `git fetch origin <sha>`, which
-asks for one commit by name. That works over `file://` and against GitHub. Other hosts answer
-it only with `uploadpack.allowReachableSHA1InWant` turned on. A forge without that setting
-turns every sync of the pin into the preceding warning, even while the remote is healthy. Pin a
-`tag` instead when your forge refuses.
+**A commit pin needs support from the server.** gamecrate runs `git fetch origin <sha>`, which
+asks for one commit by name. GitHub and a `file://` remote both answer that. A host that does
+not turns every sync of the pin into the preceding warning, even while the remote is healthy.
+Pin a `tag` instead.
 
 `--dry-run` and `--print-plan` never fetch and never clone. They do still ask a remote for one
 thing: the default branch of an unpinned entry, through `git ls-remote`. A remote that cannot
 answer fails the command with `could not read the default branch of <url>` and exit `5`. Past
 that point, with no clone on disk, they stop with `no clone of <url> on disk` and exit `4`.
 
-`gamecrate mods <game>`, `verify` and `doctor` ask no remote at all. They read the cache alone,
+`gamecrate mods`, `verify` and `doctor` ask no remote at all. They read the cache alone,
 so a git pin with no clone yet reads as `no mod matches "<id>"`. An unpinned entry with two
 default-branch clones on disk is left to the scan, which picks the newer one.
 
@@ -223,9 +219,9 @@ shells out, so your SSH keys and credential helpers work as they do in a termina
 
 ### A clone is source, not a release
 
-Most mod repositories keep their build output out of git. A clone of one carries `.cs` sources
+Most mod repositories keep their build output out of git. A clone of one holds `.cs` sources
 and no assembly, which is exactly what the stale check looks for. Under the default
-`--build auto`, the first launch runs `dotnet build` against the mod's `.csproj` or `.slnx`.
+`build: auto`, the first launch runs `dotnet build` against the mod's `.csproj` or `.slnx`.
 A mod with no C# at all is never stale, so nothing builds.
 
 **So a git-pinned C# mod needs a working `dotnet` SDK on the host.** A failed build stops the
@@ -250,7 +246,9 @@ and container stay apart from the profile's.
 any `--worktree` flag you also typed, and an instance's configured `worktree`. Setting
 `GAMECRATE_WORKTREE=off` reads as unset.
 
-`--use <packageId>=<path>` forces one mod to load from a directory, whatever the profile or
-the library says. It is the only override that reaches a mod already in `preCore`, `core`, `dlc`
-or `base`. The directory must hold the manifest and declare the id you named, or the launch
-fails and tells you what it found there.
+`--use <packageId>=<path>` forces one mod to load from a directory, overriding both the profile
+and the library. It is the only override that reaches a mod already in `preCore`, `core`, `dlc` or
+`base`. Those four are game-level lists the plugin or your `games.<game>` block sets, and they are
+listed ahead of a profile's own `mods`. `core` is the base game, `dlc` its official expansions,
+`preCore` goes before `core`, and `base` after the DLC. The directory must hold the manifest and
+declare the id you named, or the launch fails and tells you what it found there.

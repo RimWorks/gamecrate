@@ -1,56 +1,51 @@
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type { Readable } from 'node:stream'
-import { STDOUT_LOG } from '../docker/run'
+import { activeSink, emit, useSink } from '../channels'
+import type { Channel, OutputRedirect } from '../channels'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
-import { GamecrateError, Exit } from '../types'
+import { GamecrateError, Exit, STDOUT_LOG } from '../types'
 
-/** Tool status. Never stdout: stdout belongs to the game. */
+/** Tool status. Never the data channel: that one belongs to machine-readable output. */
 export function status(message: string): void {
-  process.stderr.write(line(message))
+  emit('status', line(message))
 }
 
 export function warn(message: string): void {
-  process.stderr.write(line(`warning: ${message}`))
+  emit('status', line(`warning: ${message}`))
 }
 
-export interface OutputRedirect {
-  close(): void
+export interface CaptureOptions {
+  /** Append instead of truncating. The supervisor reopens a log its parent already opened. */
+  append?: boolean
+  /** Keep writing to whatever sink was already installed. A log file is a copy, not a swap. */
+  tee?: boolean
+  /** Channels that reach the terminal even when `tee` is off. `--quiet` keeps errors. */
+  always?: readonly Channel[]
 }
 
-export function redirectOutput(path: string, keep = false): OutputRedirect {
-  const fd = openSync(path, keep ? 'a' : 'w')
-  const stdout = process.stdout.write
-  const stderr = process.stderr.write
-  let open = true
-  const write = ((
-    chunk: string | Uint8Array,
-    encodingOrCallback?: BufferEncoding | (() => void),
-    callback?: () => void,
-  ) => {
-    append(fd, chunk)
-    const done = typeof encodingOrCallback === 'function' ? encodingOrCallback : callback
-    done?.()
-    return true
-  }) as typeof process.stdout.write
-  process.stdout.write = write
-  process.stderr.write = write
+/** No path and no tee discards, which is what `--quiet` alone asks for. */
+export function captureOutput(path: string | undefined, opts: CaptureOptions = {}): OutputRedirect {
+  if (path !== undefined) mkdirSync(dirname(path), { recursive: true })
+  const mode = opts.append === true ? 'a' : 'w'
+  const fd = path === undefined ? undefined : openSync(path, mode)
+  const inner = activeSink()
 
-  return {
-    close() {
-      if (!open) return
-      open = false
-      process.stdout.write = stdout
-      process.stderr.write = stderr
-      closeSync(fd)
+  return useSink({
+    write(channel, chunk) {
+      if (fd !== undefined) append(fd, chunk)
+      if (opts.tee === true || opts.always?.includes(channel) === true) inner.write(channel, chunk)
     },
-  }
+    close() {
+      if (fd !== undefined) closeSync(fd)
+    },
+  })
 }
 
-export async function forwardOutput(stream: Readable, target: NodeJS.WriteStream): Promise<void> {
-  for await (const chunk of stream) target.write(chunk as Buffer)
+export async function forwardOutput(stream: Readable, channel: Channel): Promise<void> {
+  for await (const chunk of stream) emit(channel, chunk as Buffer)
 }
 
 function line(message: string): string {
@@ -162,7 +157,7 @@ export function planPayload(plan: LaunchPlan): PlanPayload {
 export function printPlan(plan: LaunchPlan, asJson: boolean): void {
   const payload = planPayload(plan)
   if (asJson) {
-    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+    emit('data', `${JSON.stringify(payload, null, 2)}\n`)
     return
   }
 
@@ -191,7 +186,7 @@ export function printPlan(plan: LaunchPlan, asJson: boolean): void {
     out.push(`    ${mod.packageId.padEnd(width)}  ${notes.join(' ')}  ${mod.hostDir} -> ${mod.containerDir}`)
   }
   for (const warning of payload.warnings) out.push(`  warning: ${warning}`)
-  process.stdout.write(`${out.join('\n')}\n`)
+  emit('data', `${out.join('\n')}\n`)
 }
 
 /** Sortable lexicographically and safe on every filesystem: 20260730T142335123Z. */
@@ -236,10 +231,8 @@ export interface NoticeSchedule {
 export const WAIT_NOTICE: NoticeSchedule = { firstMs: 2_000, everyMs: 30_000 }
 
 /**
- * The elapsed label when a wait is due a line, else undefined. Driven by elapsed time and not
- * by poll count: a quarter-second poll would scroll a line per pass and read as its own kind
- * of broken, while a silent ten-minute image build looks exactly like a hang. Both branches
- * floor, so the label never claims more time than has passed.
+ * The elapsed label when a wait is due a line, else undefined. Both branches floor, so the
+ * label never claims more time than has passed.
  */
 export function waitNotice(
   waitedMs: number,
@@ -282,9 +275,13 @@ function linkCurrent(logsDir: string, target: string): void {
     lstatSync(link)
     unlinkSync(link)
   } catch {
-    // No previous link; nothing to clear.
   }
   symlinkSync(join('runs', basename(target)), link, 'dir')
+}
+
+function byteOrder(a: string, b: string): number {
+  if (a < b) return -1
+  return a > b ? 1 : 0
 }
 
 /** Landmine 7: a 180MB Player-prev.log was 68% of a profile tree. Retention is the cap. */
@@ -295,7 +292,7 @@ export function rotateRuns(logsDir: string, keep: number): string[] {
   const dirs = readdirSync(runsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort()
+    .sort(byteOrder)
     .reverse()
 
   const removed = dirs.slice(keep)

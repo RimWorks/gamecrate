@@ -39,7 +39,6 @@ export async function readVersion(dir: string): Promise<string | undefined> {
   return hit === null ? undefined : hit[1]
 }
 
-/** Both links, so a version matrix never reads `current` and gets whatever ran last. */
 async function pointBoth(game: string, dir: string): Promise<{ link: string; version?: string }> {
   const version = await readVersion(dir)
   const link = await point(refsLink(game), dir)
@@ -101,7 +100,7 @@ export async function extractRefs(game: string, config: GameConfig): Promise<Man
     throw new GamecrateError(
       `${ref} is not present, so ${game} has no assemblies to extract`,
       Exit.Environment,
-      `gamecrate steam build ${game}, or docker pull ${ref}`,
+      `gamecrate steam build --game ${game}, or docker pull ${ref}`,
     )
   }
 
@@ -150,7 +149,6 @@ async function dllCount(dir: string): Promise<number> {
   return entries.filter((name) => name.toLowerCase().endsWith('.dll')).length
 }
 
-/** Replaced rather than followed, so an old target never gets written through. */
 async function point(link: string, target: string): Promise<string> {
   await mkdir(dirname(link), { recursive: true })
   await unlink(link).catch(() => undefined)

@@ -36,6 +36,24 @@ export interface SteamBuildOptions {
   onlyBranches?: string[]
   /** --variant, repeatable. Undefined or empty means every declared variant. */
   onlyVariants?: string[]
+  /** --alias, repeatable. Extra aliases for every branch built, on top of its declared tags. */
+  extraTags?: string[]
+  /** The matrix, once it is narrowed, so a progress view can draw every row before work starts. */
+  onPlan?: (cells: readonly PlannedCell[]) => void
+  /** Each cell as it changes. `id` is `<branch>/<variant>`. */
+  onCell?: (id: string, patch: CellProgress) => void
+}
+
+export interface PlannedCell {
+  id: string
+  branch: string
+  variant: string
+  base: string
+}
+
+export interface CellProgress {
+  state?: 'running' | 'done' | 'skipped' | 'failed'
+  detail?: string
 }
 
 /**
@@ -43,7 +61,7 @@ export interface SteamBuildOptions {
  * never a throw, because a throw would lose the rows for the cells that worked.
  */
 export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions): Promise<CellResult[]> {
-  const branches = narrow(input.branches, opts.onlyBranches, 'branch', 'branches')
+  const branches = branchesFor(input.branches, opts.onlyBranches)
   const variants = narrow(input.variants, opts.onlyVariants, 'variant', 'variants')
   // before the first download, and only on a push: a --load build never talks to a registry
   if (opts.push) checkRegistryAuthEarly(input.image)
@@ -51,6 +69,17 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   const defaultBranch = input.branches[0]!.name
   const defaultVariant = input.variants[0]!.name
   const results: CellResult[] = []
+
+  opts.onPlan?.(
+    branches.flatMap((branch) =>
+      variants.map((variant) => ({
+        id: `${branch.name}/${variant.name}`,
+        branch: branch.name,
+        variant: variant.name,
+        base: variant.base,
+      })),
+    ),
+  )
 
   for (const branch of branches) {
     const published = await publishedBuildId(opts.config, input.steamAppId, branch.name).catch(() => null)
@@ -61,6 +90,16 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
     }
   }
   return results
+}
+
+/**
+ * The branches --beta asked for, in the order it asked. A name the config never declared is
+ * built as itself, because steam owns the branch list and no config here can enumerate it.
+ */
+export function branchesFor(all: SteamBranch[], only: string[] | undefined): SteamBranch[] {
+  if (only === undefined || only.length === 0) return all
+  const declared = new Map(all.map((branch) => [branch.name, branch]))
+  return only.map((name) => declared.get(name) ?? { name })
 }
 
 function narrow<T extends { name: string }>(
@@ -94,11 +133,17 @@ interface CellContext {
 async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellContext): Promise<CellResult> {
   const { branch, variant } = ctx
   const row = { branch: branch.name, variant: variant.name }
+  const id = `${branch.name}/${variant.name}`
   // a cell can run for forty minutes, so every decision says itself as it is made
-  const say = (text: string): void => status(`${branch.name}/${variant.name}  ${text}`)
+  const say = (text: string): void => {
+    opts.onCell?.(id, { detail: text })
+    status(`${id}  ${text}`)
+  }
+  opts.onCell?.(id, { state: 'running' })
   // a base: 'none' variant appends onto scratch, so its config carries no architecture and
   // docker build --label refuses it. it is a registry artifact, and nothing local can run it
   if (!opts.push && variant.base === 'none') {
+    opts.onCell?.(id, { state: 'skipped', detail: 'reference-only, use --push' })
     say('skipped, reference-only, use --push')
     return { ...row, status: 'skipped', reason: 'reference-only, use --push', tags: [] }
   }
@@ -107,11 +152,11 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     variant: variant.name,
     defaultBranch: branch.name === ctx.defaultBranch,
     defaultVariant: variant.name === ctx.defaultVariant,
-    aliases: branch.tags,
+    aliases: [...(branch.tags ?? []), ...(opts.extraTags ?? [])],
   }
   // the version is unknown before the download, so the gate reads this cell's moving tag
-  const probe = tagsFor({ version: '0', ...tagInput })
-  const gateRef = `${input.image}:${probe.find((tag) => tag.startsWith('latest'))!}`
+  const moving = tagsFor({ version: null, ...tagInput })
+  const gateRef = `${input.image}:${moving[0]!}`
 
   const found = await readGate(gateRef, opts)
   const decision = decideGate({
@@ -121,8 +166,15 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     force: opts.force,
   })
   if (!decision.build) {
+    try {
+      await moveTags(input.image, gateRef, moving.slice(1), opts)
+    } catch (error) {
+      opts.onCell?.(id, { state: 'failed', detail: message(error) })
+      return { ...row, status: 'failed', reason: message(error), tags: [] }
+    }
+    opts.onCell?.(id, { state: 'skipped', detail: decision.reason })
     say(`skipped, ${decision.reason}`)
-    return { ...row, status: 'skipped', reason: decision.reason, tags: [] }
+    return { ...row, status: 'skipped', reason: decision.reason, tags: moving }
   }
 
   try {
@@ -172,9 +224,23 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       rmSync(tar, { force: true })
       rmSync(`${tar}.layer.tar`, { force: true })
     }
+    opts.onCell?.(id, { state: 'done', detail: decision.reason })
     return { ...row, status: 'built', reason: decision.reason, tags }
   } catch (error) {
+    opts.onCell?.(id, { state: 'failed', detail: message(error) })
     return { ...row, status: 'failed', reason: message(error), tags: [] }
+  }
+}
+
+async function moveTags(
+  image: string,
+  ref: string,
+  tags: string[],
+  opts: SteamBuildOptions,
+): Promise<void> {
+  for (const tag of tags) {
+    if (opts.push) await craneTag(ref, tag)
+    if (opts.load) await dockerTag(ref, `${image}:${tag}`)
   }
 }
 
@@ -220,7 +286,7 @@ function labelsFor(input: SteamBuildInput, ctx: CellContext, base: string | null
     'gamecrate.variant': ctx.variant.name,
     'gamecrate.branch': ctx.branch.name,
     'gamecrate.executable': ctx.branch.executable?.[ctx.variant.name] ?? ctx.variant.executable ?? input.executable,
-    'gamecrate.launcher': ctx.variant.base === 'proton' ? 'proton' : 'direct',
+    'gamecrate.launcher': ctx.variant.base === 'windows' ? 'proton' : 'direct',
   }
   if (ctx.published !== null) labels['steam.buildid'] = ctx.published
   if (base !== null) labels['gamecrate.runtime'] = base

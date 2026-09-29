@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
+import { PLUGIN_API_VERSION } from '../src/plugin'
 import { branchPassword, branchPasswordKey, resolveSteamBuildInput } from '../src/image/input'
 import { Exit } from '../src/types'
 import type { GamecrateError, RootConfig } from '../src/types'
@@ -24,7 +25,6 @@ afterEach(() => {
   }
 })
 
-/** A loadable v2 plugin package, with the two keys steam build needs. */
 async function writeSteamPlugin(dir: string, game: string, appId = 294100, steamBuild?: string): Promise<void> {
   await mkdir(join(dir, 'dist'), { recursive: true })
   await writeFile(
@@ -34,7 +34,7 @@ async function writeSteamPlugin(dir: string, game: string, appId = 294100, steam
   await writeFile(
     join(dir, 'dist', 'plugin.js'),
     `export default {
-    apiVersion: 2,
+    apiVersion: ${PLUGIN_API_VERSION},
     game: ${JSON.stringify(game)},
     defaults: {
       steamAppId: ${appId},
@@ -45,7 +45,7 @@ async function writeSteamPlugin(dir: string, game: string, appId = 294100, steam
         steamBuild ??
         `{
         branches: [{ name: 'public' }],
-        variants: [{ name: 'linux', base: 'xvfb', include: [] }],
+        variants: [{ name: 'linux', base: 'linux', include: [] }],
       }`
       },
     },
@@ -85,8 +85,6 @@ describe('branchPassword', () => {
     expect(branchPassword({ name: 'unstable', password: true })).toBe('bare')
   })
 
-  // the bare variable applies to every branch in a build, so it stays behind password: true.
-  // the keyed one names its branch, so it cannot land on the wrong one.
   test('the bare variable alone never answers for an undeclared branch', () => {
     process.env.STEAM_BRANCH_PASSWORD = 'bare'
     expect(branchPassword({ name: 'beta' })).toBeUndefined()
@@ -126,14 +124,12 @@ describe('resolveSteamBuildInput', () => {
     expect(input.versionFile).toBe('Version.txt')
     expect(input.gamePath).toBe('/game')
     expect(input.variants.map((v) => v.name)).toEqual(['linux'])
-    // --load has no registry to name, so the repo defaults
     expect(input.image).toBe('gamecrate/atlas-game')
     expect(existsSync(join(cwd, '.gamecrate.yaml'))).toBe(false)
   })
 
   test('--plugin overrides the @gamecrate/<game> convention', async () => {
     const cwd = await mkdtemp(join(tmp, 'plugin-'))
-    // the convention path exists and declares a different appid, to prove it is skipped
     await writeSteamPlugin(join(cwd, 'node_modules', '@gamecrate', 'atlas'), 'atlas', 1)
     const explicit = join(cwd, 'checkout')
     await writeSteamPlugin(explicit, 'atlas', 294100)
@@ -142,7 +138,6 @@ describe('resolveSteamBuildInput', () => {
     expect(input.steamAppId).toBe(294100)
   })
 
-  // a CI runner has no config file, so validateConfig never sees the plugin's own declarations
   test('a plugin with a bad variant is refused with no config file present', async () => {
     const cwd = await mkdtemp(join(tmp, 'badvariant-'))
     await writeSteamPlugin(
@@ -151,7 +146,7 @@ describe('resolveSteamBuildInput', () => {
       294100,
       `{
         branches: [{ name: 'public' }],
-        variants: [{ name: 'windows', depot: 'windows', base: 'xvfb', include: [] }],
+        variants: [{ name: 'windows', depot: 'windows', base: 'linux', include: [] }],
       }`,
     )
     await expect(resolveSteamBuildInput('atlas', null, {}, cwd)).rejects.toThrow(/steamBuild is wrong/)
@@ -163,7 +158,7 @@ describe('resolveSteamBuildInput', () => {
       join(cwd, 'node_modules', '@gamecrate', 'atlas'),
       'atlas',
       294100,
-      `{ branches: [], variants: [{ name: 'linux', base: 'xvfb', include: [] }] }`,
+      `{ branches: [], variants: [{ name: 'linux', base: 'linux', include: [] }] }`,
     )
     await expect(resolveSteamBuildInput('atlas', null, {}, cwd)).rejects.toThrow(/steamBuild is wrong/)
   })
@@ -203,7 +198,6 @@ describe('resolveSteamBuildInput', () => {
     const configFile = join(home, 'profiles.json')
     await writeFile(configFile, JSON.stringify({ plugins: ['./fakeplugin'] }))
     await writeSteamPlugin(join(home, 'fakeplugin'), 'atlas')
-    // a directory with no plugin anywhere under it, standing in for "run it from somewhere else"
     const cwd = await mkdtemp(join(tmp, 'elsewhere-'))
     const config = { dataRoot: join(home, 'data'), plugins: ['./fakeplugin'], games: {} } as unknown as RootConfig
 
@@ -218,7 +212,6 @@ describe('resolveSteamBuildInput', () => {
     await writeSteamPlugin(join(cwd, 'node_modules', '@gamecrate', 'atlas'), 'atlas')
     const config = { dataRoot: join(home, 'data'), games: {} } as unknown as RootConfig
 
-    // no plugins key, so the specs came from the convention and belong to where you are standing
     const input = await resolveSteamBuildInput('atlas', config, {}, cwd, configFile)
     expect(input.steamAppId).toBe(294100)
   })
@@ -226,7 +219,6 @@ describe('resolveSteamBuildInput', () => {
   test('--plugin still resolves from the cwd even when a config lists its own', async () => {
     const home = await mkdtemp(join(tmp, 'cfgflag-'))
     const configFile = join(home, 'profiles.json')
-    // the config's plugin declares a different appid, to prove the flag is not resolved against it
     await writeSteamPlugin(join(home, 'fakeplugin'), 'atlas', 1)
     const cwd = await mkdtemp(join(tmp, 'flag-'))
     await writeSteamPlugin(join(cwd, 'fakeplugin'), 'atlas', 294100)
@@ -244,7 +236,6 @@ describe('resolveSteamBuildInput', () => {
       games: { atlas: { steamBuild: { branches: [{ name: 'unstable', password: true }] } } },
     } as unknown as RootConfig
     const input = await resolveSteamBuildInput('atlas', config, {}, cwd)
-    // the plugin declares public. a replace would drop it and move which branch is the default
     expect(input.branches.map((b) => b.name)).toEqual(['public', 'unstable'])
   })
 })

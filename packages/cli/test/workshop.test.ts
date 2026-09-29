@@ -14,7 +14,6 @@ import type { GameConfig, ModEntry, ModManifest, ParsedArgs, ProfileConfig, Root
 const FAKE = fileURLToPath(new URL('./fixtures/fake-steamcmd-deps.sh', import.meta.url))
 
 let tmp = ''
-/** One entry per POST to steam, holding the ids that call asked about. Rounds are its length. */
 let asked: string[][] = []
 
 beforeAll(async () => {
@@ -34,10 +33,6 @@ afterEach(() => {
   asked = []
 })
 
-/**
- * Steam answering about nothing, which leaves `checkDrift` with the items that are not on disk.
- * Every test runs through this, so none of them can reach the network.
- */
 function stubSteam(): void {
   globalThis.fetch = (async (_url: unknown, init: { body: URLSearchParams }) => {
     asked.push([...init.body].filter(([k]) => k.startsWith('publishedfileids')).map(([, v]) => v))
@@ -45,7 +40,6 @@ function stubSteam(): void {
   }) as unknown as typeof fetch
 }
 
-/** `packageid <id>` and `dep <packageId> [url]`, one per line. `throw` is a broken manifest. */
 function parseDepManifest(text: string): ModManifest | null {
   const manifest: ModManifest = {
     packageId: '',
@@ -75,12 +69,10 @@ function itemUrl(id: string): string {
   return `https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`
 }
 
-/** The form 251 of 323 real About files use, which `new URL` reads with hostname "url". */
 function clientUrl(id: string): string {
   return `steam://url/CommunityFilePage/${id}`
 }
 
-/** A manifest naming `deps` by workshop url, the shape a real About file carries. */
 function about(id: string, deps: string[] = []): string {
   return [`packageid mod.${id}`, ...deps.map((dep) => `dep mod.${dep} ${itemUrl(dep)}`)].join('\n')
 }
@@ -90,14 +82,9 @@ interface World {
   config: RootConfig
   root: string
   manifests: string
-  /** lowercased packageId -> clone dir, the map prepareSources hands a launch. */
   sources?: Map<string, string>
 }
 
-/**
- * A data root of its own, wired to the fake steamcmd, with `bodies` laid out as the manifests
- * each id gets once it downloads.
- */
 async function setup(mods: ModEntry[], bodies: Record<string, string> = {}, profile: Partial<ProfileConfig> = {}): Promise<World> {
   const root = await mkdtemp(join(tmp, 'w-'))
   const manifests = join(root, 'manifests')
@@ -115,7 +102,6 @@ async function setup(mods: ModEntry[], bodies: Record<string, string> = {}, prof
   }
 }
 
-/** Where the fake writes, the pinned layout, and what a pre-seeded item goes into. */
 function hostRoot(w: World): string {
   return downloadRoot(w.config.dataRoot, w.game)
 }
@@ -126,7 +112,6 @@ async function seed(w: World, id: string, text: string): Promise<void> {
   await writeFile(join(dir, 'About.txt'), text)
 }
 
-/** The steam client's own tree, laid out the way the client writes it, with an .acf beside it. */
 async function seedClient(w: World, id: string, text: string): Promise<void> {
   const workshop = join(w.root, 'client', 'steamapps', 'workshop')
   w.game.workshopRoot = join(workshop, 'content', String(w.game.steamAppId))
@@ -141,6 +126,9 @@ async function seedClient(w: World, id: string, text: string): Promise<void> {
 function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
   return {
     subcommand: 'run',
+    verbTyped: false,
+    quiet: false,
+    plain: false,
     mods: [],
     without: [],
     only: [],
@@ -243,7 +231,6 @@ describe('prepareWorkshop', () => {
     const nested = join(w.root, 'clone', 'Mods', 'X', 'About')
     await mkdir(nested, { recursive: true })
     await writeFile(join(nested, 'About.txt'), about('local', ['222']))
-    // a manifest at the clone root would be found by mistake if subdir were ignored
     await mkdir(join(w.root, 'clone', 'About'), { recursive: true })
     await writeFile(join(w.root, 'clone', 'About', 'About.txt'), about('wrong'))
     w.game.profiles['p']!.mods = ['mod.local']
@@ -328,7 +315,6 @@ describe('prepareWorkshop', () => {
   test('allowFetch false asks steam nothing, runs nothing, and reports what is missing', async () => {
     stubSteam()
     const w = await setup(['workshop:111'], {})
-    // resolveSteamcmd throws on a path that is not executable, so a spawn here could not be silent
     w.config.steamcmd = { path: join(tmp, 'no-such-steamcmd') }
     await seed(w, '111', about('111', ['222']))
 

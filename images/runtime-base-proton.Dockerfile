@@ -38,10 +38,10 @@ RUN apt-get update \
         libxrandr2 \
         libxrender1 \
         locales \
-        x11-apps \
         mesa-vulkan-drivers \
         python3 \
         vulkan-tools \
+        x11-apps \
         xdotool \
         xvfb \
     && rm -rf /var/lib/apt/lists/*

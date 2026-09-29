@@ -3,7 +3,7 @@ import type { GameConfig, ModeName, Problem } from '../types'
 import { resolveProfile } from '../config/load'
 import { imageDigest, imageLabel } from './prepare'
 
-/** What an image says about itself. Every field is null for an image gamecrate did not build. */
+/** What an image says about itself. Every label field is null for an image gamecrate did not build. */
 export interface ImageFacts {
   present: boolean
   /** gamecrate.runtime: the base digest a steam build appended onto. */
@@ -58,7 +58,7 @@ export function imageProblem(input: {
 }): Problem | null {
   const { game, ref, mode, facts } = input
   const where = `/games/${game}/image/ref`
-  const build = `gamecrate steam build ${game}`
+  const build = `gamecrate steam build --game ${game}`
 
   if (ref.trim() === '') {
     return {
@@ -74,7 +74,6 @@ export function imageProblem(input: {
       suggestion: build,
     }
   }
-  // A headed launch runs the binary straight, so an image from anywhere can work.
   if (mode === 'headed') return null
   if (facts.runtime === null) {
     return {

@@ -7,19 +7,26 @@ import type { Readable, Writable } from 'node:stream'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { TextDecoder } from 'node:util'
 import type { DockerRunSpec } from '../types'
-import { Exit } from '../types'
+import { constants } from 'node:os'
+import { Exit, STDOUT_LOG } from '../types'
 import { toDockerArgs } from './spec'
+import { emit } from '../channels'
+import type { Channel } from '../channels'
 
 /** argv as one array, the way every caller here has it. */
 export function spawnArgv(argv: string[], stdio: StdioOptions, detached = false): ChildProcess {
   return spawn(argv[0]!, argv.slice(1), { stdio, detached })
 }
 
-/** Rejects when the spawn itself fails, so a missing binary lands where a bad exit code would. */
+/** A signal death reports a null code. 128+n is what a shell would have reported. */
 export function exited(proc: ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     proc.once('error', reject)
-    proc.once('close', (code) => resolve(code ?? 1))
+    proc.once('close', (code, signal) => {
+      if (code !== null) return resolve(code)
+      const number = signal === null ? undefined : constants.signals[signal]
+      resolve(number === undefined ? 1 : 128 + number)
+    })
   })
 }
 
@@ -59,17 +66,13 @@ export async function captureLive(
   const chunks: Buffer[] = []
   const keep = async (stream: Readable): Promise<void> => {
     for await (const chunk of stream) {
-      process.stderr.write(chunk as Buffer)
+      emit('status', chunk as Buffer)
       chunks.push(chunk as Buffer)
     }
   }
-  // awaited with the reads, as capture does: a spawn error rejects instead of going unhandled
   const [, , code] = await Promise.all([keep(proc.stdout!), keep(proc.stderr!), exited(proc)])
   return { code, text: Buffer.concat(chunks).toString('utf8') }
 }
-
-/** The tee'd combined stream, and what waitForMarker watches. */
-export const STDOUT_LOG = 'stdout.log'
 
 const MARKER_POLL_MS = 200
 
@@ -78,6 +81,8 @@ export interface RunOptions {
   logDir: string
   /** Passed to `docker stop --timeout` when a signal arrives. */
   stopTimeoutSeconds?: number
+  /** The dashboard reads the keyboard, so the container must not also hold fd 0. */
+  stdin?: 'inherit' | 'ignore'
 }
 
 /**
@@ -90,7 +95,7 @@ export async function runContainer(spec: DockerRunSpec, opts: RunOptions): Promi
   mkdirSync(opts.logDir, { recursive: true })
   const sink = createWriteStream(join(opts.logDir, STDOUT_LOG))
 
-  const proc = spawnArgv(['docker', ...toDockerArgs(spec)], ['inherit', 'pipe', 'pipe'])
+  const proc = spawnArgv(['docker', ...toDockerArgs(spec)], [opts.stdin ?? 'inherit', 'pipe', 'pipe'])
 
   let interrupted = false
   const onSignal = () => {
@@ -101,15 +106,13 @@ export async function runContainer(spec: DockerRunSpec, opts: RunOptions): Promi
   process.on('SIGINT', onSignal)
   process.on('SIGTERM', onSignal)
 
-  // Registered before the tees: an unhandled "error" event would take the process down, and
-  // draining the pipes first is what keeps a chatty container from filling them and stalling.
   const code = exited(proc)
   try {
-    await Promise.all([
-      tee(proc.stdout!, sink, process.stdout),
-      tee(proc.stderr!, sink, process.stderr),
+    const [, , status] = await Promise.all([
+      tee(proc.stdout!, sink, 'game'),
+      tee(proc.stderr!, sink, 'gameError'),
+      code,
     ])
-    const status = await code
     return interrupted ? Exit.Interrupted : status
   } finally {
     process.off('SIGINT', onSignal)
@@ -127,9 +130,8 @@ export async function stopContainer(name: string, timeoutSeconds: number): Promi
 }
 
 /**
- * Host-side marker watch. Watches container stdout AND the game's own log file: RimWorld
- * sends Verse.Log output to -logfile, never to stdout, so a stdout-only watch can never
- * match a RimWorld mod's message.
+ * Host-side marker watch. Watches container stdout AND the game's own log file: RimWorld sends
+ * Verse.Log output to -logfile, never to stdout.
  */
 export async function waitForMarker(
   sources: string[],
@@ -145,9 +147,6 @@ export async function waitForMarker(
     for (const path of await expandSources(sources)) {
       let state = seen.get(path)
       if (state === undefined) {
-        // Logs/Player-prev.log holds the PREVIOUS run's marker verbatim, so its history
-        // would match instantly. Skip what a file already held before this watch began,
-        // keyed on mtime so a fresh stdout.log is still read from byte zero.
         state = { offset: await staleSize(path, startedAt), tail: '', decoder: new TextDecoder() }
         seen.set(path, state)
       }
@@ -163,11 +162,9 @@ export async function waitForMarker(
 interface Watched {
   offset: number
   tail: string
-  /** Per path: a shared streaming decoder corrupts every file after the first. */
   decoder: TextDecoder
 }
 
-/** Bytes to skip: a file last written before the watch started is a previous run's log. */
 async function staleSize(path: string, startedAt: number): Promise<number> {
   return stat(path).then(
     (info) => (info.mtimeMs < startedAt ? info.size : 0),
@@ -175,7 +172,6 @@ async function staleSize(path: string, startedAt: number): Promise<number> {
   )
 }
 
-/** Never throws: one unreadable file must not reject the whole watch. */
 async function scan(
   path: string,
   state: Watched,
@@ -207,7 +203,6 @@ async function scan(
   }
 }
 
-/** A source is a file or a directory of logs; directories are rescanned every poll. */
 async function expandSources(sources: string[]): Promise<string[]> {
   const out: string[] = []
   for (const source of sources) {
@@ -228,9 +223,9 @@ async function expandSources(sources: string[]): Promise<string[]> {
   return out
 }
 
-async function tee(stream: Readable, sink: Writable, mirror: NodeJS.WriteStream): Promise<void> {
+async function tee(stream: Readable, sink: Writable, channel: Channel): Promise<void> {
   for await (const chunk of stream) {
-    mirror.write(chunk as Buffer)
+    emit(channel, chunk as Buffer)
     sink.write(chunk as Buffer)
   }
 }

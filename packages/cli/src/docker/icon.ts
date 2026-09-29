@@ -6,12 +6,10 @@ import { warn } from '../cli/output'
 
 const run = promisify(execFile)
 
-/** ChangeProperty, InternAtom, and the CARDINAL every icon is a list of. */
 const CHANGE_PROPERTY = 18
 const INTERN_ATOM = 16
 const CARDINAL = 6
 
-/** X pads every field to a 4-byte boundary. */
 function padding(length: number): number {
   return (4 - (length % 4)) % 4
 }
@@ -20,17 +18,13 @@ function displayNumber(display: string): string {
   return display.replace(/^.*:/, '').split('.')[0] ?? '0'
 }
 
-/**
- * The cookie for one display, out of the file XAUTHORITY names. Read through `xauth` rather
- * than parsed here: the file is a binary format with a host entry and a wildcard entry.
- */
 async function cookieFor(display: string): Promise<Buffer | null> {
   const wanted = displayNumber(display)
   try {
     const { stdout } = await run('xauth', ['list'])
     for (const line of stdout.split('\n')) {
       const match = /^\S+:(\d+)\s+MIT-MAGIC-COOKIE-1\s+([0-9a-f]+)$/.exec(line.trim())
-      if (match && match[1] === wanted) return Buffer.from(match[2]!, 'hex')
+      if (match?.[1] === wanted) return Buffer.from(match[2]!, 'hex')
     }
   } catch {
     return null
@@ -38,7 +32,6 @@ async function cookieFor(display: string): Promise<Buffer | null> {
   return null
 }
 
-/** The ARGB rows _NET_WM_ICON wants, decoded by ImageMagick so no format lives in here. */
 async function argbPixels(path: string, size: number): Promise<Buffer | null> {
   for (const tool of ['magick', 'convert']) {
     try {
@@ -150,7 +143,6 @@ export async function setWindowIcon(windowId: string, iconPath: string): Promise
     request.writeUInt8(32, 16)
     request.writeUInt32LE(body.length / 4, 20)
     socket.write(Buffer.concat([request, body]))
-    // the write is one-way, so give the server a moment before the socket closes under it
     await new Promise((resolve) => setTimeout(resolve, 100))
   } finally {
     socket.end()

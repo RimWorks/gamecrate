@@ -177,3 +177,30 @@ describe('automatic version tags', () => {
     expect(tags).not.toContain('1.6')
   })
 })
+
+test('a cli alias joins the branch tags, unscoped on the default variant', () => {
+  const tags = tagsFor({
+    version: '1.6.4633',
+    branch: 'version-1.6.4633',
+    variant: 'linux',
+    defaultBranch: false,
+    defaultVariant: true,
+    aliases: ['1.6'],
+  })
+
+  expect(tags).toContain('1.6')
+  expect(tags).toContain('1.6-linux')
+})
+
+test('a null version drops every versioned form and leads with latest', () => {
+  const tags = tagsFor({
+    version: null,
+    branch: 'version-1.6.4633',
+    variant: 'linux',
+    defaultBranch: false,
+    defaultVariant: true,
+    aliases: ['1.6'],
+  })
+
+  expect(tags).toEqual(['latest-version-1.6.4633', 'latest-version-1.6.4633-linux', '1.6', '1.6-linux'])
+})

@@ -24,7 +24,6 @@ afterAll(async () => {
 
 let counter = 0
 
-/** A mod dir with the given files, each `age` seconds old. */
 async function modDir(files: Record<string, number>): Promise<string> {
   const dir = join(tmp, `mod-${counter++}`)
   for (const [name, ageSeconds] of Object.entries(files)) {
@@ -38,7 +37,6 @@ async function modDir(files: Record<string, number>): Promise<string> {
   return dir
 }
 
-/** decideStale over a directory, which is how the caller in resolve.ts spells it. */
 const isStale = async (dir: string): Promise<boolean> => decideStale(await scanBuildTimes(dir))
 
 describe('isStale', () => {
@@ -48,7 +46,6 @@ describe('isStale', () => {
   })
 
   test('a source 7ms past the dll is one build, not a stale one', async () => {
-    // measured on a real mod: MSBuild wrote the dll and touched the source in the same instant
     const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 0.007 })
     expect(await isStale(dir)).toBe(false)
   })
@@ -68,7 +65,6 @@ describe('isStale', () => {
     expect(await isStale(dir)).toBe(false)
   })
 
-  // Auto-build has to fire for a mod nobody has compiled yet, so no assembly counts as stale.
   test('C# with no assembly at all is stale', async () => {
     expect(await isStale(await modDir({ 'Source/Main.cs': 0 }))).toBe(true)
   })
@@ -104,7 +100,6 @@ describe('staleReport', () => {
     expect(report.newerCount).toBe(2)
   })
 
-  // Never blocks: an XML-only mod is a normal mod, not a broken build.
   test('null for a same-build skew inside the second', async () => {
     const dir = await modDir({ 'Source/Main.cs': 0, 'Assemblies/Mod.dll': 0.007 })
     expect(staleReport(await scanBuildTimes(dir))).toBeNull()
@@ -153,5 +148,30 @@ describe('duration', () => {
 
   test('a clock skewed into the future reads as 0s, never negative', () => {
     expect(ago(Date.now() + 60_000)).toBe('0s ago')
+  })
+})
+
+describe('the entry cap', () => {
+  test('a bulky sibling cannot hide Source or Assemblies', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-stale-'))
+    for (const sub of ['Assemblies', 'Source', 'Textures']) await mkdir(join(dir, sub), { recursive: true })
+
+    await writeFile(join(dir, 'Assemblies', 'Mod.dll'), 'x')
+    await utimes(join(dir, 'Assemblies', 'Mod.dll'), new Date('2020-01-01'), new Date('2020-01-01'))
+    await writeFile(join(dir, 'Source', 'Mod.cs'), 'x')
+    await utimes(join(dir, 'Source', 'Mod.cs'), new Date('2026-01-01'), new Date('2026-01-01'))
+    for (let i = 0; i < 60; i++) await writeFile(join(dir, 'Textures', `t${i}.png`), 'x')
+
+    const times = await scanBuildTimes(dir, 12)
+    expect(times.newestAssembly?.path).toBe(join('Assemblies', 'Mod.dll'))
+    expect(times.newestSource?.path).toBe(join('Source', 'Mod.cs'))
+    expect(decideStale(times)).toBe(true)
+  })
+
+  test('the cap still bounds the walk', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-stale-'))
+    await mkdir(join(dir, 'Source'), { recursive: true })
+    for (let i = 0; i < 40; i++) await writeFile(join(dir, 'Source', `s${i}.cs`), 'x')
+    expect((await scanBuildTimes(dir, 5)).sourceTimes.length).toBeLessThanOrEqual(5)
   })
 })

@@ -1,11 +1,11 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import { readFromImage } from './prepare'
 import { expandHome } from '../config/load'
 import { GamecrateError, Exit } from '../types'
 import type { GamePlugin } from '../plugin'
-import type { GameConfig, LaunchPlan } from '../types'
+import type { GameConfig, LaunchPlan, ModSettingsFile } from '../types'
 
 async function readInstallVersion(
   game: GameConfig,
@@ -16,7 +16,6 @@ async function readInstallVersion(
   return plugin.parseVersion(raw.replace(/^﻿/, '').trim())
 }
 
-/** The host copy answers for a mounted game; an image-sourced one carries its own. */
 async function installVersionText(game: GameConfig): Promise<string | null> {
   if (game.gameFiles.source !== 'mount') {
     const ref = game.image?.ref
@@ -33,14 +32,11 @@ async function installVersionText(game: GameConfig): Promise<string | null> {
   }
 }
 
-/** The expansions actually installed, ordered by the game's declared dlc list. */
 async function readKnownExpansions(
   game: GameConfig,
   plugin: GamePlugin,
   warnings: string[],
 ): Promise<string[]> {
-  // An empty dlc list is the game saying it ships no expansions, so there is no Data/ to read
-  // and nothing to order by. Scanning anyway warns about a directory that was never expected.
   if (game.dlc.length === 0) return []
   const host = game.gameFiles.host
   if (game.gameFiles.source !== 'mount' || host === undefined) return [...game.dlc]
@@ -57,7 +53,6 @@ async function readKnownExpansions(
     if (!entry.isDirectory()) continue
     let id: string | null = null
     try {
-      // The plugin reads the manifest's own packageId, so a dependency's can never land here.
       id = plugin.parseManifest(await readFile(join(dataDir, entry.name, game.manifest.file), 'utf8'))?.packageId ?? null
     } catch {
       continue
@@ -82,8 +77,7 @@ export async function generateModsConfig(plan: LaunchPlan): Promise<string> {
   if (installed === null) {
     plan.warnings.push(`could not read ${game.version.file} for ${plan.game}; ModsConfig version may be rejected`)
   }
-  // Engines fill a case-sensitive active set from these strings but look ids up lowercased, so
-  // manifest casing reads back as inactive and SetActive appends a twin. Write lowercase only.
+  // engines fill a case-sensitive active set but look ids up lowercased
   const declared = new Map([game.core, ...game.dlc].map((id) => [id.toLowerCase(), id]))
   const seen = new Set<string>()
   const activeMods: string[] = []
@@ -111,10 +105,6 @@ export async function generateModsConfig(plan: LaunchPlan): Promise<string> {
   return target
 }
 
-/**
- * A plugin that cannot parse or render a game file is a config failure, not a game crash,
- * and the message is useless without the path it was working on.
- */
 function fromPlugin(target: string, render: () => string): string {
   try {
     return render()
@@ -126,7 +116,6 @@ function fromPlugin(target: string, render: () => string): string {
   }
 }
 
-/** The keys the tool owns. Everything else in the user's Prefs survives untouched. */
 function ownedPrefs(plan: LaunchPlan): Record<string, string> {
   const { settings } = plan
   const bool = (value: boolean): string => (value ? 'True' : 'False')
@@ -154,10 +143,41 @@ export async function mergePrefs(plan: LaunchPlan): Promise<string> {
   try {
     existing = await readFile(target, 'utf8')
   } catch (error) {
-    // Only a missing file means "start fresh". Any other read failure and the file is there
-    // but unreadable, so writing would drop ~40 tuned keys we never got to see.
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
   await writeFile(target, fromPlugin(target, () => plan.plugin.mergePrefs(existing, ownedPrefs(plan))))
   return target
 }
+
+export async function writeModSettings(plan: LaunchPlan, blocks: readonly ModSettingsFile[]): Promise<string[]> {
+  const written: string[] = []
+  const dir = plan.gameConfig.modSettingsDir
+  const render = plan.plugin.renderModSettings
+  if (dir === undefined || render === undefined) return written
+
+  const root = resolve(plan.dataDirHost, dir)
+  for (const block of blocks) {
+    const target = resolve(root, block.file)
+    if (target !== root && !target.startsWith(`${root}${sep}`)) {
+      throw new GamecrateError(
+        `modSettings file "${block.file}" points outside ${root}`,
+        Exit.Config,
+        'a settings file is named relative to that directory, and cannot climb out of it',
+      )
+    }
+    let existing: string | null = null
+    try {
+      existing = await readFile(target, 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    const next = fromPlugin(target, () => render(existing, block))
+    if (next === existing) continue
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, next)
+    written.push(target)
+  }
+  return written
+}
+

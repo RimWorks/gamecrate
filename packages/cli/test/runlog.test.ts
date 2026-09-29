@@ -11,7 +11,6 @@ import { FIXTURE_DEFAULTS, writePluginPackage } from './fixture-plugin'
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 const ENTRY = join(ROOT, 'dist', 'gamecrate.js')
 
-// plain node cannot run src directly, the imports are extensionless, so bundle first.
 beforeAll(() => {
   const build = spawnSync(
     'bun',
@@ -21,10 +20,6 @@ beforeAll(() => {
   if (build.status !== 0) throw new Error(`build failed: ${build.stderr?.toString() ?? ''}`)
 }, 60_000)
 
-/**
- * A whole config tree plus a docker stub, so a `run` can reach exit 0 without a daemon.
- * The stub only ever has to succeed: preflight reads exit codes, not output.
- */
 async function fixture(): Promise<{ dir: string; env: Record<string, string> }> {
   const dir = await mkdtemp(join(tmpdir(), 'gamecrate-runlog-'))
   const pkg = join(dir, 'cfg', 'gamecrate', 'node_modules', 'gamecrate-atlas')
@@ -57,12 +52,11 @@ async function fixture(): Promise<{ dir: string; env: Record<string, string> }> 
   await mkdir(join(dir, 'game'), { recursive: true })
   await writeFile(join(dir, 'game', 'AtlasLinux'), '')
   await mkdir(join(dir, 'bin'), { recursive: true })
-  // image inspect has to answer: an id, and a gamecrate.runtime label, or a headless plan is refused.
   await writeFile(join(dir, 'bin', 'docker'), '#!/bin/sh\ncase "$1 $2" in "image inspect") echo stub;; esac\nexit 0\n')
   await chmod(join(dir, 'bin', 'docker'), 0o755)
 
   await writeFile(
-    join(dir, 'cfg', 'gamecrate', 'profiles.json'),
+    join(dir, 'cfg', 'gamecrate', 'config.json'),
     JSON.stringify({
       plugins: ['gamecrate-atlas'],
       dataRoot: join(dir, 'data'),
@@ -92,32 +86,53 @@ function run(argv: string[], env: Record<string, string>) {
 }
 
 describe('--log', () => {
-  test('a usage failure lands in the log, not on the terminal', async () => {
+  test('a usage failure reaches the log and the terminal', async () => {
     const { dir, env } = await fixture()
     const log = join(dir, 'usage.log')
     const result = run(['run', '--log', log], env)
     expect(result.code).toBe(2)
-    expect(result.stdout + result.stderr).toBe('')
-    expect(await readFile(log, 'utf8')).toContain('run needs a game')
+    expect(result.stderr).toContain('no profile named, and no defaultProfile is set')
+    expect(result.stdout).toBe('')
+    expect(await readFile(log, 'utf8')).toContain('no profile named, and no defaultProfile is set')
   }, 30_000)
 
-  test('a config failure lands in the log, not on the terminal', async () => {
+  test('a config failure reaches the log and the terminal', async () => {
     const { dir, env } = await fixture()
     const log = join(dir, 'config.log')
-    const result = run(['run', 'nope', '--log', log], env)
+    const result = run(['run', 'solo', '--game', 'nope', '--log', log], env)
     expect(result.code).toBe(3)
-    expect(result.stdout + result.stderr).toBe('')
+    expect(result.stderr).toContain('unknown game "nope"')
+    expect(result.stdout).toBe('')
     expect(await readFile(log, 'utf8')).toContain('unknown game "nope"')
   }, 30_000)
 
-  test('a successful run writes its report to the log and exits 0', async () => {
+  test('a successful run writes its report to the log and the terminal', async () => {
     const { dir, env } = await fixture()
     const log = join(dir, 'ok.log')
-    const result = run(['run', 'atlas', 'solo', '--mode', 'headless', '--print-plan', '--json', '--log', log], env)
-    expect(result.stdout + result.stderr).toBe('')
+    const result = run(['run', 'solo', '--mode', 'headless', '--print-plan', '--json', '--log', log], env)
     expect(result.code).toBe(0)
     const plan = JSON.parse(await readFile(log, 'utf8')) as { game: string; mods: unknown[] }
     expect(plan.game).toBe('atlas')
     expect(plan.mods).toHaveLength(1)
+    expect(JSON.parse(result.stdout) as { game: string }).toEqual(plan as { game: string })
+    expect(result.stderr).toBe('')
+  }, 30_000)
+
+  test('--quiet keeps the failure on the terminal and in the log', async () => {
+    const { dir, env } = await fixture()
+    const log = join(dir, 'quiet.log')
+    const result = run(['run', 'solo', '--game', 'nope', '--log', log, '--quiet'], env)
+    expect(result.code).toBe(3)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('unknown game "nope"')
+    expect(await readFile(log, 'utf8')).toContain('unknown game "nope"')
+  }, 30_000)
+
+  test('--quiet still reports why a run failed', async () => {
+    const { env } = await fixture()
+    const result = run(['run', 'solo', '--game', 'nope', '--quiet'], env)
+    expect(result.code).toBe(3)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toContain('unknown game "nope"')
   }, 30_000)
 })

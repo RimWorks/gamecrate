@@ -39,7 +39,7 @@ export interface ModsContext {
 
 /** The same fallback loadConfig uses, so an error names the file `config edit` would open. */
 export async function globalConfigPath(): Promise<string> {
-  return (await findGlobalConfig()) ?? join(globalConfigDir(), 'profiles.yml')
+  return (await findGlobalConfig()) ?? join(globalConfigDir(), 'config.yml')
 }
 
 interface Pin {
@@ -49,10 +49,8 @@ interface Pin {
 
 interface Target {
   file: string
-  /** A project file has one library; the global file has one per game. */
   prefix: string[]
   existing: Record<string, unknown>
-  /** The whole parsed file, so a delete can tell which ancestors it leaves empty. */
   root: Record<string, unknown>
 }
 
@@ -69,9 +67,6 @@ export async function modsAdd(args: ParsedArgs, ctx: ModsContext): Promise<numbe
     throw new GamecrateError(`no mod manifest at ${describe(source)}`, Exit.Resolution, `looked for ${gameConfig.manifest.file}`)
   }
 
-  // `walk` returns one entry per directory that parses, and two directories in one repo can
-  // declare one id. two edits to one key would write the later one and drop the other without
-  // saying so, and nothing here knows which subdir was meant. refuse and let the user say.
   const where = new Map<string, string[]>()
   for (const pin of pins) {
     const at = where.get(pin.id.toLowerCase()) ?? []
@@ -99,17 +94,13 @@ export async function modsAdd(args: ParsedArgs, ctx: ModsContext): Promise<numbe
     )
   }
 
-  // one list, built whole, written once: a collision anywhere leaves the file untouched.
   const edits: ConfigEdit[] = []
   for (const pin of pins) {
     const old = existingKey(target.existing, pin.id)
-    // delete first, so a replacement never merges with the old entry or leaves its key behind
     if (old !== undefined) edits.push({ path: [...target.prefix, old], value: undefined })
     edits.push({ path: [...target.prefix, pin.id], value: pin.entry })
   }
-  // created only once the write is certain: a refusal must not leave an empty config behind
   if (!existsSync(target.file)) {
-    // empty, never `{}`: the yaml writer turns an existing empty map into a flow map forever
     await mkdir(dirname(target.file), { recursive: true })
     await writeFile(target.file, '')
   }
@@ -194,7 +185,6 @@ function collectPins(
   return { wanted, subscribed }
 }
 
-/** One ls-remote per url, and one fetch per clone directory. */
 async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
   const branches = new Map<string, GitRef>()
   const fetched = new Set<string>()
@@ -206,7 +196,6 @@ async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
       branches.set(url, ref)
     }
     const dir = cloneDir(ctx.config.dataRoot, pin.git, ref)
-    // the fetch dedupes, the report does not: every id the user named gets its own line
     if (!fetched.has(dir)) {
       fetched.add(dir)
       await fetchClone(ctx, pin, ref, dir)
@@ -218,7 +207,6 @@ async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
 async function fetchClone(ctx: ModsContext, pin: GitPin, ref: GitRef, dir: string): Promise<void> {
   const unlock = await lockDir(dir)
   try {
-    // `force` is the point: a plain fetch never moves a tag, and never resets toward a commit.
     const result = await ensureClone(ctx.config.dataRoot, gitPin(pin.git, pin.entry), ref, 'force')
     if (result.warning !== undefined) warn(result.warning)
   } finally {
@@ -226,10 +214,6 @@ async function fetchClone(ctx: ModsContext, pin: GitPin, ref: GitRef, dir: strin
   }
 }
 
-/**
- * One drift check and at most one steamcmd run per game: connect dominates a download, so a run
- * per pin costs 3.4s each for nothing.
- */
 async function syncWorkshop(
   ctx: ModsContext,
   name: string,
@@ -250,7 +234,6 @@ async function syncWorkshop(
   const unavailable = new Set(drift.unavailable)
   for (const pin of pins) {
     const outcome = report?.items.get(pin.item)
-    // no outcome means it was never queued, which is up to date OR steam refusing to serve it
     if (unavailable.has(pin.item)) status(`${pin.id} is unavailable at workshop item ${pin.item}`)
     else if (outcome === undefined) status(`${pin.id} is up to date at workshop item ${pin.item}`)
     else if (outcome.ok) status(`synced ${pin.id} at workshop item ${pin.item}`)
@@ -267,7 +250,6 @@ function describe(source: NonNullable<ParsedArgs['source']>): string {
   return source.subdir === undefined ? source.url : `${source.url} (${source.subdir})`
 }
 
-/** The library the loader would read out of one file, never the merged config. */
 async function resolveTarget(args: ParsedArgs, ctx: ModsContext, game: string): Promise<Target> {
   if (args.target === 'project') {
     const file = await findProjectConfig(ctx.cwd)
@@ -283,7 +265,6 @@ async function resolveTarget(args: ParsedArgs, ctx: ModsContext, game: string): 
     if (typeof its !== 'string') {
       throw new GamecrateError(`${file} has no top-level game:`, Exit.Config, `add game: ${game}`)
     }
-    // a project `game:` is applied before the positionals, so these two can still disagree
     if (its !== game) {
       throw new GamecrateError(`${file} belongs to ${its}, not ${game}`, Exit.Config, `write to ${its}, or use --global`)
     }
@@ -303,11 +284,6 @@ async function resolveTarget(args: ParsedArgs, ctx: ModsContext, game: string): 
   }
 }
 
-/**
- * A yaml map left with no entries re-emits as `{}`, and the next write into it comes back as a
- * one-line flow map. So a delete that empties a map deletes the map's own key too, and keeps
- * walking up for as long as that leaves the parent empty.
- */
 function emptied(target: Target, removed: string[]): ConfigEdit[] {
   const out: ConfigEdit[] = []
   let gone = removed
@@ -335,7 +311,6 @@ function libraryOf(bag: Record<string, unknown>): Record<string, unknown> {
   return isObj(library) ? library : {}
 }
 
-/** `libraryPin` matches a pin case-blind, so a collision is case-blind too. */
 function existingKey(library: Record<string, unknown>, id: string): string | undefined {
   if (Object.hasOwn(library, id)) return id
   const lower = id.toLowerCase()
@@ -349,14 +324,11 @@ async function discover(
   ctx: ModsContext,
 ): Promise<Pin[]> {
   if (source.kind === 'path') {
-    // stored absolute: a config is read from wherever the next run starts, not from here
     const dir = resolve(ctx.cwd, expandHome(source.value))
     const id = await readId(dir, game.manifest.file, plugin)
     return id === undefined ? [] : [{ id, entry: { path: dir } }]
   }
   if (source.kind === 'workshop') {
-    // steamcmd, never game.workshopRoot: the steam client's copy is the user's, and a pin has to
-    // work on a machine that never subscribed to the item.
     const item = String(source.value)
     const report = await downloadItems(ctx.config, game, ctx.config.dataRoot, [item])
     const outcome = report.items.get(item)
@@ -397,11 +369,6 @@ async function discover(
   })
 }
 
-/**
- * Stops at the first manifest on a branch, so a mod whose per-version About files sit under a
- * parent manifest is one mod. Sibling per-version directories with no parent manifest are still
- * two hits that declare one id, and the later one wins the write.
- */
 async function walk(
   root: string,
   manifestFile: string,
@@ -423,7 +390,6 @@ async function walk(
   return out
 }
 
-/** Undefined covers absent, unreadable and unparsable alike: all three mean "no mod here". */
 async function readId(dir: string, manifestFile: string, plugin: GamePlugin): Promise<string | undefined> {
   const text = await readFile(join(dir, manifestFile), 'utf8').catch(() => undefined)
   if (text === undefined) return undefined

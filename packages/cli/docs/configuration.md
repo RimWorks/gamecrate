@@ -2,14 +2,14 @@
 
 Back to the [`@gamecrate/cli` README](../README.md).
 
-One global file names your games and profiles. A per-repository `.gamecrate` file can add
+One global file holds your games and profiles. A per-repository `.gamecrate` file can add
 profiles, pins, and flag defaults on top. This page covers both, and how gamecrate merges your
 file over a plugin's defaults.
 
 ## Where the file lives
 
 Your config lives in `~/.config/gamecrate/`. If you set `XDG_CONFIG_HOME`, the directory moves
-with it. The file is named `profiles`, and gamecrate reads four suffixes:
+with it. The file is named `config`, and gamecrate reads four suffixes:
 
 | Suffix | Format |
 | --- | --- |
@@ -22,42 +22,121 @@ Keep one. Two config files in the same directory fail with `two configs in <dir>
 because silent precedence is how you edit the wrong file for twenty minutes. gamecrate probes
 `.yml` first, so that is the name an error message uses when nothing is on disk yet.
 
+A file named `profiles.<ext>` is renamed to `config.<ext>` on the next run, and gamecrate prints
+the rename. Both stems present at once fails with `two global configs in <dir>` and exit `3`.
+
 An absent file and an empty file both mean no config. Every subcommand that does not launch
 survives that, so `gamecrate help` works before you have written anything.
 
+`gamecrate init` writes this file for you, and installs the plugin where the loader can find
+it. The rest of this page is what it wrote, and what to change.
+
+## A config that runs
+
+`gamecrate init` writes the skeleton below. It validates as written, but the placeholder install
+path points nowhere, so `doctor` and `run` both fail until you replace it:
+
+```yaml
+plugins: ['@gamecrate/rimworld']
+games:
+  rimworld:
+    gameFiles:
+      host: ~/games/rimworld
+    scanRoots:
+      - { path: ~/projects/rimworld-mods, maxDepth: 2 }
+    profiles:
+      dev:
+        mods: [brrainz.harmony]
+```
+
+| Key | Why you write it |
+| --- | --- |
+| `gameFiles.host` | Required while `gameFiles.source` is `mount`, which is the RimWorld default |
+| `scanRoots` | The plugin ships an empty list, so nothing is indexed until you add a directory |
+
+A `mount` game with no `image` block pulls `ghcr.io/rimworks/gamecrate/runtime-base:1`, which
+runs a native Linux build. Write your own `image.ref` to override it. A `source: image` game
+carries the game inside the image, so it has no default and `image.ref` is required.
+
+Proton is not reachable this way. gamecrate runs a game through Proton only when the image says
+so in its `gamecrate.launcher` label, and `steam build` is the only thing that writes that
+label. See [Game images](images.md).
+
+`scanRoots` entries take a `path`, a `maxDepth`, and an optional `exclude` list of globs.
+[Mod sources](mod-sources.md) covers the other ways to name a mod.
+
+## Root keys
+
+Everything outside a `games` block:
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `plugins` | `[]` | The plugins to load. See below |
+| `games` | required | One block per game, keyed by the name a plugin claims |
+| `dataRoot` | `~/.local/share/gamecrate` | Where saves, logs, locks, clones, and downloads go |
+| `defaults.settings` | the built-in settings | The bottom layer of the settings ladder |
+| `buildConcurrency` | `3` | How many `dotnet build` runs go at once when a launch rebuilds stale mods. `1` builds them one at a time |
+| `steamcmd.path` | unset | Which `steamcmd` to run. See below |
+
 Run `gamecrate config edit` to open the file in `$VISUAL`, or `$EDITOR` when `$VISUAL` is
 unset, and validate it on save. With neither variable set it fails with `no $EDITOR or $VISUAL
-set`. With nothing on disk yet, it creates `profiles.yml` holding `plugins: []` and `games: {}`.
-That `games: {}` is a YAML flow map, and the YAML writer keeps a flow map flow. So a
-[`mods add --global`](mods-commands.md) into that untouched file comes out as one long line.
-Write the `games` block by hand first, or reflow the file after the first write.
+set`. With nothing on disk yet, it creates `config.yml` holding `plugins: []` and `games: {}`.
+Write the `games` block yourself before the first [`mods add --global`](mods-commands.md), or
+that write comes out as one long line.
 
 ## How plugins resolve
 
 `plugins` is an array of strings. gamecrate loads each one before it reads the rest of the
 file, because a plugin decides what a valid game block looks like.
 
-A string that starts with `.` or `/` is a path. gamecrate resolves it against the directory
-holding your config, so `./plugins/mygame` means `~/.config/gamecrate/plugins/mygame`. A `~`
-at the front expands to your home directory. A path to a directory loads that directory's
-entry point, read from its `package.json`.
+A string that starts with `~`, `.` or `/` is a path. `~` expands to your home directory, and a
+relative path resolves against your config directory. A path to a directory loads that
+directory's entry point, read from its `package.json`.
 
-Anything else is a package name. gamecrate walks `node_modules` upward from the config
-directory, the same way Node does. To use a bare name such as `@gamecrate/rimworld`, install it
-where that walk can find it:
+Anything else is a package name. A global install is the normal way, and what `gamecrate init`
+does:
 
 ```sh
-cd ~/.config/gamecrate
-npm init -y
-npm install @gamecrate/rimworld
+npm install -g @gamecrate/rimworld
 ```
 
-A name the walk cannot find fails with `plugin "<name>": cannot be resolved from <dir>` and
-exit `3`.
+gamecrate looks in three places, in order: `node_modules` walking up from the config directory,
+`node_modules` walking up from the running executable, then the directory `npm root -g` reports.
+The last two only run when the first finds nothing, so a per-project plugin still wins.
+
+A name none of the three can find fails with `plugin "<name>": cannot be resolved from <dir>`
+and exit `3`.
 
 Each plugin claims one game name. Two plugins claiming the same name is a config error. A
 `games` block whose name no plugin claims fails validation too, because nothing supplies the
 required keys that a plugin's defaults normally fill in.
+
+## Where the game comes from
+
+`gameFiles.source` picks one of two setups, and it decides whether you need a copy of the game
+on this machine at all.
+
+| `source` | Where the game lives | Needs |
+| --- | --- | --- |
+| `mount` | Your own install, bind-mounted read-only into a runtime image | `gameFiles.host` |
+| `image` | Baked into the image, which is what [`steam build`](images.md) produces | nothing else |
+
+The RimWorld plugin defaults to `mount`, so a config that does not say otherwise needs
+`gameFiles.host`. Point at an image you built instead and the host copy stops mattering:
+
+```yaml
+games:
+  rimworld:
+    gameFiles:
+      source: image
+    image:
+      ref: ghcr.io/you/rimworld-game:1.6
+      acquire: pull
+```
+
+`image.acquire` is a separate question from `gameFiles.source`. `pull` fetches the image,
+`build` builds it from `image.context`. A `mount` setup still pulls an image, it just pulls a
+runtime that holds no game.
 
 ## The steamcmd binary
 
@@ -69,37 +148,35 @@ steamcmd:
   path: /usr/bin/steamcmd
 ```
 
-A `~` at the front expands to your home directory. A `path` that is not an executable file
-fails with `steamcmd.path is not an executable file: <path>` and exit `5`. That is an error,
-not a fallback, because a typo there would otherwise download through a tool you did not choose.
+A `path` that is not an executable file fails with `steamcmd.path is not an executable file:
+<path>` and exit `5`. That is an error, not a fallback, because a typo there would otherwise
+download through a tool you did not choose.
 
 With the key absent, gamecrate looks for `steamcmd` on your `PATH`. Failing that, it runs the
 `steamcmd/steamcmd` Docker image. That run binds the download directory in at the same path it
 has on the host, and maps your own user into the container. With no `steamcmd` and no `docker`, a
 download fails with `steamcmd is not available` and exit `5`.
 
-## An array you write replaces the plugin's array
+## Arrays replace instead of merging
 
 A plugin ships defaults for its game. Your `games.<name>` block merges on top of those
 defaults, key by key. Objects merge. Scalars overwrite.
 
-**Arrays do not concatenate.** The array you write replaces the plugin's array outright. Write
-three entries under `dlc` and the game has three, not the plugin's five plus your three. The
-same holds for `modes`, `scanRoots`, and `saveExtensions`. To add one DLC, copy the plugin's
-full list and append to it.
+**Arrays do not concatenate.** The array you write replaces the plugin's array. That covers
+`dlc`, `modes`, `scanRoots`, and `saveExtensions`. To add one DLC, copy the plugin's full list
+and append to it.
 
 The `image.updates` block controls the staleness check a launch runs: `check` turns it on or off,
-and `everyHours` sets how long one answer lasts. [Game images](images.md#checking-for-a-newer-build)
-covers what it does.
+and `everyHours` sets how long one answer lasts. [Game
+images](images.md#checking-for-a-newer-build) covers what it does.
 
 Two arrays are exceptions. `steamBuild.branches` concatenates, matched on `name`, so you
 add a private beta without copying the plugin's list. Your fields win on a name the plugin
 already declares, and a new name lands at the end.
 
-The settings ladder is the second. `settings` merges through five layers: the top-level
-`defaults`, then `games.<game>`, then the profile, then the instance, then the command line.
-Arrays inside `settings`, which means `gameArgs` and `dockerArgs`, concatenate at every layer,
-unlike the `dlc`, `modes` and `scanRoots` lists in the preceding section, which replace.
+`settings` is the other. It merges through five layers: the top-level `defaults`, then
+`games.<game>`, then the profile, then the instance, then the command line. The arrays inside
+it, `gameArgs` and `dockerArgs`, concatenate at every layer.
 
 When a config error points at a key you never wrote, the message says which plugin's defaults
 supplied it.
@@ -114,7 +191,7 @@ Every key under `settings`, with the value gamecrate uses when no layer sets it:
 | `devMode` | `true` | Written into the game's prefs |
 | `runInBackground` | `true` | Written into the game's prefs |
 | `resetModsConfigOnCrash` | `false` | Forced to `false` when written, whatever you set |
-| `gpu` | `true` | Passes the NVIDIA GPU into the container through CDI. `false` selects software rendering |
+| `gpu` | `true` | Passes the card into the container. NVIDIA goes through the Container Device Interface, which needs `/etc/cdi/nvidia.yaml`. AMD and Intel go through the render nodes under `/dev/dri`. A host with neither renders in software, and `doctor` says so |
 | `audio` | `true` | Mounts the host audio sockets |
 | `input` | `false` | Mounts `/dev/input` |
 | `network` | `bridge` | `none`, `bridge` or `host`. The RimWorld plugin sets `host` |
@@ -123,14 +200,30 @@ Every key under `settings`, with the value gamecrate uses when no layer sets it:
 | `cpus` | `6` | The container CPU limit |
 | `pidsLimit` | `1024` | The container process limit |
 | `prefsExtra` | unset | Extra keys written verbatim into the prefs file |
-| `gameArgs` | unset | Arguments appended to the game command line. Concatenates across layers |
+| `gameArgs` | unset | Arguments appended to the game command line. Concatenates across layers. See [Passing arguments to the game](running.md#passing-arguments-to-the-game) |
 | `dockerArgs` | unset | Extra `docker run` arguments. Concatenates across layers |
+
+### Mod name aliases
+
+`games.<game>.aliases` maps a name you type to a package id. It covers every mod entry gamecrate
+looks up: a profile's `mods`, `--mod`, and `--only`. `--without` is a glob over package ids that
+already resolved, so an alias does not apply there.
+
+```yaml
+games:
+  rimworld:
+    aliases:
+      harmony: brrainz.harmony
+```
+
+The lookup runs after an exact package id match and before the short-name match, so an alias
+never shadows a real id. `gamecrate help <game>` lists the ones you set.
 
 ## Profiles
 
-A profile names a mod set. Each entry under `mods` takes one of three shapes:
+A profile is a mod set. Each entry under `mods` takes one of three forms:
 
-| Shape | Meaning |
+| Form | Meaning |
 | --- | --- |
 | `brrainz.harmony` | A package id. `workshop:2009463077` and `path:~/mods/x` name a source outright |
 | `{ id: some.mod, optional: true }` | An object. `workshop` or `path` beside the `id` pins it. `optional` turns a miss into a warning |
@@ -139,20 +232,17 @@ A profile names a mod set. Each entry under `mods` takes one of three shapes:
 `extends` inherits a parent profile's mods and appends its own. `exclude` drops entries by glob,
 and a child's list adds to its parent's. `includeBase: false` leaves out the game's `base` list.
 `autoDependencies` inserts each mod's declared dependencies ahead of it, and it is on unless you
-set it to `false`. A mod does not work without the dependencies it
-declares. Gamecrate downloads the declared ones anyway, so leaving them out of the load order
-only breaks the game.
-Set it to `false` when you want the mod list taken literally. A dependency that is not installed
-is a launch problem.
+set it to `false`. Set it to `false` when you want the mod list taken literally. A dependency
+that is not installed is a launch problem.
 
-`alias` marks a profile as another name for an existing one, and it cannot carry `mods` or
+`alias` marks a profile as another name for an existing one, and it cannot have `mods` or
 `extends` of its own. `aliases` gives one profile extra names. Both share the parent's data
 directory, so your saves never split by spelling. `instances` splits one profile into named
-sub-runs, each with its own saves, logs, lock, and container. An instance can name a `worktree`
-to promote and carry its own `settings`.
+sub-runs, each with its own saves, logs, lock, and container. An instance can name a
+[`worktree`](mod-sources.md#worktrees-and---use) to promote, and it can set its own `settings`.
 
 `description` is one line saying what the profile is for. `gamecrate list` prints it on its own
-line under the profile, and `gamecrate list --json` carries it as a `description` field on that
+line under the profile, and `gamecrate list --json` prints it as a `description` field on that
 profile. It changes nothing about the launch.
 
 ```yaml
@@ -169,7 +259,7 @@ rimworld  (headed, headless, screenshot)
            harmony plus the mod I am working on
 ```
 
-A profile can also carry a default for three flags, so you stop typing them:
+A profile can also set a default for three flags, so you stop typing them:
 
 | Key | Stands in for |
 | --- | --- |
@@ -177,9 +267,9 @@ A profile can also carry a default for three flags, so you stop typing them:
 | `replace` | `--replace`. `--no-replace` overrides it. |
 | `build` | `--build` and `--no-build`. Takes `auto`, `always`, or `never`. |
 
-A profile can pin the game version it runs against. `gameVersion` names a tag on the game's own
+A profile can pin the game version it runs against. `gameVersion` is a tag on the game's own
 image repository, so `"1.6"` resolves to `<your repo>:1.6`, and `steam build` writes that tag for
-you. `image` names a whole reference and gamecrate uses it as written. `image` beats
+you. `image` is a whole reference and gamecrate uses it as written. `image` beats
 `gameVersion`, and `--image` beats both.
 
 ```json
@@ -192,29 +282,37 @@ you. `image` names a whole reference and gamecrate uses it as written. `image` b
 ```
 
 Either key switches the game files to the image, because the game lives inside one. A host mount
-over the same path would hide what the image carries.
+over the same path would hide what the image holds.
 
-A headed profile can also name its own window caption and icon. Without them the caption is
-`<game> <profile>`, and the window keeps whatever icon the game sets.
-
-```json
-{
-  "profiles": {
-    "dev": { "windowTitle": "Atlas dev rig", "windowIcon": "art/dev.png", "mods": [] }
-  }
-}
-```
-
-`windowIcon` is relative to the config file that names it, and ImageMagick reads it, so any
-format it knows works. Both need X11: a Wayland client owns its own caption, so neither applies there.
+A headed profile on X11 can set `windowTitle` and `windowIcon`. The caption defaults to
+`<game> <profile>`, and `windowIcon` is a path relative to the config file it appears in, read
+by ImageMagick. A Wayland client owns its own caption, so neither key applies there.
 
 gamecrate ships one profile of its own, `modless`. It resolves to the core game plus its
 official DLC, and you cannot redefine it. Subcommand names are reserved the same way: a game or
 profile called `run`, `add` or `sync` fails validation.
 
-Profile names, instance names and game names must match `[A-Za-z0-9][A-Za-z0-9._-]*`. Two
-profiles that differ only in case fail validation, because they would share one data directory.
-So do two profiles, or two instances, whose container names collide.
+Profile names, instance names and game names must match `[A-Za-z0-9][A-Za-z0-9._-]*`. The first
+character must be a letter or a digit. Each name becomes a directory under the data root, so a
+name that could redirect a path is refused.
+
+Two profiles that differ only in case fail validation, because they would share one data
+directory. So do two profiles, or two instances, whose container names collide.
+
+## A mod's own settings
+
+A profile's `modSettings` is a list of settings files to write before launch. Each entry takes
+four keys:
+
+| Key | What it holds |
+| --- | --- |
+| `file` | The filename, relative to the game's `modSettingsDir`. A path that climbs out of it fails with exit `3` |
+| `class` | The type the engine writes on the settings block |
+| `values` | The keys to write |
+| `replace` | Optional. The keys in `values` that overwrite rather than merge |
+
+A key already in the file keeps its value unless `replace` names it, so a setting you changed in
+game survives. To take a setting back, change it in the game.
 
 ## Per-directory defaults
 
@@ -244,7 +342,7 @@ Five keys are not flags:
 
 | Key | What it does |
 | --- | --- |
-| `game` | The game the rest of the file talks about. `profiles`, `settings` and `library` all need it. |
+| `game` | The game the rest of the file talks about. `profiles`, `settings` and `library` all need it, and it settles which game a command acts on when no profile says. |
 | `defaultProfile` | The profile to use when you name none. Without it, the first key in `profiles` wins. With neither, a launch stops and lists the profiles it knows, rather than guessing. |
 | `profiles` | Profiles for `game`, written exactly like the ones in the global config. |
 | `settings` | A settings block merged into `games.<game>.settings` at load time. |

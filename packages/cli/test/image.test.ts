@@ -25,7 +25,7 @@ describe('imageProblem', () => {
   test('an image somebody else built is refused offscreen, naming the command', () => {
     const problem = imageProblem({ game: 'rimworld', ref: 'x/y:1', mode: 'headless', facts: foreign })
     expect(problem?.message).toContain('gamecrate.runtime')
-    expect(problem?.suggestion).toContain('gamecrate steam build rimworld')
+    expect(problem?.suggestion).toContain('gamecrate steam build --game rimworld')
   })
 
   test('the same image is fine headed', () => {
@@ -35,7 +35,7 @@ describe('imageProblem', () => {
   test('an absent image names the ref it tried', () => {
     const problem = imageProblem({ game: 'rimworld', ref: 'x/y:1', mode: 'headless', facts: missing })
     expect(problem?.message).toContain('x/y:1')
-    expect(problem?.suggestion).toBe('gamecrate steam build rimworld')
+    expect(problem?.suggestion).toBe('gamecrate steam build --game rimworld')
   })
 
   test('an unconfigured ref says which key to set', () => {
@@ -76,15 +76,12 @@ describe('imageLaunch', () => {
   })
 })
 
-// execute() needs docker to reach, so the wiring is pinned by reading it: both checks have to
-// sit between acquireImage and stageMods, or a bad image wipes the stage before it is caught.
 describe('run wires the checks in before staging', () => {
   const source = readFileSync(
     join(fileURLToPath(new URL('.', import.meta.url)), '../src/index.ts'),
     'utf8',
   )
 
-  /** The body of one function, so an offset inside it means what it looks like. */
   function body(name: string): string {
     const start = source.indexOf(`async function ${name}(`)
     expect(start).toBeGreaterThan(-1)
@@ -115,14 +112,11 @@ describe('run wires the checks in before staging', () => {
     expect(source).toContain('throw new GamecrateError(needsMarker.message, Exit.Usage')
   })
 
-  // an image records the base digest it was appended onto, and comparing .Id instead of the
-  // registry digest matches nothing, so doctor would cry drift on every image
   test('doctor compares the base against the registry digest, not the local id', () => {
     const drift = body('baseDriftProblems')
     expect(drift).toContain('await repoDigest(base)')
     expect(drift).not.toContain('imageDigest(base)')
     expect(drift).toContain('facts.runtime.endsWith(current)')
-    // no local base is nothing to compare, not a finding
     expect(drift).toContain('if (current === null) return []')
   })
 
@@ -130,8 +124,6 @@ describe('run wires the checks in before staging', () => {
     expect(source).not.toContain('ensureRuntimeLayer')
   })
 
-  // a csproj that references one build while the container runs another is the disagreement
-  // refs exists to stop, and build picking a different image is the same bug
   test('refs and build resolve the image the same way a launch does', () => {
     for (const name of ['refs', 'build']) {
       expect(body(name)).toContain('gameForImage(args, config, defaults, game)')
@@ -142,8 +134,9 @@ describe('run wires the checks in before staging', () => {
 
   test('refs keeps stdout to the path alone, so an MSBuild Exec captures nothing else', () => {
     const handler = body('refs')
-    expect(handler.match(/process\.stdout\.write/g)).toHaveLength(2)
-    expect(handler).toContain('process.stdout.write(`${found.dir}\\n`)')
+    expect(handler.match(/emit\('data'/g)).toHaveLength(2)
+    expect(handler).toContain("emit('data', `${found.dir}\\n`)")
+    expect(handler).not.toMatch(/emit\('(game|gameError)'/)
     expect(handler).toContain('status(')
   })
 })
@@ -179,7 +172,6 @@ describe('imageFor', () => {
 })
 
 describe('repoOf', () => {
-  // a colon after the last slash is a tag; before it, a registry port
   test('a port is not a tag', () => {
     expect(repoOf('localhost:5000/me/atlas')).toBe('localhost:5000/me/atlas')
     expect(repoOf('localhost:5000/me/atlas:2.0')).toBe('localhost:5000/me/atlas')

@@ -5,16 +5,10 @@ import { join } from 'node:path'
 
 import type { LaunchPlan } from '../src/types'
 
-/** Flipped on only by the fallback test; everything else reads the real procfs. */
 const procfs = { broken: false }
 
-/**
- * "did not docker stop" is the whole point of two tests below, and a real `docker stop` on a
- * fixture container that does not exist is a silent no-op, so nothing else can see it.
- */
 const stopped = { names: [] as string[] }
 
-/** Seam for the one race no fixture can stage: something happening inside stopRun's wait loop. */
 const fsHooks = { afterExists: undefined as ((path: string, answer: boolean) => void) | undefined }
 
 const realFs = { ...(await import('node:fs')) }
@@ -80,14 +74,9 @@ afterAll(async () => {
   await rm(tmp, { recursive: true, force: true })
 })
 
-/**
- * replacePrevious shells out to a real `docker stop`, so the fixture name must be one no
- * container can ever have. `atlas kitted` here would stop an actual running game.
- */
 const GAME = 'dockergame-test'
 const PROFILE = 'lock-fixture'
 
-/** Only the fields the lock touches; the rest of a plan is irrelevant here. */
 async function planFor(instance?: string): Promise<LaunchPlan> {
   const dir = join(tmp, `instance-${counter++}`)
   await mkdir(join(dir, '.gamecrate'), { recursive: true })
@@ -108,7 +97,6 @@ async function holdWith(plan: LaunchPlan, pid: number): Promise<void> {
       game: GAME,
       profile: PROFILE,
       detached: false,
-      // now, so a live holder reads as live: its process began before the lock was written
       startedAt: new Date().toISOString(),
     }),
   )
@@ -116,10 +104,8 @@ async function holdWith(plan: LaunchPlan, pid: number): Promise<void> {
 
 const [DEAD_PID, OTHER_DEAD_PID] = deadPids(2) as [number, number]
 
-/** Opt-in: the standard suite must never start a container on someone else's machine. */
 const DOCKER_OK = process.env['GAMECRATE_TEST_DOCKER'] === '1'
 
-/** False when docker is missing or the command failed, which skips the container test. */
 async function docker(argv: string[]): Promise<boolean> {
   return (await capture(['docker', ...argv])).code === 0
 }
@@ -161,8 +147,6 @@ describe('takeLock', () => {
   test.skipIf(!DOCKER_OK)('a live container is refused even when no lock file survives', async () => {
     const plan = await planFor()
     const name = `gamecrate-${GAME}-${PROFILE}`
-    // The launcher can be killed while the container keeps running, which is the case that
-    // used to get past the lock and then stop the container it collided with.
     if (!(await docker(['run', '--rm', '--detach', '--name', name, 'alpine:latest', 'sleep', '60']))) {
       return
     }
@@ -192,8 +176,6 @@ describe('replacePrevious', () => {
     await (await takeLock(plan)).release()
   })
 
-  // the marker is the assertion: with no lock and no container there is nothing to do, so a
-  // replacePrevious that wipes the instance dir has to be caught by something it would destroy.
   test('a clean instance is left exactly as it was', async () => {
     const plan = await planFor()
     const marker = join(plan.instanceDir, 'precious.txt')
@@ -206,7 +188,6 @@ describe('replacePrevious', () => {
     expect(stopped.names).toEqual([])
   })
 
-  // same shape as stopRun: clearLock unlinks it before its own `wx` a few lines later anyway
   test('an unreadable lock is left for the takeLock that follows', async () => {
     const plan = await planFor()
     await writeFile(lockPath(plan), 'not json at all')
@@ -216,7 +197,6 @@ describe('replacePrevious', () => {
     expect(stopped.names).toEqual([])
   })
 
-  // The container name carries the instance, so --replace on one worktree cannot reach another.
   test('it only ever touches its own instance directory', async () => {
     const mine = await planFor('wt-a')
     const theirs = await planFor('wt-b')
@@ -262,8 +242,6 @@ describe('lock record', () => {
     expect(await readLock(lockPath(plan))).toBeUndefined()
   })
 
-  // kill(0) hits our own process group and kill(-1) broadcasts, so both would read as alive
-  // and refuse the profile forever.
   test.each([0, -1, 1.5])('readLock rejects a pid of %s', async (pid) => {
     const plan = await planFor()
     await writeFile(lockPath(plan), JSON.stringify({ pid, detached: false, startedAt: 'x' }))
@@ -271,7 +249,6 @@ describe('lock record', () => {
   })
 })
 
-// Detach leaves a long-lived pid per run, so reuse of a recycled number stops being theoretical.
 describe('isRunning', () => {
   test('a live pid with no lock timestamp is running', () => {
     expect(isRunning(process.pid)).toBe(true)
@@ -322,15 +299,12 @@ describe('exit record', () => {
     expect(await supervisorFailed(plan.instanceDir, 3)).toBe(3)
     expect(existsSync(join(plan.instanceDir, '.gamecrate', 'last-exit.json'))).toBe(true)
     expect(await lastExit(plan.instanceDir)).toMatchObject({ code: 3, reason: 'failed' })
-    // endedAfter parses this, and a NaN makes wait ignore the record it is holding
     expect(Date.parse((await lastExit(plan.instanceDir))!.at)).not.toBeNaN()
     expect(existsSync(lockPath(plan))).toBe(false)
   })
 
-  /** A write that fails must keep the lock, or wait answers "no run recorded" for a dead run. */
   test('supervisorFailed keeps the lock when the record cannot be written', async () => {
     const plan = await planFor()
-    // a directory where the record goes: writeFile fails EISDIR for any uid, unlike a chmod
     await mkdir(join(plan.instanceDir, '.gamecrate', 'last-exit.json'))
     await writeFile(lockPath(plan), JSON.stringify({ pid: process.pid }))
     expect(await supervisorFailed(plan.instanceDir, 3)).toBe(3)
@@ -354,22 +328,15 @@ describe('stopRun', () => {
     expect(await stopRun(record, lockPath(plan))).toBe('signalled')
     await new Promise((r) => setTimeout(r, 200))
     expect(existsSync(`/proc/${child.pid}`)).toBe(false)
-    // signalling and stopping would both pass on the pid alone: the supervisor turns SIGTERM
-    // into its own docker stop, and a second one from here is the 137 this is meant to avoid
     expect(stopped.names).toEqual([])
   })
 
-  // the supervisor answers SIGTERM with its own `docker stop --timeout`, so a budget that does
-  // not clear that times out and force-unlinks a lock the holder is still about to release
   test('the release budget outlasts the stop the supervisor itself runs', () => {
     expect(STOP_RELEASE_WAIT_MS).toBeGreaterThan(STOP_TIMEOUT_SECONDS * 1000)
   })
 
-  // unlinking a lock its owner is still holding lets that owner's own release delete whatever
-  // the next launcher took in between, which is one process deleting another's lock
   test('a holder that outlasts the budget keeps its lock', async () => {
     const plan = await planFor()
-    // the lock is held by this process, which is never going to release it
     await holdWith(plan, process.pid)
     const child = spawnArgv(['sleep', '30'], 'ignore')
     const record = {
@@ -381,7 +348,6 @@ describe('stopRun', () => {
       startedAt: new Date().toISOString(),
     }
 
-    // jump past the deadline once stopRun has set it, rather than waiting it out for real
     const real = Date.now.bind(Date)
     let calls = 0
     const clock = spyOn(Date, 'now').mockImplementation(() => {
@@ -389,7 +355,6 @@ describe('stopRun', () => {
     })
     try {
       const outcome = await stopRun(record, lockPath(plan))
-      // the file first: it is the hazard, the outcome is only how it is reported
       expect(existsSync(lockPath(plan))).toBe(true)
       expect(outcome).toBe('held')
       expect(calls).toBeGreaterThan(1)
@@ -411,14 +376,10 @@ describe('stopRun', () => {
     }
     await writeFile(lockPath(plan), JSON.stringify(record))
     expect(await stopRun(record, lockPath(plan))).toBe('orphaned')
-    // the container outlives a supervisor that was SIGKILLed, and clearing the lock without
-    // stopping it is the orphaned-container bug this test is named for
     expect(stopped.names).toEqual([record.container])
     expect(existsSync(lockPath(plan))).toBe(false)
   })
 
-  // both deletes used to unlink by path, so a lock taken by someone else after the wait loop
-  // saw the old holder leave was deleted out from under its new owner
   test('a lock held by a different record is left alone', async () => {
     const plan = await planFor()
     const mine = {
@@ -429,14 +390,12 @@ describe('stopRun', () => {
       detached: true,
       startedAt: new Date().toISOString(),
     }
-    // a second launcher took the lock in the gap, and its holder is already gone too
     await holdWith(plan, OTHER_DEAD_PID)
 
     expect(await stopRun(mine, lockPath(plan))).toBe('orphaned')
     expect((await readLock(lockPath(plan)))?.pid).toBe(OTHER_DEAD_PID)
   })
 
-  // a lock that will not parse can be a launcher between its `wx` and its write
   test('an unreadable lock is left for clearLock, not deleted', async () => {
     const plan = await planFor()
     await writeFile(lockPath(plan), 'not json at all')
@@ -457,7 +416,6 @@ describe('stopRun', () => {
     expect(existsSync(lockPath(plan))).toBe(true)
   })
 
-  // an unlink after the wait loop deletes the lock a new launcher took once the holder released
   test('a lock taken after the holder released is not deleted', async () => {
     const plan = await planFor()
     const record = {
@@ -492,7 +450,6 @@ describe('heldLock release', () => {
   test('release drops only a lock this process still holds', async () => {
     const plan = await planFor()
     const lock = await takeLock(plan)
-    // the supervisor released, a third party unlinked, and the next launcher took it
     await holdWith(plan, DEAD_PID)
 
     await lock.release()
@@ -524,7 +481,6 @@ describe('lastExit', () => {
     expect(await lastExit(plan.instanceDir)).toBeUndefined()
   })
 
-  /** wait hands this straight to process.exit, so a non-integer code must never get out. */
   test('a record whose code is not an integer is undefined', async () => {
     const plan = await planFor()
     for (const code of ['null', '"3"', '1.5', 'undefined']) {
@@ -563,7 +519,6 @@ describe('awaitExit', () => {
     const plan = await planFor()
     await holdWith(plan, DEAD_PID)
     expect(await awaitExit(plan.instanceDir, 10)).toBe('orphaned')
-    // the lock is the caller's to clear; awaitExit only reports
     expect(existsSync(lockPath(plan))).toBe(true)
   })
 
@@ -580,20 +535,14 @@ describe('awaitExit', () => {
 
     setTimeout(() => void recordExit(plan, { code: 0, reason: 'window-closed' }), 120)
 
-    // nothing is on disk when the wait starts, so anything but the record means it gave up
     expect(await awaitExit(plan.instanceDir, 10)).toMatchObject({ code: 0, reason: 'window-closed' })
   })
 
-  /**
-   * The mirror of the test above: nothing to wait for, so it must not wait. recordExit runs
-   * before the lock is released, so a wait starting in that window sees both.
-   */
   test('a record newer than the lock answers at once, lock still held', async () => {
     const plan = await planFor()
     await holdWith(plan, process.pid)
     await recordExit(plan, { code: 4, reason: 'exited' })
 
-    // no timer ever unlinks, so anything that waits for the unlink hangs here instead
     expect(await awaitExit(plan.instanceDir, 10)).toMatchObject({ code: 4, reason: 'exited' })
     expect(existsSync(lockPath(plan))).toBe(true)
   })
@@ -606,7 +555,6 @@ describe('runStartedAt', () => {
     expect(runStartedAt('20260919T005739074Z')).toBe(at.getTime())
   })
 
-  /** uniqueRunDir appends -2 on a collision, and that run still has to be datable. */
   test('the collision suffix does not make a run undatable', () => {
     expect(runStartedAt('20260919T005739074Z-2')).toBe(Date.parse('2026-09-19T00:57:39.074Z'))
   })
@@ -635,7 +583,6 @@ describe('awaitRunLog', () => {
     }, 120)
 
     expect(await awaitRunLog(plan.instanceDir, lock, 20)).toBe(true)
-    // the point: it did not return while current still pointed at `old`
     expect(opened).toBe(true)
   })
 
@@ -670,7 +617,6 @@ describe('awaitRunLog', () => {
 })
 
 describe('awaitExit and a lock cleared by a third party', () => {
-  /** takeLock and forkSupervisor both clearLock before they write their own. */
   test('a stale record does not answer for the run whose lock was cleared', async () => {
     const plan = await planFor()
     await writeRecord(plan, JSON.stringify({ at: '2020-01-01T00:00:00.000Z', code: 0, reason: 'exited' }))
@@ -680,7 +626,6 @@ describe('awaitExit and a lock cleared by a third party', () => {
     setTimeout(() => void rm(lockPath(plan), { force: true }), 80)
     setTimeout(() => child.kill(), 260)
 
-    // the previous run's exit 0 must never be reported as this run's result
     expect(await awaitExit(plan.instanceDir, 20)).toBe('orphaned')
   })
 
@@ -738,10 +683,8 @@ describe('awaitRunLog says so while it waits', () => {
       return true
     }) as typeof process.stderr.write
 
-    // SIGTERM at 200, so the third line at ~240 is never due even if the reap runs late
     setTimeout(() => child.kill(), 200)
     try {
-      // no log is ever created, so only the holder dying ends this
       expect(await awaitRunLog(plan.instanceDir, lock, 20, { firstMs: 40, everyMs: 100 })).toBe(false)
     } finally {
       process.stderr.write = real
@@ -749,7 +692,6 @@ describe('awaitRunLog says so while it waits', () => {
 
     expect(lines).toHaveLength(2)
     for (const line of lines) expect(line).toContain(`${GAME} ${PROFILE} to open its log (`)
-    // the label is elapsed since the wait began, not since the last line or since the epoch
     expect(lines[0]).toContain('(0s)')
   })
 })

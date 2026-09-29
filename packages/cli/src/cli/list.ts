@@ -3,6 +3,7 @@ import { basename } from 'node:path'
 import { requireGame } from './game'
 import { Exit, own } from '../types'
 import type { ParsedArgs, ProfileConfig, ProjectDefaults, RootConfig } from '../types'
+import { emit } from '../channels'
 
 type FromProject = (game: string, profile: string) => boolean
 
@@ -12,11 +13,10 @@ export function list(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
     defaults.game === game && own(defaults.profiles, profile) !== undefined
 
   if (args.json) {
-    process.stdout.write(`${JSON.stringify(jsonReport(games, config, fromProject), null, 2)}\n`)
+    emit('data', `${JSON.stringify(jsonReport(games, config, fromProject), null, 2)}\n`)
     return Exit.Ok
   }
 
-  // four suffixes are legal, so naming one of them outright is wrong three times out of four
   const source =
     defaults.configPath === undefined ? 'the .gamecrate project config' : basename(defaults.configPath)
 
@@ -29,7 +29,7 @@ export function list(args: ParsedArgs, config: RootConfig, defaults: ProjectDefa
       out.push(...profileRows(profile, spec, width, profileNotes(spec, fromProject(name, profile), source)))
     }
   }
-  process.stdout.write(`${out.join('\n')}\n`)
+  emit('data', `${out.join('\n')}\n`)
   return Exit.Ok
 }
 

@@ -14,22 +14,14 @@ import { GamecrateError, Exit } from '../types'
 import type { ExitReason, LaunchPlan, LaunchResult } from '../types'
 
 /**
- * Written once, after the spawn, with the child's pid: a take-then-rewrite would leave a dead
- * pid over a live child, and the next launcher would unlink it and race the same stage tree.
- * Writing first is not open either, since a placeholder pid reads as "no lock" everywhere.
- *
- * So the child is killed when the write loses the `wx` race, because a supervisor with no lock
- * runs unguarded and its release would drop the winner's lock.
- *
- * Residual: a parent killed between the spawn and the write leaves that child unguarded, with
- * nothing left to kill it. That window spans a fork and an exec, so milliseconds.
+ * Written once, after the spawn, with the child's pid. The child is killed when the write
+ * loses the `wx` race.
  */
 export async function forkSupervisor(plan: LaunchPlan, argv: string[]): Promise<number> {
   await clearLock(plan)
 
   const name = containerName(plan)
   const self = supervisorArgv(argv, plan.instanceDir)
-  // the spawn is the trust boundary: one check covers undefined, '' and a path that is gone.
   const bin = self[0]
   if (bin === undefined || bin === '') {
     throw new GamecrateError('cannot re-exec gamecrate: argv[0] is empty', Exit.Environment)
@@ -53,7 +45,6 @@ export async function forkSupervisor(plan: LaunchPlan, argv: string[]): Promise<
     })
   } catch (error) {
     const failure = kill(child.pid)
-    // a supervisor still out there is a different problem from a lock that was taken
     if (failure !== undefined) {
       throw new GamecrateError(
         `could not confirm supervisor ${child.pid} died after the lock write failed`,
@@ -67,7 +58,6 @@ export async function forkSupervisor(plan: LaunchPlan, argv: string[]): Promise<
   return Exit.Ok
 }
 
-/** SIGKILL, not SIGTERM: the child is still bootstrapping and would race its own handlers. */
 // undefined means gone. ESRCH is gone too; EPERM cannot happen, same uid and we spawned it
 function kill(pid: number): string | undefined {
   try {
@@ -91,9 +81,7 @@ export async function recordExit(plan: LaunchPlan, result: LaunchResult): Promis
 
 /**
  * The supervisor has no terminal and its stdio is discarded, so the exit record is the only way
- * a caller ever learns it died. The lock goes only once that record is on disk, so a failed
- * write leaves it: clearLock takes a dead holder on the next launch, while a cleared lock with
- * no record makes wait answer "no run recorded" for a run that really failed.
+ * a caller ever learns it died. The lock goes only once that record is on disk.
  */
 export async function supervisorFailed(dir: string, code: number): Promise<number> {
   const record = { at: new Date().toISOString(), code, reason: 'failed' as const }
@@ -131,11 +119,6 @@ export async function lastExit(instanceDir: string): Promise<ExitRecord | undefi
 
 const WAIT_POLL_MS = 500
 
-/**
- * A record older than the lock we are watching belongs to an earlier run. takeLock and
- * forkSupervisor both clearLock before they write, so a third party can unlink the lock out
- * from under a live holder; without this the previous run's exit code would answer for it.
- */
 function endedAfter(record: ExitRecord, notBefore: string | undefined): boolean {
   if (notBefore === undefined) return true
   const began = Date.parse(notBefore)
@@ -146,11 +129,7 @@ function endedAfter(record: ExitRecord, notBefore: string | undefined): boolean 
 
 /**
  * Blocks while a live holder has the lock. `orphaned` is a holder that died without recording
- * anything, which is reachable with SIGKILL; `absent` is a run that never happened. Neither
- * can ever produce an exit code, so neither may keep waiting for one.
- *
- * Once a lock has been seen, the pid outranks the file: the lock can vanish because someone
- * else cleared it, but a live pid still owes us a record.
+ * anything; `absent` is a run that never happened.
  */
 export async function awaitExit(
   instanceDir: string,
@@ -174,9 +153,7 @@ const RUN_LOG_POLL_MS = 250
 
 /**
  * The lock is written right after the spawn, but the supervisor only opens its run log after
- * preflight, staging and the image, so `current` can point at the previous run for as long as
- * a pull takes. tail follows a descriptor, so starting there would watch a finished run and
- * never catch up. Waiting is bounded by the holder: if it dies first, there is nothing coming.
+ * preflight, staging and the image. Waiting is bounded by the holder.
  */
 export async function awaitRunLog(
   instanceDir: string,

@@ -3,9 +3,10 @@
 Back to the [`@gamecrate/cli` README](../README.md).
 
 `gamecrate steam build` downloads a game you own from Steam and appends it onto a published
-runtime base. The result is one OCI image that a headless launch can run.
+runtime base. The result is one OCI (Open Container Initiative) image that a headless launch can
+run.
 
-Gamecrate never publishes a game image. Steam binaries are not yours to redistribute, so keeping
+gamecrate never publishes a game image. Steam binaries are not yours to redistribute, so keeping
 a built image private is your job.
 
 ## Sign in once
@@ -22,57 +23,66 @@ store as a secret.
 ## Build
 
 ```sh
-gamecrate steam build rimworld --load
+gamecrate steam build --game rimworld --load
 ```
 
-`--load` puts the image in your local Docker daemon. `--push` sends it to a registry, and
-without either flag gamecrate assumes `--load`.
+`--load` keeps the image on this machine, which is what you want to launch it yourself.
+`--push` sends it to a registry instead, so CI or another machine can pull it. Without either flag
+gamecrate assumes `--load`.
 
-One command builds the whole matrix: every branch times every variant the plugin declares. Narrow
-it with `--beta` and `--variant`, both repeatable.
+Both write to the name you give in `--image`, or to `games.<game>.image.ref` in the config when
+you leave the flag out. That name includes the registry, so `--image ghcr.io/you/rimworld-game`
+pushes to GitHub's registry. Credentials come from `GAMECRATE_REGISTRY_USER` and
+`GAMECRATE_REGISTRY_PASSWORD`, and a `--push` with neither set fails before the download starts.
+
+One command builds the whole matrix: every branch times every variant the plugin declares. A
+branch is a Steam release channel, a variant is one image recipe the plugin declares under
+`variants[]`, and one pair of the two is a *cell*. Narrow the matrix with `--beta` and
+`--variant`, both repeatable.
 
 ```sh
-gamecrate steam build rimworld --beta public --variant linux --load
+gamecrate steam build --game rimworld --beta public --variant linux --load
 ```
+
+`--variant` only accepts a name the plugin declares. `--beta` takes any Steam branch name,
+because Steam owns the branch list and gamecrate has no way to read it. A branch the plugin
+declares keeps its settings. One it does not declare builds with defaults, under moving tags
+scoped by its own name.
+
+`--alias <tag>` puts one more [moving tag](#tags) on every cell built, which is how a project
+tracks a build by a name of your own:
+
+```sh
+gamecrate steam build --game rimworld --alias current --load
+```
+
+## Watching a build
+
+On a real terminal, `steam build` draws a row for every cell before any work starts, then fills
+each row in as that cell runs. A row shows the variant, the base image it appends onto, a
+progress bar, and what the cell is doing. steamcmd's own byte counts drive the bar, and its
+output feeds one line under the rows rather than scrolling them away.
+
+The board needs a terminal on both standard input and standard output, a `TERM` other than
+`dumb`, and no CI variable set. `--json` and `--plain` turn it off as well. Without the board,
+the same progress scrolls as plain lines. The summary table prints after the board closes, so a
+pipe reads the summary either way.
 
 ## What a plugin declares
 
-A plugin supplies the game facts, so you write only what is yours. The `steamBuild` block holds
-the matrix:
+The plugin ships the matrix under `steamBuild`. Branches are the Steam channels to build. A
+variant sets which platform's depot steamcmd downloads, and which runtime base the game appends
+onto. Your config adds to that. `branches` concatenates rather than replaces, so declaring a
+private beta of your own does not mean copying the plugin's list.
 
-```json
-{
-  "games": {
-    "rimworld": {
-      "steamBuild": {
-        "branches": [
-          { "name": "public", "tags": ["stable"] },
-          { "name": "beta", "password": true, "executable": { "linux": "./GameAlt" } }
-        ]
-      }
-    }
-  }
-}
-```
-
-| Key | What it does |
-| --- | --- |
-| `branches[].name` | The Steam branch to install. It becomes part of every tag, so it takes the Docker tag character set |
-| `branches[].password` | `true` refuses the build early when the branch needs a password and none is set |
-| `branches[].tags` | Extra moving tags for this branch, beside the version and `latest` forms |
-| `branches[].executable` | The launcher for this branch, keyed by variant name, when it differs from the plugin's |
-| `variants[].name` | The tag suffix for this variant |
-| `variants[].depot` | `linux`, `windows`, or `macos`. The depot to download, which is separate from the image platform |
-| `variants[].base` | `xvfb` for a launchable image, `proton` to run a Windows build under Wine, `none` for a reference image that never runs |
-| `variants[].include` | Subpaths to include. Empty means the whole game |
-
-`branches` is one of two arrays that concatenate rather than replace, so adding a beta does not
-mean copying the plugin's list.
+A variant with `base: none` is a reference image. Nothing runnable sits under it, so `--push`
+is the only way to build one and `--load` alone skips it.
 
 ## Tags
 
-Each cell writes one immutable tag and several moving ones. The exact version comes first,
-because a moving tag must never point at an image before the exact one exists.
+Each cell writes one immutable tag and several moving ones. A moving tag follows the newest
+build that fits it. gamecrate writes the exact version first, so a run that dies halfway never
+leaves `latest` on a build with no exact tag.
 
 For version `1.6.4871` on the default branch and the default variant:
 
@@ -83,15 +93,24 @@ latest    latest-linux          follows the newest build
 ```
 
 Another branch scopes all of its moving tags by name, so `beta` writes `latest-beta` and
-`2.0-beta`. Two branches on one repository can never race for the same tag. A `tags` entry you
-write is the exception: it is unscoped on purpose, which is how a bare `stable` can follow
-whichever branch you point it at.
+`2.0-beta`. Two branches on one repository can never race for the same tag. An alias is the
+exception. A name from `--alias`, or from the branch's own `tags` list, stays unscoped on
+purpose. That is how a bare `stable` can follow whichever branch you point it at.
 
 ## Skipping work
 
-Gamecrate compares the build id Steam publishes against the `steam.buildid` label on the image
+gamecrate compares the build id Steam publishes against the `steam.buildid` label on the image
 that is already there. When they match, the cell skips and downloads nothing. A scheduled job
 therefore costs seconds rather than gigabytes.
+
+A skipped cell moves its moving tags onto the image already there. So an alias you add with
+`--alias` after the last real build still lands, even on a branch that skips every run. The
+cell then lists those tags. The list carries no exact version, because the cell downloaded no
+build to read one from. Its first entry is the tag gamecrate read the build id off, and that
+one stays where it already was.
+
+One skip happens earlier than that. A `base: none` variant built without `--push` is skipped
+before the tag step, so it moves no tags at all.
 
 `--force` builds anyway.
 
@@ -107,20 +126,21 @@ every six hours per image. An image gamecrate did not build is never checked at 
 
 `check: false` turns it off. `everyHours: 0` checks every launch.
 
-A rebuild downloads the game again, so gamecrate asks first. `--yes` answers for you. With no
-terminal to ask, such as a detached or CI run, it warns and launches on the image you have.
+A rebuild downloads the game again, so gamecrate asks before starting one. Decline it and the
+launch continues on the image you have. With no terminal to answer, such as a detached run, a
+CI run, or `--json`, it warns and does the same.
 
 ## Launching what you built
 
 ```sh
-gamecrate rimworld --image ghcr.io/you/rimworld-game:1.6
+gamecrate run dev --image ghcr.io/you/rimworld-game:1.6
 ```
 
 Or pin it to a profile with `gameVersion`, described in
 [Configuration](configuration.md#profiles).
 
 Either route reads the game out of the image. That covers the core game and its official
-expansions. Gamecrate copies their manifests out of the image once per image id and caches them,
+expansions. gamecrate copies their manifests out of the image once per image id and caches them,
 so it never needs a local install to resolve them.
 
 ## Referencing the game's assemblies
@@ -129,7 +149,7 @@ A mod project compiles against the game's own DLLs. `refs` prints a directory ho
 pulled out of the image you built:
 
 ```sh
-gamecrate refs rimworld
+gamecrate refs --game rimworld
 ```
 
 The path goes to standard output on its own, so a build step can capture it. The image digest
@@ -140,7 +160,7 @@ and the assembly count go to standard error.
 overrides both. Without this, a project could compile against one build while the container
 runs another.
 
-Extraction runs once per image digest and is cached after. Gamecrate keeps two symlinks into it:
+Extraction runs once per image digest and is cached after. gamecrate keeps two symlinks into it:
 
 | link | follows |
 | --- | --- |
@@ -175,7 +195,7 @@ Name each assembly, never the whole directory. Most of what the image ships is t
 so a `*.dll` glob hands the compiler a second `corlib` and thousands of `CS0518` errors.
 
 Where the assemblies sit inside the image differs between game versions, so a plugin declares
-the candidate directories under `managed`. Gamecrate probes them in order and takes the first
+the candidate directories under `managed`. gamecrate probes them in order and takes the first
 one holding a DLL.
 
 ## Credentials

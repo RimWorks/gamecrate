@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { access, readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { parseResolution } from '../cli/args'
+import { warn } from '../cli/output'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import type {
   BuildPolicy,
@@ -17,7 +18,7 @@ import type {
 } from '../types'
 import { loadPlugins } from '../plugin'
 import type { GamePlugin } from '../plugin'
-import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS } from './builtin'
+import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS, applyDefaultImage } from './builtin'
 import { CONFIG_SUFFIXES, orderedKeys, readConfigFile, readConfigText } from './read'
 import { isObj, validateConfig } from './validate'
 
@@ -27,13 +28,32 @@ export function globalConfigDir(): string {
 }
 
 export async function findGlobalConfig(): Promise<string | undefined> {
-  return probe(globalConfigDir(), 'profiles')
+  const dir = globalConfigDir()
+  const found = await probe(dir, 'config')
+  const old = await probe(dir, 'profiles')
+  if (found !== undefined && old !== undefined) {
+    throw new GamecrateError(
+      `two global configs in ${dir}`,
+      Exit.Config,
+      `${basename(found)} and ${basename(old)}. the name is config now, so delete ${basename(old)}`,
+    )
+  }
+  if (found !== undefined) return found
+  return old === undefined ? undefined : await adoptOldStem(dir, old)
 }
 
-/**
- * The one file in a directory, whatever its extension. Two is an error: silent precedence
- * is how you end up editing the wrong file for twenty minutes.
- */
+/** The global config was once `profiles.<ext>`. One rename, announced, then never again. */
+async function adoptOldStem(dir: string, old: string): Promise<string> {
+  const moved = join(dir, `config${extname(old)}`)
+  try {
+    await rename(old, moved)
+  } catch {
+    return (await probe(dir, 'config')) ?? old
+  }
+  warn(`renamed ${basename(old)} to ${basename(moved)}: the global config is config${extname(old)} now`)
+  return moved
+}
+
 async function probe(dir: string, stem: string): Promise<string | undefined> {
   const found: string[] = []
   for (const suffix of CONFIG_SUFFIXES) {
@@ -74,7 +94,6 @@ function oneOf<T extends string>(values: readonly [T, ...T[]]) {
 
 const BUILD_POLICIES = ['auto', 'always', 'never'] as const
 
-/** Only the resolution is stored differently from how it is written. */
 const projectResolution = z
   .string({ error: 'expected dimensions like 1920x1080' })
   .check((ctx) => {
@@ -90,7 +109,7 @@ const PROJECT_OBJECT = z.strictObject(
   {
     game: projectName.optional(),
     defaultProfile: projectName.optional(),
-    profiles: z.record(z.string(), z.unknown()).optional(),
+    profiles: z.record(projectName, z.unknown()).optional(),
     settings: z.record(z.string(), z.unknown()).optional(),
     library: z.record(z.string(), z.unknown()).optional(),
     detach: projectBool.optional(),
@@ -117,7 +136,6 @@ const PROJECT_OBJECT = z.strictObject(
     pull: oneOf(['always', 'missing', 'never']).optional(),
     sort: oneOf(['topo', 'none']).optional(),
     network: oneOf(['none', 'bridge', 'host']).optional(),
-    // A bare yes/no is the common spelling; the three-way policy is the full one.
     build: z
       .union([z.boolean().transform((on): BuildPolicy => (on ? 'always' : 'never')), z.enum(BUILD_POLICIES)], {
         error: `expected one of ${BUILD_POLICIES.join(', ')}`,
@@ -128,7 +146,6 @@ const PROJECT_OBJECT = z.strictObject(
   { error: 'expected an object' },
 )
 
-// profiles, settings and library land under one game, and a repo config has no games map to name it.
 const PROJECT_SCHEMA = PROJECT_OBJECT.check((ctx) => {
   const { game, profiles, settings, library } = ctx.value
   if (game !== undefined) return
@@ -166,13 +183,13 @@ export async function loadProjectDefaults(start = process.cwd()): Promise<Projec
   const defaults = validateProjectDefaults(readConfigText(text, file), file)
   const profiles = defaults.profiles
   if (profiles !== undefined) {
-    // a duplicate key drops one profile and leaves source order a guess. refuse rather than guess.
     const order = orderedKeys(text, file, 'profiles')
     if (order.length !== Object.keys(profiles).length || order.some((key) => !Object.hasOwn(profiles, key))) {
       throw new GamecrateError(`config is invalid: ${file}`, Exit.Config, 'duplicate profiles key')
     }
     defaults.profileOrder = order
   }
+  if (defaults.log !== undefined) defaults.log = resolve(dirname(file), defaults.log)
   defaults.configPath = file
   return defaults
 }
@@ -204,8 +221,7 @@ export interface LoadedConfig {
  * plugin's defaults. A missing file means no games, which every non-launch subcommand survives.
  */
 export async function loadConfig(path?: string, project?: ProjectDefaults): Promise<LoadedConfig> {
-  // with nothing on disk, the name an error message and `config edit` should both use.
-  const file = path ?? (await findGlobalConfig()) ?? join(globalConfigDir(), 'profiles.yml')
+  const file = path ?? (await findGlobalConfig()) ?? join(globalConfigDir(), 'config.yml')
   const user = await readConfigFile(file)
 
   const specs = isObj(user) && user['plugins'] !== undefined ? user['plugins'] : []
@@ -221,10 +237,8 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
       [...plugins].map(([name, plugin]) => [name, structuredClone(plugin.defaults) as GameConfig]),
     ),
   }
-  // an absent file and an empty one both mean no config. parseYaml('') is null, not undefined,
-  // and deepMerge(base, null) returns null, which validateConfig then refuses.
   const merged = user === undefined || user === null ? base : mergeUserConfig(base, user)
-  const spliced = applyProject(merged, project)
+  const spliced = applyDefaultImage(applyProject(merged, project))
   const { config, problems } = validateConfig(spliced)
   if (problems.length > 0) {
     const detail = problems
@@ -239,10 +253,6 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
   return { config: expandPaths(config), plugins }
 }
 
-/**
- * Repo profiles are assigned, not merged: "replace wholesale" is the whole contract, and a
- * deepMerge would leave the global profile's mods showing through the repo's shorter list.
- */
 function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig {
   if (project === undefined) return config
   const game = project.game
@@ -260,9 +270,6 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
     )
   }
 
-  // deepMerge hands back the user's own objects, and origin() reads that tree to decide who to
-  // blame. copy the two levels we write so the splice stays invisible to it. spread, not a loop:
-  // a repo file is untrusted, and `profiles[name] = x` on a __proto__ key hits the setter.
   const target: GameConfig = {
     ...existing,
     profiles: { ...existing.profiles, ...(project.profiles as Record<string, ProfileConfig> | undefined) },
@@ -277,12 +284,6 @@ function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig
   return config
 }
 
-/**
- * Per id and case-blind, so a repo pin replaces a global one of the same id whole however
- * either file spelled it. `existingKey` and `refFor` both match ids without regard to case, so
- * leaving both spellings alive would hand two profiles two different pins for one mod.
- * `fromEntries` and spread both define rather than assign, which a `__proto__` key needs.
- */
 function spliceLibrary(
   global: GameConfig['library'],
   project: Record<string, LibraryEntry>,
@@ -292,14 +293,8 @@ function spliceLibrary(
   return { ...Object.fromEntries(kept), ...project }
 }
 
-/** The project keys that land under one game, whether by splice or by merge. */
 const GAME_SCOPED_KEYS = ['profiles', 'settings', 'library'] as const
 
-/**
- * Says where a problem's key actually came from. A pointer the user's file does not contain
- * arrived with a plugin's defaults or the repo config, and blaming the global config for it
- * sends them key-hunting.
- */
 function origin(
   where: string,
   user: unknown,
@@ -310,8 +305,6 @@ function origin(
   const segments = where.slice(1).split('/').map((s) => s.replaceAll('~1', '/').replaceAll('~0', '~'))
   const [section, name, sub, ...rest] = segments
 
-  // ahead of the user check: a repo profile replacing a global one of the same name still
-  // resolves in the user tree, and that file holds the value they did not write.
   const repoGame = project?.game
   const repoSection = GAME_SCOPED_KEYS.find((k) => k === sub)
   if (
@@ -395,15 +388,12 @@ function resolveNamed(game: GameConfig, name: string, seen: string[]): ProfileCo
     exclude,
     settings: deepMerge(parent.settings ?? {}, self.settings ?? {}, true),
   }
-  // A child inherits its parent's instances and may redefine one by name.
   const instances = deepMerge(parent.instances ?? {}, self.instances ?? {}, true)
   if (Object.keys(instances).length > 0) out.instances = instances
   const includeBase = self.includeBase ?? parent.includeBase
   if (includeBase !== undefined) out.includeBase = includeBase
   const auto = self.autoDependencies ?? parent.autoDependencies
   if (auto !== undefined) out.autoDependencies = auto
-  // a scalar a child does not restate is its parent's. every one of these is read off the
-  // resolved profile, so dropping it here is the same as the option never existing
   for (const field of ['detach', 'replace', 'build', 'gameVersion', 'image', 'windowTitle', 'windowIcon'] as const) {
     const value = self[field] ?? parent[field]
     if (value !== undefined) Object.assign(out, { [field]: value })
@@ -447,12 +437,27 @@ export async function profileDirs(root: RootConfig, game: string, profile?: stri
   return (await readdir(dir).catch(() => [] as string[])).map((name) => join(dir, name))
 }
 
+/**
+ * Every name `profileKey` would answer to, per game. What lets a bare profile name the game it
+ * belongs to, so the extra `aliases` have to be in here too.
+ */
+export function profileNames(config: RootConfig): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(config.games).map(([name, game]) => [
+      name,
+      Object.entries(game.profiles).flatMap(([key, spec]) => [
+        key,
+        ...(spec.aliases ?? []).filter((a) => typeof a === 'string'),
+      ]),
+    ]),
+  )
+}
+
 export function profileKey(game: GameConfig, name: string): string | undefined {
   if (Object.hasOwn(game.profiles, name)) return name
   const lower = name.toLowerCase()
   const direct = Object.keys(game.profiles).find((k) => k.toLowerCase() === lower)
   if (direct !== undefined) return direct
-  // A profile's own `aliases` are extra names for it, so one entry answers to several.
   return Object.keys(game.profiles).find((k) =>
     (own(game.profiles, k)?.aliases ?? []).some((a) => typeof a === 'string' && a.toLowerCase() === lower),
   )
@@ -504,7 +509,6 @@ function branchName(entry: unknown): string | undefined {
   return isObj(entry) && typeof entry['name'] === 'string' ? entry['name'] : undefined
 }
 
-/** The plugin's order holds, the user's fields win on a shared name, and new names append. */
 function concatBranches(declared: SteamBranch[], added: unknown[]): SteamBranch[] {
   const out = [...declared]
   const at = new Map<string, number>()

@@ -174,8 +174,19 @@ export interface InstanceConfig {
   settings?: Partial<Settings>
 }
 
+/** `class` is the block's type, which gamecrate cannot infer, so a creatable block states it. */
+export interface ModSettingsFile {
+  file: string
+  class: string
+  values: Record<string, unknown>
+  /** Keys rewritten on every launch. Everything else is written only when the file lacks it. */
+  replace?: string[]
+}
+
 export interface ProfileConfig {
   mods?: ModEntry[]
+  /** Written before launch. */
+  modSettings?: ModSettingsFile[]
   extends?: string
   exclude?: string[]
   includeBase?: boolean
@@ -204,10 +215,13 @@ export interface ProfileConfig {
 }
 
 /** One image built from a steam depot. The first entry of `variants` is the default. */
+/** Which game build the base has to run. Both runnable bases carry a virtual display. */
+export type BaseKind = 'linux' | 'windows' | 'none'
+
 export interface SteamVariant {
   name: string
   depot?: 'linux' | 'windows' | 'macos'
-  base: 'xvfb' | 'proton' | 'none'
+  base: BaseKind
   include: string[]
   executable?: string
 }
@@ -228,6 +242,15 @@ export interface SteamBuildSpec {
   variants: SteamVariant[]
 }
 
+export interface RecordsSpec {
+  /** Relative to the profile's config directory. */
+  dir: string
+  /** packageIds that write records there. */
+  mods: string[]
+  /** Settings written before launch when one of `mods` is loaded, to turn record output on. */
+  enable?: ModSettingsFile
+}
+
 export interface GameConfig {
   gameFiles: GameFilesSpec
   dataDir: DataDirSpec
@@ -242,9 +265,12 @@ export interface GameConfig {
   manifest: { file: string }
   modsConfig: { file: string }
   prefs: { file: string }
+  /** Relative to the profile's data dir. Absent means this game has no mod settings files. */
+  modSettingsDir?: string
   /** Where the engine writes its version string. */
   version: { file: string }
   steamBuild: SteamBuildSpec
+  records?: RecordsSpec
   /** Filename suffixes that mean "a save". `clean --all` counts them before it deletes. */
   saveExtensions: string[]
   core: string
@@ -265,6 +291,8 @@ export interface RootConfig {
   plugins?: string[]
   dataRoot: string
   defaults?: { settings?: Partial<Settings> }
+  /** How many `dotnet build` runs go at once. Root level, because it names a host tool. */
+  buildConcurrency?: number
   /** Where the steamcmd binary is. Root level, not per game, because it names a host tool. */
   steamcmd?: { path?: string }
   games: Record<string, GameConfig>
@@ -388,6 +416,8 @@ export interface LaunchPlan {
   renderWaitSeconds: number
   /** False under --no-stale-check. The check still runs, so staleReport stays truthful. */
   warnOnStale: boolean
+  /** From the root config. How many `dotnet build` runs a launch starts at once. */
+  buildConcurrency?: number
   warnings: string[]
 }
 
@@ -418,6 +448,8 @@ export interface DockerRunSpec {
   env: Record<string, string>
   mounts: Mount[]
   devices: string[]
+  /** Extra groups the container user joins, for a render node it could not otherwise open. */
+  groupAdd?: string[]
   deviceCgroupRules: string[]
   network: NetworkPolicy
   memory: string
@@ -479,13 +511,20 @@ export interface ParsedArgs {
   noReplace: boolean
   /** Set on the forked supervisor only. Never a config key, never in help. */
   supervised: boolean
+  /** `-q`: drop the terminal copy. `--log` still receives everything. */
+  quiet: boolean
+  /** Scrolling output, whatever the terminal could support. */
+  plain: boolean
   /** `-f`: keep printing as the run writes, instead of dumping what is there. */
   follow: boolean
+  /** True when the verb word was typed. `run` is implied, so help cannot infer it. */
+  verbTyped: boolean
   /** The write verb under `mods`, or the verb under `steam`. Unset means the read verb. */
-  subverb?: 'add' | 'rm' | 'sync' | 'build' | 'login'
+  subverb?: 'add' | 'rm' | 'sync' | 'build' | 'login' | 'edit'
   /** `steam build`: repeatable filters on the two axes. */
   variant?: string[]
   branches?: string[]
+  aliases?: string[]
   /** Repeatable plugin package specifiers. */
   plugin?: string[]
   image?: string
@@ -517,30 +556,31 @@ export type ProjectDefaults = Partial<
     ParsedArgs,
     | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
     | 'noDetach' | 'noReplace' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
-    | 'variant' | 'branches' | 'plugin' | 'image' | 'load' | 'push' | 'base'
+    | 'verbTyped' | 'quiet' | 'plain'
+    | 'variant' | 'branches' | 'aliases' | 'plugin' | 'image' | 'load' | 'push' | 'base'
     | 'platform' | 'print' | 'username'
   >
 > & {
-  /** Replaces the old `profile:` key. Falls back to the first entry in `profiles`. */
   defaultProfile?: string
-  /** Validated by validateConfig after the splice, not here. */
   profiles?: Record<string, unknown>
   settings?: Record<string, unknown>
-  /** Spliced per id over games.<game>.library, so a repo pin replaces a global one whole. */
   library?: Record<string, unknown>
-  /** Profile keys in source order. Object.keys sorts integer-like names to the front. */
   profileOrder?: string[]
-  /** The file these came from. Four suffixes are legal, so output must not guess the name. */
   configPath?: string
 }
+
+/** The container's combined output inside a run directory. Layout, not a docker detail. */
+export const STDOUT_LOG = 'stdout.log'
 
 /** Names that can never be a game or profile key. Enforced at config load. */
 export const RESERVED_NAMES: readonly string[] = [
   'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
-  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login', 'refs',
+  'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login', 'refs', 'edit',
+  'completion', 'init',
 ]
 
+/** Games, profiles, aliases and instances. The first character is alphanumeric, so `..` cannot be one. */
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**

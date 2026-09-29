@@ -20,12 +20,10 @@ afterAll(async () => {
 interface Fixture {
   pid: number
   instance?: string
-  /** Leave unset for a stamp old enough that any live pid reads as a different process. */
   startedAt?: string
   root?: string
 }
 
-/** Mirrors containerName: the instance is part of the docker name, so two locks cannot share one. */
 async function lock(game: string, profile: string, f: Fixture): Promise<void> {
   const base = f.root ?? root
   const dir = f.instance === undefined
@@ -78,8 +76,6 @@ describe('walkLocks', () => {
 })
 
 describe('listRuns', () => {
-  // both statuses asserted exactly, and each fixture pid is one this machine agrees with: a
-  // hardcoded 'starting' or 'orphaned' in place of the isRunning call now fails one of them.
   test('a lock with no container is reported, with the status its pid earns', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-status-'))
     const child = spawn('sleep', ['30'], { stdio: 'ignore' })
@@ -88,7 +84,6 @@ describe('listRuns', () => {
       await lock('rimworld', 'booting', {
         pid: child.pid!,
         root: dir,
-        // the child began before this, which is what isRunning demands of a live holder
         startedAt: new Date().toISOString(),
       })
       const runs = await listRuns(dir, () => Promise.resolve(''))
@@ -101,8 +96,6 @@ describe('listRuns', () => {
     }
   })
 
-  // the two fixtures hold different container names, so no tie-break runs and no pid liveness
-  // decides the answer. the merge's own tie-break is pinned in `listRuns merge` below.
   test('a container and its lock are one row, not two', async () => {
     const docker = 'gamecrate-rimworld-dev\trimworld\tdev\t\tUp 4 minutes\n'
     const runs = await listRuns(root, () => Promise.resolve(docker))
@@ -125,10 +118,6 @@ function live(pid: number): Held {
   return { pid, startedAt: new Date().toISOString() }
 }
 
-/**
- * Two locks can land on one container name: profile `dev-wt` and profile `dev` instance `wt`.
- * walkLocks always visits a profile lock before its instances, so `profile` merges first.
- */
 async function collidingRoot(profile: Held, instance: Held): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'gamecrate-collide-'))
   const write = async (path: string, held: Held): Promise<void> => {
@@ -167,9 +156,6 @@ describe('listRuns merge', () => {
     expect(await mergedPid(DEAD, live(process.pid))).toBe(process.pid)
   })
 
-  // pins the merge against a guard that tests the incoming lock: that one is last-wins, which
-  // is readdir order again with a different answer. the second live pid is a child this test
-  // spawns, not process.ppid, so nothing here depends on how the runner parents its workers.
   test('a live lock does not replace a live one that merged before it', async () => {
     const child = spawn('sleep', ['30'], { stdio: 'ignore' })
     try {

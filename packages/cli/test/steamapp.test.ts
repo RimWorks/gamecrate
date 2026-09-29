@@ -35,23 +35,19 @@ afterEach(() => {
   delete process.env.FAKE_REDIST
 })
 
-/** A data root of its own, wired to the fake, so the tests never touch steam. */
 async function fake(): Promise<{ root: string; cfg: RootConfig }> {
   const root = await mkdtemp(join(tmp, 'app-'))
   return { root, cfg: { dataRoot: root, games: {}, steamcmd: { path: FAKE } } }
 }
 
-/** What the fake recorded, split into words. */
 async function recordedArgv(root: string): Promise<string[]> {
   return (await readFile(join(steamHome(root), 'argv.txt'), 'utf8')).trim().split(/\s+/)
 }
 
-/** Any runscript a call left behind. A password still on disk is the bug this all guards. */
 async function leftoverRunscripts(root: string): Promise<string[]> {
   return (await readdir(steamHome(root))).filter((name) => name.startsWith('runscript-'))
 }
 
-/** Everything the tool wrote to the terminal while fn ran. status() writes there too. */
 async function terminal(fn: () => Promise<unknown>): Promise<string> {
   const written: string[] = []
   const real = process.stderr.write.bind(process.stderr)
@@ -111,7 +107,6 @@ describe('downloadApp', () => {
     await downloadApp(cfg, {
       steamAppId: 294100, branch: 'unstable', depot: 'windows', password: 'hunter2', dataRoot: root,
     })
-    // `ps` reads this one, which is the whole reason the password is not in it
     const argv = await readFile(join(steamHome(root), 'argv.txt'), 'utf8')
     expect(argv).toContain('+runscript')
     expect(argv).not.toContain('-betapassword')
@@ -120,7 +115,6 @@ describe('downloadApp', () => {
     const script = await readFile(join(steamHome(root), 'runscript.txt'), 'utf8')
     expect(script).toContain('-beta unstable')
     expect(script).toContain('-betapassword hunter2')
-    // a @ setting applies to whatever runs after it, here too
     expect(script.indexOf('@sSteamCmdForcePlatformType')).toBeLessThan(script.indexOf('login'))
   })
 
@@ -151,7 +145,6 @@ describe('downloadApp', () => {
     expect(argv.indexOf('+force_install_dir')).toBeLessThan(login)
     expect(argv[argv.indexOf('+force_install_dir') + 1])
       .toBe(appDownloadRoot(root, 294100, 'public', 'windows'))
-    // a @ setting applies to whatever runs after it, so it is worthless after +login
     expect(argv.indexOf('+@sSteamCmdForcePlatformType')).toBeLessThan(login)
     expect(argv[argv.indexOf('+@sSteamCmdForcePlatformType') + 1]).toBe('windows')
   })
@@ -219,7 +212,6 @@ describe('downloadApp', () => {
     const shown = await terminal(async () => {
       out = (await downloadApp(cfg, { steamAppId: 294100, branch: '1.5', dataRoot: root })).dir
     })
-    // a 5GB download that prints only once it is finished is the defect this pins
     expect(shown).toContain("Success! App '294100' fully installed")
     expect(existsSync(join(out, 'Version.txt'))).toBe(true)
   })
@@ -269,7 +261,6 @@ describe('downloadApp', () => {
 describe('publishedBuildId', () => {
   test('reads the buildid under the branch that was asked for', async () => {
     const { cfg } = await fake()
-    // the fake prints public first, so a parser that takes the first hit answers 111
     expect(await publishedBuildId(cfg, 294100, '1.5')).toBe('222')
     expect(await publishedBuildId(cfg, 294100, 'unstable')).toBe('333')
     expect(await publishedBuildId(cfg, 294100, 'public')).toBe('111')
@@ -283,7 +274,6 @@ describe('publishedBuildId', () => {
   test('no account anywhere throws what the download throws, never a null', async () => {
     const { cfg } = await fake()
     delete process.env.STEAM_USERNAME
-    // a null here reads as "steam reported no buildid", which builds and hides the real cause
     await expect(publishedBuildId(cfg, 294100, 'public'))
       .rejects.toThrow(/needs a steam account/)
   })

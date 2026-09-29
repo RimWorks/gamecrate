@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -93,7 +94,6 @@ describe('plugin manifests', () => {
 })
 
 describe('exclusions', () => {
-  // A repo full of test fixtures used to fail the whole resolution on exit 4.
   test('an About stub with no packageId is skipped, not reported', async () => {
     const root = await fixture()
     try {
@@ -151,7 +151,6 @@ describe('linked worktree shadowing', () => {
   test('a primary checkout beats a linked worktree declaring the same packageId', async () => {
     const root = await fixture()
     try {
-      // Sorts first alphabetically, exactly like Beacon-runtime-package-sync.
       const wt = await mod(root, 'A-worktree/Mod', 'dup.mod')
       await mkdir(join(root, 'A-worktree'), { recursive: true })
       await writeFile(join(root, 'A-worktree', '.git'), 'gitdir: /somewhere/.git/worktrees/sync\n')
@@ -178,7 +177,6 @@ describe('workshop scanning', () => {
     try {
       await mod(root, '123456', 'ws.numeric')
       await mod(root, 'not-a-number', 'ws.named')
-      // A nested per-version About must not register as its own item.
       await mod(root, '123456/1.6', 'ws.phantom')
 
       const cfg = withRoots(atlas, [], root)
@@ -251,8 +249,6 @@ describe('source cache scanning', () => {
     }
   })
 
-  // Passes before the cache is ever scanned too. It guards against a future inversion of the
-  // scan order, not against today's behaviour.
   test('a local checkout beats a cached clone for a bare id', async () => {
     const root = await fixture()
     const cache = await fixture()
@@ -271,17 +267,14 @@ describe('source cache scanning', () => {
   })
 })
 
-/** Where downloads land. `run` pins it, so it is one layout whatever steamcmd is used. */
 function downloadTree(dataRoot: string): string {
   return downloadRoot(dataRoot, atlas)
 }
 
-/** Where steamcmd puts the acf for a tree: one level above `content/<appid>`. */
 function acfFile(tree: string): string {
   return join(dirname(dirname(tree)), 'appworkshop_294100.acf')
 }
 
-/** The shape steam writes, with `timetouched` in the details block steamcmd keeps rewriting. */
 function acfText(items: Record<string, string>, timetouched: string): string {
   const installed = Object.entries(items)
     .map(([id, manifest]) => `\t\t"${id}"\n\t\t{\n\t\t\t"timeupdated"\t\t"1752434318"\n\t\t\t"manifest"\t\t"${manifest}"\n\t\t}`)
@@ -292,7 +285,6 @@ function acfText(items: Record<string, string>, timetouched: string): string {
   return `"AppWorkshop"\n{\n\t"appid"\t\t"294100"\n\t"WorkshopItemsInstalled"\n\t{\n${installed}\n\t}\n\t"WorkshopItemDetails"\n\t{\n${details}\n\t}\n}\n`
 }
 
-/** Keeps the workshop cache inside the fixture, so no test reads the user's real one. */
 async function privateCache(dataRoot: string): Promise<() => void> {
   const before = process.env['XDG_CACHE_HOME']
   process.env['XDG_CACHE_HOME'] = join(dataRoot, 'xdg')
@@ -376,11 +368,29 @@ describe('the workshop stamp', () => {
       await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
       const before = workshopStamp(withRoots(atlas, [], null), data)
 
-      // the measured no-op run: timetouched moves, the installed manifest does not.
       await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789948957'))
       const after = workshopStamp(withRoots(atlas, [], null), data)
 
       expect(after).toBe(before)
+    } finally {
+      await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('the same items hash the same under any collation', async () => {
+    const data = await fixture()
+    try {
+      const acf = acfFile(downloadTree(data))
+      await mkdir(dirname(acf), { recursive: true })
+      await writeFile(acf, acfText({ 'ä1': '1025052661578487222', b2: '7017455373945780161' }, '1789944542'))
+
+      const codeUnit = ['b2:7017455373945780161', 'ä1:1025052661578487222']
+      const collated = [...codeUnit].sort((a, b) => a.localeCompare(b))
+      expect(collated).not.toEqual(codeUnit)
+
+      const stamp = workshopStamp(withRoots(atlas, [], null), data)
+      expect(stamp).toBe(createHash('sha256').update(codeUnit.join('\n')).digest('hex'))
+      expect(stamp).not.toBe(createHash('sha256').update(collated.join('\n')).digest('hex'))
     } finally {
       await rm(data, { recursive: true, force: true })
     }
@@ -445,7 +455,6 @@ describe('the workshop stamp', () => {
       expect(first).not.toBeNull()
       expect(workshopStamp(cfg, data)).toBe(first)
 
-      // and an acf that parses to nothing reads the same as no acf at all
       const acf = acfFile(downloadTree(data))
       await mkdir(dirname(acf), { recursive: true })
       await writeFile(acf, '')
@@ -477,7 +486,6 @@ describe('the workshop stamp', () => {
     const data = await fixture()
     try {
       const acf = acfFile(downloadTree(data))
-      // a directory where the acf should be: readFileSync gives EISDIR, not ENOENT
       await mkdir(acf, { recursive: true })
       expect(workshopStamp(withRoots(atlas, [], null), data)).toBeNull()
     } finally {
@@ -492,8 +500,6 @@ describe('the workshop stamp', () => {
       const empty = workshopStamp(cfg, data)
       expect(empty).not.toBeNull()
 
-      // what a fresh download root looks like: valid keyvalues, nothing installed yet. refusing
-      // the cache here would cost a full workshop rescan on every launch.
       const acf = acfFile(downloadTree(data))
       await mkdir(dirname(acf), { recursive: true })
       await writeFile(acf, acfText({}, '1789944542'))
@@ -509,7 +515,6 @@ describe('the workshop stamp', () => {
     const data = await fixture()
     const ws = await fixture()
     try {
-      // <ws>/../appworkshop_294100.acf is the steam side; it does not exist yet.
       expect(workshopStamp(withRoots(atlas, [], join(ws, 'content', '294100')), data)).toBeNull()
 
       const steamAcf = join(ws, 'appworkshop_294100.acf')
@@ -527,12 +532,7 @@ describe('the workshop stamp', () => {
   })
 })
 
-/**
- * An image-sourced game keeps Core and the DLC inside the image, so the index has to read
- * them out of it. No test combined the two before, and a launch could not resolve its core.
- */
 describe('official mods from an image', () => {
-  /** A payload file beats a heredoc: no quoting between the fake and what it prints. */
   async function fakeDocker(out: string): Promise<string> {
     const dir = await mkdtemp(join(tmpdir(), 'dg-fakedocker-'))
     const payload = join(dir, 'payload.txt')
@@ -540,7 +540,7 @@ describe('official mods from an image', () => {
     const bin = join(dir, 'docker')
     await writeFile(
       bin,
-      ['#!/bin/sh', 'case "$*" in', '  *"image inspect"*) echo sha256:feedface ;;', // absolute: PATH is this dir alone, so cat is not on it
+      ['#!/bin/sh', 'case "$*" in', '  *"image inspect"*) echo sha256:feedface ;;',
       `  *) /bin/cat ${payload} ;;`, 'esac', ''].join('\n'),
     )
     await chmod(bin, 0o755)

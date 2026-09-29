@@ -21,7 +21,6 @@ afterEach(() => {
   while (temps.length > 0) rmSync(temps.pop() as string, { recursive: true, force: true })
 })
 
-/** The fixture codec, small enough to inline: one `key value` per line, packageId is all we read. */
 const PLUGIN = `export default {
   apiVersion: ${PLUGIN_API_VERSION},
   game: 'atlas',
@@ -47,7 +46,6 @@ function writeMod(dir: string, packageId: string): void {
   writeFileSync(join(dir, 'About', 'About.txt'), `packageId ${packageId}\nname ${packageId}\n`)
 }
 
-/** A config whose profile names one workshop id that is on no mounted root. */
 function workspace(): { env: NodeJS.ProcessEnv } {
   const dir = temp('gc-plancmd-')
   const pluginDir = join(dir, 'plugin')
@@ -60,7 +58,7 @@ function workspace(): { env: NodeJS.ProcessEnv } {
 
   mkdirSync(join(dir, 'cfg', 'gamecrate'), { recursive: true })
   writeFileSync(
-    join(dir, 'cfg', 'gamecrate', 'profiles.json'),
+    join(dir, 'cfg', 'gamecrate', 'config.json'),
     JSON.stringify({
       dataRoot: join(dir, 'data'),
       plugins: [pluginDir],
@@ -77,15 +75,39 @@ function workspace(): { env: NodeJS.ProcessEnv } {
   return { env: { ...process.env, XDG_CONFIG_HOME: join(dir, 'cfg') } }
 }
 
-/**
- * The relabel only helps if the plan still prints. `mods` shares the split with --print-plan and
- * --dry-run, and needs no docker, so it is the one that can run here.
- */
 test('mods prints a provisional plan for an unfetched workshop id instead of failing', () => {
   const { env } = workspace()
-  const run = spawnSync('bun', [join(ROOT, 'src', 'index.ts'), 'mods', 'atlas', 'dsd'], { cwd: tmpdir(), env })
+  const run = spawnSync('bun', [join(ROOT, 'src', 'index.ts'), 'mods', 'dsd'], { cwd: tmpdir(), env })
   const out = run.stdout.toString() + run.stderr.toString()
   expect(out).toContain('a real launch would fetch it')
   expect(out).toContain('this plan is provisional')
   expect(run.status).toBe(0)
+}, 30_000)
+
+test('a game name gives the same refusal however many words follow it', () => {
+  const { env } = workspace()
+  const refusal = (argv: string[]) => {
+    const run = spawnSync('bun', [join(ROOT, 'src', 'index.ts'), ...argv], { cwd: tmpdir(), env })
+    return { code: run.status, text: run.stdout.toString() + run.stderr.toString() }
+  }
+
+  const alone = refusal(['atlas'])
+  expect(alone.code).toBe(2)
+  expect(alone.text).toContain('atlas is a game, not a subcommand')
+  expect(alone.text).toContain('run one of its profiles: dsd')
+
+  for (const argv of [['atlas', 'dsd'], ['atlas', 'dsd', 'extra']]) {
+    const more = refusal(argv)
+    expect(more.code).toBe(alone.code)
+    expect(more.text).toBe(alone.text)
+  }
+}, 60_000)
+
+test('version answers before any config loads', () => {
+  const run = spawnSync('bun', [join(ROOT, 'src', 'index.ts'), 'version'], {
+    cwd: tmpdir(),
+    env: { ...process.env, XDG_CONFIG_HOME: join(temp('gc-noconfig-'), 'cfg') },
+  })
+  expect(run.status).toBe(0)
+  expect(run.stdout.toString()).toContain('gamecrate ')
 }, 30_000)

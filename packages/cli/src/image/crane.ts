@@ -9,17 +9,14 @@ import { Exit, GamecrateError } from '../types'
 /** The debug tag, because the default one has no shell and the tar step needs one. */
 export const CRANE_IMAGE = 'gcr.io/go-containerregistry/crane:debug'
 
-// the same backoff steamcmd.ts uses. a 502 from a registry should not cost a re-download
 const ATTEMPTS = 3
 const RETRY_DELAY_MS = 1000
 
-/** Where `crane auth login` writes inside the container. HOME there may not be writable. */
 const CONTAINER_CONFIG = '/tmp/gamecrate-docker'
 
 const USER_VAR = 'GAMECRATE_REGISTRY_USER'
 const PASSWORD_VAR = 'GAMECRATE_REGISTRY_PASSWORD'
 
-/** Both set or neither. One of the two is a refusal, not a silent anonymous push. */
 function registryCreds(): { user: string } | null {
   const user = process.env[USER_VAR] ?? ''
   const password = process.env[PASSWORD_VAR] ?? ''
@@ -32,17 +29,12 @@ function registryCreds(): { user: string } | null {
   )
 }
 
-/** The host docker config dir, only when it holds a config.json. */
 function dockerConfigDir(): string | undefined {
   const dir = process.env.DOCKER_CONFIG ?? join(process.env.HOME ?? '', '.docker')
   if (dir === '.docker' || !existsSync(join(dir, 'config.json'))) return undefined
   return dir
 }
 
-/**
- * The password rides an env var docker forwards by name, never an argument: a docker argv is
- * readable from the process list on a shared runner.
- */
 function authArgs(): string[] {
   if (registryCreds() !== null) {
     return ['-e', PASSWORD_VAR, '-e', `DOCKER_CONFIG=${CONTAINER_CONFIG}`]
@@ -52,13 +44,8 @@ function authArgs(): string[] {
   return ['-v', `${dir}:/dockercfg:ro`, '-e', 'DOCKER_CONFIG=/dockercfg']
 }
 
-/** What crane resolves a ref carrying no registry to. `crane auth login` normalizes this. */
 const DOCKER_HUB = 'index.docker.io'
 
-/**
- * The registry crane logs in to. A head is a hostname only with a '.' or ':' in it, or exactly
- * 'localhost'; anything else is a hub short name, and `myuser/x` would log in to a host `myuser`.
- */
 function registryOf(ref: string): string {
   const slash = ref.indexOf('/')
   if (slash === -1) return DOCKER_HUB
@@ -77,7 +64,6 @@ type DockerConfig = {
   credHelpers?: Record<string, string>
 }
 
-/** docker keys the hub as `https://index.docker.io/v1/`, so a bare host compare misses it. */
 function keyHost(key: string): string {
   return key.replace(/^https?:\/\//, '').split('/')[0] ?? key
 }
@@ -96,8 +82,6 @@ function forRegistry<T>(table: Record<string, T> | undefined, registry: string):
 export function checkRegistryAuthEarly(ref: string): void {
   if (registryCreds() !== null) return
   const dir = dockerConfigDir()
-  // no config.json at all is the clearest "no credentials" there is, and a fresh CI
-  // runner has none. failing here beats failing after a multi-gigabyte download
   if (dir === undefined) {
     throw new GamecrateError(
       `no registry credentials for ${registryOf(ref)}`,
@@ -114,7 +98,6 @@ export function checkRegistryAuthEarly(ref: string): void {
   }
   const registry = registryOf(ref)
   const entry = forRegistry(parsed.auths, registry)
-  // docker leaves an empty `{}` beside a helper entry, so only a filled field counts
   if ((entry?.auth ?? entry?.identitytoken ?? '') !== '') return
   const helper = forRegistry(parsed.credHelpers, registry) ?? parsed.credsStore ?? ''
   throw new GamecrateError(
@@ -126,7 +109,6 @@ export function checkRegistryAuthEarly(ref: string): void {
   )
 }
 
-/** --user maps the host owner onto the bind, or the tar comes back root-owned. */
 function dockerRun(mounts: string[], script: string): string[] {
   return [
     'docker',
@@ -144,16 +126,11 @@ function dockerRun(mounts: string[], script: string): string[] {
   ]
 }
 
-/** POSIX single-quoting, for the one place an argv becomes a shell script. */
 function shq(value: string): string {
   const escaped = value.replaceAll("'", String.raw`'\''`)
   return `'${escaped}'`
 }
 
-/**
- * Every crane call logs in through here, not just the push. A null ref touches no registry.
- * The password reaches crane on stdin, and the login chatter goes to stderr so stdout parses.
- */
 function craneArgv(mounts: string[], ref: string | null, lines: string[][]): string[] {
   const creds = ref === null ? null : registryCreds()
   const login =
@@ -178,17 +155,12 @@ async function runOnce(argv: string[], what: string): Promise<void> {
 
 const HEARTBEAT_MS = 1000
 
-/** Node says "spawn crane ENOENT", bun says "Executable not found in $PATH". Only the code is portable. */
 function spawnFailure(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
   const code = (error as NodeJS.ErrnoException | null)?.code
   return code === undefined || message.includes(code) ? message : `${message} (${code})`
 }
 
-/**
- * Streamed, and ticking while it streams: crane prints nothing of its own, so on a two gigabyte
- * tar the elapsed line is all that separates slow from stuck.
- */
 async function live(argv: string[], what: string): Promise<{ code: number; text: string }> {
   const since = Date.now()
   let lastNotice = 0
@@ -200,21 +172,18 @@ async function live(argv: string[], what: string): Promise<{ code: number; text:
     status(`${what} (${notice})`)
   }, HEARTBEAT_MS)
   try {
-    // captureLive rejects when the spawn itself fails, where capture answered 127
     return await captureLive(argv).catch((error: unknown) => ({ code: 127, text: spawnFailure(error) }))
   } finally {
     clearInterval(timer)
   }
 }
 
-/** For the calls that run for minutes. The output goes to the terminal and into the failure. */
 async function runLive(argv: string[], what: string): Promise<void> {
   const { code, text } = await live(argv, what)
   if (code === 0) return
   throw new GamecrateError(`${what} failed`, Exit.Environment, text.trim())
 }
 
-/** The registry's own complaint, for a retry line that has to fit on one. */
 function lastLine(text: string): string {
   return text.split('\n').map((l) => l.trim()).findLast((l) => l !== '') ?? 'no output'
 }
@@ -242,12 +211,10 @@ export async function craneAppend(opts: {
     }
   }
   const outDir = dirname(opts.out)
-  // named after the output, because a phase appends several cells into one layer directory
   const layer = `${opts.out}.layer.tar`
-  // "/game" -> "game". tar paths are relative, and a leading slash would be stripped anyway
+  // "/game" -> "game". tar paths are relative
   const prefix = opts.gamePath.replace(/^\/+/, '')
-  // the prefix comes from where the game is bound, not --transform: the crane image ships
-  // busybox tar, which has no --transform
+  // the crane image ships busybox tar, which has no --transform
   const stage = `/stage/${prefix}`
   const tar =
     opts.include.length > 0
@@ -276,8 +243,6 @@ export async function craneAppend(opts: {
     '-o',
     opts.out,
   ]
-  // null, never opts.base: this touches no push target, and a login here would write the push
-  // credentials into the base's registry and break the anonymous pull that follows
   const argv = craneArgv([`${opts.gameDir}:${stage}:ro`, `${outDir}:${outDir}`], null, [
     tar,
     append,

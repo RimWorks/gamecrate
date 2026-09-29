@@ -1,4 +1,4 @@
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type {
@@ -18,13 +18,10 @@ export const CONTAINER_RUNTIME_DIR = '/tmp/xdg'
 /** Where the run directory is bound, so `-logfile /logs/Player.log` lands beside stdout.log. */
 export const CONTAINER_LOG_DIR = '/logs'
 
-/** X11's well-known socket directory. The path is the same on both sides or DISPLAY lies. */
 const X11_SOCKET_DIR = '/tmp/.X11-unix'
 
-/** Outside XDG_RUNTIME_DIR on purpose: that is a tmpfs, and a bind under it races the tmpfs. */
 const CONTAINER_XAUTHORITY = '/tmp/xauth'
 
-/** Persistent XDG root. Outside HOME because HOME is a tmpfs and a bind under it races. */
 const CONTAINER_XDG_DIR = '/xdg'
 
 const RUNTIME_DIR_SIZE = '64m'
@@ -50,19 +47,15 @@ export function refuseProtonHeaded(game: string, mode: ModeName, image?: ImageLa
   )
 }
 
-/** Proton needs its wrapper and a windows path; an offscreen run needs a display from xvfb-run. */
 function launchCommand(plan: LaunchPlan, executable: string, proton: boolean): string[] {
   const { gameConfig: game, settings } = plan
   if (proton) {
     return ['run-headless-windows', winPath(join(game.gameFiles.container, basename(executable)))]
   }
   if (plan.mode === 'headed') return [executable]
-  // xvfb-run -a picks a free display itself, which removes both the hardcoded :99 and the
-  // startup race the old launch.sh papered over with `sleep 2`.
   return ['xvfb-run', '-a', `--server-args=-screen 0 ${settings.width}x${settings.height}x24`, executable]
 }
 
-/** Where the game's data and log go, as an argument or an env var, per what the plugin declares. */
 function appendGameArgs(
   command: string[],
   mounts: Mount[],
@@ -129,8 +122,10 @@ export function buildRunSpec(
   }
 
   const devices: string[] = []
-  if (settings.gpu) devices.push('nvidia.com/gpu=all')
-  Object.assign(env, glEnv(settings.gpu))
+  const gpu = settings.gpu ? gpuPassthrough() : { kind: 'software' as const, devices: [], groups: [] }
+  devices.push(...gpu.devices)
+  const groupAdd = gpu.groups
+  Object.assign(env, glEnv(gpu.kind))
 
   command.push(...(settings.gameArgs ?? []))
 
@@ -146,6 +141,7 @@ export function buildRunSpec(
     env,
     mounts,
     devices,
+    groupAdd,
     deviceCgroupRules,
     network: settings.network,
     memory: settings.memory,
@@ -176,15 +172,12 @@ function addGameFiles(mounts: Mount[], plan: LaunchPlan): void {
 function addStage(mounts: Mount[], plan: LaunchPlan, modMounts: Mount[]): void {
   const game = plan.gameConfig
   mounts.push({ type: 'bind', source: hostPath(plan.stageDirHost), target: game.modsDir.container, readonly: true })
-  // Nested per-mod binds sit inside the staged tree; the game never writes to a mod source.
   for (const mount of modMounts) {
     mounts.push(mount.type === 'bind' ? { ...mount, readonly: true } : mount)
   }
-  // Read-write on purpose: both engines Create() subdirectories at boot and a ro mount fails there.
   mounts.push({ type: 'bind', source: hostPath(plan.dataDirHost), target: game.dataDir.container })
 }
 
-/** The tmpfs set and the XDG roots that hang off it. */
 function addScratch(
   mounts: Mount[],
   env: Record<string, string>,
@@ -192,7 +185,6 @@ function addScratch(
   identity: Identity,
 ): void {
   const { uid, gid } = identity
-  // Unconditional, independent of the uid mode: a game may read mods from both roots.
   for (const target of plan.gameConfig.modsDir.mask ?? []) {
     mounts.push({ type: 'tmpfs', target, size: MASK_SIZE, uid, gid, mode: '755' })
   }
@@ -202,20 +194,13 @@ function addScratch(
   mounts.push({ type: 'tmpfs', target: CONTAINER_RUNTIME_DIR, size: RUNTIME_DIR_SIZE, uid, gid, mode: '700' })
   env.XDG_RUNTIME_DIR = CONTAINER_RUNTIME_DIR
 
-  // HOME is a tmpfs, so $HOME/.config and $HOME/.local/share are empty every run and .NET's
-  // GetFolderPath hands back "" for a missing directory. Point XDG at a per-profile bind
-  // instead. A game that already sets XDG_DATA_HOME to its save dir never gets
-  // overwritten.
+  // HOME is a tmpfs, and .NET's GetFolderPath hands back "" for a missing directory
   mounts.push({ type: 'bind', source: hostPath(plan.configDirHost), target: CONTAINER_XDG_DIR })
   env.XDG_CONFIG_HOME = `${CONTAINER_XDG_DIR}/config`
   env.XDG_CACHE_HOME = `${CONTAINER_XDG_DIR}/cache`
   env.XDG_DATA_HOME ??= `${CONTAINER_XDG_DIR}/data`
 }
 
-/**
- * Display and audio for a headed run. Offscreen modes get their X server from xvfb-run, so
- * DISPLAY is set by it, not by us.
- */
 function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPlan): void {
   const { settings } = plan
   if (settings.display === 'x11') addX11(mounts, env)
@@ -257,7 +242,6 @@ export function containerName(plan: LaunchPlan): string {
   return plan.instance === undefined ? base : `${base}-${plan.instance}`
 }
 
-/** What the window is renamed to, so a taskbar full of worktrees is readable. */
 /** The icon a profile names, made absolute against the config that named it. */
 export function windowIcon(plan: LaunchPlan, configDir: string): string | undefined {
   const named = resolveProfile(plan.gameConfig, plan.profile).windowIcon
@@ -267,7 +251,6 @@ export function windowIcon(plan: LaunchPlan, configDir: string): string | undefi
 }
 
 export function windowTitle(plan: LaunchPlan): string {
-  // read off the resolved profile, so an inherited windowTitle counts the same as an own one
   const own = resolveProfile(plan.gameConfig, plan.profile).windowTitle
   const base = own ?? `${plan.game} ${plan.profile}`
   return plan.instance === undefined ? base : `${base} / ${plan.instance}`
@@ -283,10 +266,9 @@ export function toDockerArgs(spec: DockerRunSpec): string[] {
   for (const mount of spec.mounts) args.push(...mountArgs(mount))
   for (const device of spec.devices) args.push('--device', device)
   for (const rule of spec.deviceCgroupRules) args.push('--device-cgroup-rule', rule)
+  for (const group of spec.groupAdd ?? []) args.push('--group-add', group)
   for (const ulimit of spec.ulimits) args.push('--ulimit', ulimit)
 
-  // `--pull=never`: acquisition is an earlier explicit step, so the run must never fetch a
-  // different digest.
   args.push(
     '--network', spec.network,
     '--memory', spec.memory,
@@ -297,8 +279,7 @@ export function toDockerArgs(spec: DockerRunSpec): string[] {
     ...spec.extraArgs,
     '--pull=never',
   )
-  // The image's own ENTRYPOINT is not ours to trust: RimWorld's is ["/bin/bash"], which
-  // would run the game's ELF as a shell script. State it explicitly every time.
+  // RimWorld's image ENTRYPOINT is ["/bin/bash"], which would run the game's ELF as a shell script
   const [entrypoint, ...rest] = spec.command
   if (entrypoint !== undefined) args.push('--entrypoint', entrypoint)
   args.push(spec.image, ...rest)
@@ -306,10 +287,6 @@ export function toDockerArgs(spec: DockerRunSpec): string[] {
   return args
 }
 
-/**
- * `--mount` for binds so a missing source errors instead of being created root-owned;
- * `--tmpfs` for tmpfs because `--mount type=tmpfs` has no uid=/gid= options.
- */
 function mountArgs(mount: Mount): string[] {
   if (mount.type === 'tmpfs') {
     const opts = ['rw']
@@ -328,21 +305,15 @@ function mountArgs(mount: Mount): string[] {
   return ['--mount', fields.map(csvField).join(',')]
 }
 
-/** Docker parses the option string as CSV, so a comma in a path has to be quoted. */
 function csvField(field: string): string {
   if (!field.includes(',') && !field.includes('"')) return field
   return `"${field.replaceAll('"', '""')}"`
 }
 
-/** Z: is the unix root inside wine, so /logs/Player.log reaches the game as Z:\logs\Player.log. */
 function winPath(unix: string): string {
   return `Z:${unix.replaceAll('/', '\\')}`
 }
 
-/**
- * RimWorld's TryGetCommandLineArg splits argv on `=` and requires exactly two parts. A path
- * with `=` falls back to an ephemeral in-container path and `--rm` takes the save with it (L10).
- */
 function validateDataDirArg(dataDir: Extract<DataDirSpec, { mode: 'arg' }>): string {
   if (dataDir.container.includes('=')) {
     throw new GamecrateError(
@@ -377,19 +348,62 @@ function trimSlash(path: string): string {
   return path.slice(0, end)
 }
 
-/** The image bakes llvmpipe, so the tool states the whole GL story rather than inheriting it. */
-function glEnv(gpu: boolean): Record<string, string> {
-  if (!gpu) return { LIBGL_ALWAYS_SOFTWARE: '1', GALLIUM_DRIVER: 'llvmpipe' }
+function glEnv(kind: GpuKind): Record<string, string> {
+  if (kind === 'software') return { LIBGL_ALWAYS_SOFTWARE: '1', GALLIUM_DRIVER: 'llvmpipe' }
 
   const env: Record<string, string> = { LIBGL_ALWAYS_SOFTWARE: '0', GALLIUM_DRIVER: '' }
-  if (hasNvidia()) {
+  if (kind === 'nvidia') {
     env.__GLX_VENDOR_LIBRARY_NAME = 'nvidia'
     env.__NV_PRIME_RENDER_OFFLOAD = '1'
   }
   return env
 }
 
-/** Gated on the detected vendor, not on the game: this class of host also carries radeon_icd. */
+export type GpuKind = 'nvidia' | 'dri' | 'software'
+
+export interface GpuPlan {
+  kind: GpuKind
+  devices: string[]
+  /** Groups the container user needs, when a render node is not world-writable. */
+  groups: string[]
+}
+
+/**
+ * NVIDIA comes in through the Container Device Interface. Everything else comes in as the
+ * render nodes under /dev/dri, which is what Mesa wants for AMD and Intel.
+ */
+export function gpuPassthrough(nodes: string[] = driNodes(), nvidia = hasNvidia()): GpuPlan {
+  if (nvidia) return { kind: 'nvidia', devices: ['nvidia.com/gpu=all'], groups: [] }
+  if (nodes.length === 0) return { kind: 'software', devices: [], groups: [] }
+  return { kind: 'dri', devices: nodes, groups: renderGroups(nodes) }
+}
+
+export function driNodes(root = '/dev/dri'): string[] {
+  try {
+    return readdirSync(root)
+      .filter((name) => name.startsWith('renderD') || name.startsWith('card'))
+      .sort((a, b) => Number(a > b) - Number(a < b))
+      .map((name) => join(root, name))
+  } catch {
+    return []
+  }
+}
+
+/** Only a node the caller cannot already open needs a group, so a 666 render node adds none. */
+export function renderGroups(nodes: string[]): string[] {
+  const groups = new Set<string>()
+  for (const node of nodes) {
+    try {
+      const info = statSync(node)
+      if ((info.mode & 0o006) === 0o006) continue
+      groups.add(String(info.gid))
+    } catch {
+      continue
+    }
+  }
+  return [...groups]
+}
+
 function hasNvidia(): boolean {
   return (
     existsSync('/dev/nvidiactl') ||
@@ -399,9 +413,8 @@ function hasNvidia(): boolean {
 }
 
 /**
- * The host X session a headed run joins. The cookie is looked up separately from the socket
- * because XWayland under a display manager keeps it in XDG_RUNTIME_DIR, not ~/.Xauthority.
- * Whether the socket directory is really there is checkBindSources' job, as with every bind.
+ * The host X session a headed run joins. The cookie is looked up separately from the socket:
+ * XWayland under a display manager keeps it in XDG_RUNTIME_DIR, not ~/.Xauthority.
  */
 export function x11Session(): { display: string; xauthority: string | null } | null {
   const display = process.env.DISPLAY

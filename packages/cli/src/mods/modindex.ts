@@ -50,17 +50,8 @@ interface Candidate {
   workshopId?: number
 }
 
-/**
- * Worktrees are opt-in, never ambient inventory: an abandoned agent tree must not be a
- * candidate for a launch nobody pointed at it. The overlay scan (rootIndex -1) skips these,
- * which is how a deliberately selected worktree still gets in.
- */
 const ALWAYS_EXCLUDE = ['**/.worktrees/**', '**/.claude/worktrees/**']
 
-/**
- * A `.git` file rather than a directory means a linked worktree or submodule. The walk stops
- * at the scan root because a scan root can hold many independent repos, not one.
- */
 function inLinkedWorktree(dir: string, stopAt: string): boolean {
   let current = dir
   for (;;) {
@@ -121,7 +112,6 @@ async function scanLocalRoot(
   await walk(base, 0)
 }
 
-/** Depth-exact at `<root>/<numericId>/About/About.<ext>`; recursing produces phantoms. */
 async function scanWorkshopRoot(
   workshopRoot: string,
   rootIndex: number,
@@ -143,13 +133,6 @@ async function scanWorkshopRoot(
   }
 }
 
-
-/**
- * Where Core and the official expansions can be read from. A mounted game has them on disk;
- * an image-sourced one carries them inside the image, so their manifests are copied out once
- * per image id. Only the manifests: stage.ts never binds an official mod, the image already
- * has the files.
- */
 async function gameDataDir(game: GameConfig): Promise<string | null> {
   if (game.gameFiles.source === 'mount') {
     const host = game.gameFiles.host
@@ -166,7 +149,6 @@ async function gameDataDir(game: GameConfig): Promise<string | null> {
 
 const MARK = '@@gamecrate@@ '
 
-/** One `sh` and one `cat` per manifest, so a runtime base with nothing else still works. */
 async function copyOfficialManifests(game: GameConfig, ref: string, out: string): Promise<void> {
   const script = [
     'for d in ' + game.gameFiles.container + '/Data/*/; do',
@@ -191,7 +173,6 @@ async function copyOfficialManifests(game: GameConfig, ref: string, out: string)
   }
 }
 
-/** Core and the official expansions live inside the game install, one level under Data/. */
 async function scanGameData(
   game: GameConfig,
   rootIndex: number,
@@ -201,14 +182,12 @@ async function scanGameData(
 ): Promise<void> {
   const data = await gameDataDir(game)
   if (data === null) {
-    // without this the launch fails as "no mod matches <core>", which blames the mod set for
-    // an image that is not there
     const ref = game.image?.ref
     if (game.gameFiles.source !== 'mount' && ref !== undefined && ref !== '') {
       problems.push({
         where: `/games/${gameName}/image/ref`,
         message: `${ref} is not present, so ${gameName} has no core or expansions to load`,
-        suggestion: `gamecrate steam build ${gameName}, or docker pull ${ref}`,
+        suggestion: `gamecrate steam build --game ${gameName}, or docker pull ${ref}`,
       })
     }
     return
@@ -235,19 +214,10 @@ interface CacheFile {
   records: ModRecord[]
 }
 
-/** Every workshop tree ends in `workshop/content/<appid>`, and the acf sits above that. */
 function acfPath(root: string, steamAppId: number): string {
   return join(dirname(dirname(resolvePath(expandHome(root)))), `appworkshop_${steamAppId}.acf`)
 }
 
-/**
- * steamcmd rewrites `timetouched` on every run, so an mtime stamp would never hit here. The
- * manifest ids only move when an item does. A missing acf contributes nothing.
- *
- * Null is unknown content: unreadable, or bytes that parse to no keys at all. An empty install
- * block is a real empty set, because that is what a fresh download root looks like and refusing
- * the cache there costs a full rescan every launch.
- */
 function contentPairs(acf: string): string[] | null {
   let text: string
   try {
@@ -256,8 +226,8 @@ function contentPairs(acf: string): string[] | null {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
     return null
   }
-  const pairs = [...installedItems(text)].map(([id, item]) => `${id}:${item.manifest}`).sort()
-  // a half-written acf yields no root keys at all, and steamcmd rewrites this one in place
+  const pairs = [...installedItems(text)].map(([id, item]) => `${id}:${item.manifest}`)
+    .sort((a, b) => Number(a > b) - Number(a < b))
   if (pairs.length === 0 && text.trim() !== '' && Object.keys(parseAcf(text)).length === 0) return null
   return pairs
 }
@@ -273,7 +243,9 @@ export function workshopStamp(game: GameConfig, dataRoot: string | undefined): s
     if (found === null) return null
     pairs.push(...found)
   }
-  const download = createHash('sha256').update(pairs.toSorted().join('\n')).digest('hex')
+  const download = createHash('sha256')
+    .update(pairs.toSorted((a, b) => Number(a > b) - Number(a < b)).join('\n'))
+    .digest('hex')
   if (game.workshopRoot === null) return download
   try {
     const info = statSync(acfPath(game.workshopRoot, game.steamAppId))
@@ -299,7 +271,6 @@ async function writeWorkshopCache(game: string, stamp: string, records: ModRecor
     await mkdir(cacheDir(), { recursive: true })
     await writeFile(join(cacheDir(), `${game}.workshop.json`), JSON.stringify(payload))
   } catch {
-    // A cache that cannot be written is a slower launch, never a failed one.
   }
 }
 
@@ -318,7 +289,6 @@ function toRecord(candidate: Candidate, manifest: ModManifest, game: GameConfig)
   return record
 }
 
-/** Selection first: naming a directory is the strongest statement of intent available. */
 function tier(r: ModRecord): number[] {
   return [
     r.overridden ?? Number.MAX_SAFE_INTEGER,
@@ -338,26 +308,18 @@ function compareTiers(a: ModRecord, b: ModRecord): number {
   return 0
 }
 
-/** Selection, then non-workshop, then non-worktree, then scan-root order. */
 function rank(a: ModRecord, b: ModRecord): number {
   return compareTiers(a, b) || byClone(a, b) || Number(a.dir > b.dir) - Number(a.dir < b.dir)
 }
 
-/**
- * Two clones of one url tie on every element of `tier()`, and the directory-name fallback then
- * prefers `tag-v1` over `tag-v2` forever, because nothing evicts the cache. Newest fetch wins
- * instead. Only cache records carry `clonedAt`, so a clone tying with a local checkout still
- * falls through to the rule the scan-root order relies on.
- */
 function byClone(a: ModRecord, b: ModRecord): number {
   if (a.clonedAt === undefined || b.clonedAt === undefined) return 0
   return b.clonedAt - a.clonedAt
 }
 
 /**
- * Stamps every record inside a requested worktree, then scans the worktree itself so a tree
- * no scanRoot reaches still contributes. Only a caller who stood in, typed, or exported a
- * directory can produce `selectedWorktree`.
+ * Stamps every record inside a requested worktree, then scans the worktree itself. Only a caller
+ * who stood in, typed, or exported a directory can produce `selectedWorktree`.
  */
 export async function applyWorktreeRequests(
   index: ModIndex,
@@ -374,7 +336,6 @@ export async function applyWorktreeRequests(
     }
   }
 
-  // Overlay scan: coverage by scanRoot is incidental, so never depend on it.
   for (const request of requests) {
     const found: Candidate[] = []
     await scanLocalRoot(
@@ -394,7 +355,6 @@ export async function applyWorktreeRequests(
   for (const bucket of index.byPackageId.values()) bucket.sort(rank)
 }
 
-/** The first request that contains the record owns it; later ones never overwrite. */
 function stampOwner(record: ModRecord, requests: WorktreeRequest[]): void {
   for (const request of requests) {
     if (!contains(request, record.dir)) continue
@@ -408,14 +368,12 @@ function markWorktree(record: ModRecord, request: WorktreeRequest): void {
   record.selectedWorktree = request.order
 }
 
-/** Deep enough for a repo-shaped worktree without walking a whole build tree. */
 const WORKTREE_SCAN_DEPTH = 5
 const WORKTREE_EXCLUDE = ['**/.retired/**', '**/node_modules/**', '**/bin/**', '**/obj/**']
 
 /**
- * Forces one packageId to come from a named directory, whatever the profile pinned. This is
- * the only override that reaches a mod already in preCore/core/dlc/base, because slot
- * expansion is first-wins and a later `--mod` entry for a present id is dropped.
+ * Forces one packageId to come from a named directory, whatever the profile pinned. This is the
+ * only override that reaches a mod already in preCore/core/dlc/base.
  */
 export async function applySourceOverrides(
   index: ModIndex,
@@ -502,9 +460,8 @@ function insert(index: ModIndex, record: ModRecord): void {
 }
 
 /**
- * Scans the game install, then every scan root in declaration order, then the source cache,
- * then the workshop roots. Local roots rescan every launch; only the workshop scan is cached,
- * against the acf stamps. Without `dataRoot` there is no download root to scan.
+ * Scans the game install, then every scan root in declaration order, then the source cache, then
+ * the workshop roots. Without `dataRoot` there is no download root to scan.
  */
 export async function buildIndex(
   game: string,
@@ -522,8 +479,6 @@ export async function buildIndex(
     problems: [],
   }
 
-  // after every user root, not before: lower rootIndex wins, and a clone must never quietly
-  // replace a checkout the user already has.
   const cacheIndex = config.scanRoots.length
   await indexLocal(index, config, sourcesDir, cacheIndex)
   await indexWorkshop(index, config, dataRoot, cacheIndex)
@@ -560,9 +515,6 @@ async function indexWorkshop(
   dataRoot: string | undefined,
   cacheIndex: number,
 ): Promise<void> {
-  // The download root goes first, so its rootIndex is lower and it wins an id steam also
-  // holds. gamecrate refreshes its copy on a known cadence; steam's only moves when the client
-  // runs. A root that is not there scans as nothing, so it goes in unconditionally.
   const roots: string[] = []
   if (dataRoot !== undefined) roots.push(downloadRoot(dataRoot, config))
   if (config.workshopRoot !== null) roots.push(config.workshopRoot)
@@ -576,8 +528,6 @@ async function indexWorkshop(
   }
 
   const items: Candidate[] = []
-  // +1 keeps the numbering consistent, nothing more: `kind === 'workshop'` is tier index 2,
-  // ahead of rootIndex at 4, so this can never change a pick.
   for (const [i, root] of roots.entries()) {
     await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
   }
@@ -586,13 +536,6 @@ async function indexWorkshop(
   if (stamp !== null) await writeWorkshopCache(index.game, stamp, records)
 }
 
-/**
- * One record per packageId per clone, which is what the library holds: `mods add` writes one
- * entry for a repo that ships `V14/Mod` and `V15/Mod` under the same id. Keeping both here makes
- * them tie on every rule in `rank`, and `pick` turns that tie into a fatal problem. A pin that
- * names the dropped directory still resolves, because `byPath` parses a directory the index
- * never kept.
- */
 function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
   const kept = new Map<string, ModRecord>()
   const stamps = new Map<string, number>()
@@ -601,8 +544,6 @@ function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
     const at = join(sourcesDir, clone)
     let stamp = stamps.get(at)
     if (stamp === undefined) {
-      // a repin makes a new directory, so the mtime dates the ref rather than the last fetch.
-      // that is the tie this has to break.
       stamp = statSync(at).mtimeMs
       stamps.set(at, stamp)
     }
@@ -624,8 +565,6 @@ async function parseAll(
       const file = join(candidate.dir, config.manifest.file)
       try {
         const manifest = plugin.parseManifest(await readFile(file, 'utf8'))
-        // A scan walks into plenty of directories that were never mods. null is the plugin
-        // saying so; a thrown error means the file is broken and worth reporting.
         return manifest === null ? null : toRecord(candidate, manifest, config)
       } catch (error) {
         problems.push({
@@ -647,10 +586,6 @@ export function resolveModRef(index: ModIndex, ref: string, game: GameConfig): M
   return honorOverride(index, resolveRaw(index, ref, game))
 }
 
-/**
- * `--use` has to beat a `library` pin, and a pin resolves through byWorkshopId without ever
- * touching the ladder. So the override is applied after the ref resolves, by packageId.
- */
 function honorOverride(index: ModIndex, record: ModRecord | null): ModRecord | null {
   if (record === null || record.overridden !== undefined) return record
   const best = index.byPackageId.get(record.packageId.toLowerCase())?.[0]
@@ -690,8 +625,6 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
   if (!best) return null
   const runnerUp = bucket![1]
   if (runnerUp && compareTiers(best, runnerUp) === 0) {
-    // Two dirs inside one selected worktree names the tie in its own message. Everything else
-    // becomes a problem, and every caller on this branch treats a problem as fatal.
     if (best.selectedWorktree !== undefined || runnerUp.selectedWorktree !== undefined) {
       throw new GamecrateError(
         `"${ref}" is declared by ${bucket!.length} indistinguishable directories`,
@@ -699,7 +632,6 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
         bucket!.map((r) => r.dir).join('\n'),
       )
     }
-    // a cache tie the fetch clock already broke is a decision, not an ambiguity
     if (byClone(best, runnerUp) !== 0) return best
     index.problems.push({
       where: ref,
@@ -710,7 +642,6 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
   return best
 }
 
-/** An explicit path always wins, including one the scan never reached. */
 function byPath(index: ModIndex, raw: string, game: GameConfig): ModRecord | null {
   const dir = resolvePath(expandHome(raw))
   for (const bucket of index.byPackageId.values()) {

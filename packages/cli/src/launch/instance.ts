@@ -12,7 +12,6 @@ import type {
   WorktreeRequest,
 } from '../types'
 
-/** Enough to keep a name readable in `docker ps` without truncating the hash off the end. */
 const SLUG_LIMIT = 24
 
 export interface InstanceSelection {
@@ -60,7 +59,6 @@ export function resolveInstance(options: InstanceOptions): InstanceSelection {
   }
 }
 
-/** Same case-insensitive courtesy a profile key gets, so `--instance WT-A` finds `wt-a`. */
 function lookup(profile: ProfileConfig | undefined, name: string | undefined): InstanceConfig | undefined {
   const instances = profile?.instances
   if (instances === undefined || name === undefined) return undefined
@@ -82,11 +80,6 @@ function named(name: string): string {
   return name
 }
 
-/**
- * A cwd worktree names an instance the same as an explicit one: it stages a different mod set,
- * so it must not share a save dir, a lock or a container name with the profile. The hash covers
- * every root because two repos can both hold a worktree called `fix-thing`.
- */
 function derive(requests: WorktreeRequest[]): string | undefined {
   const first = requests[0]
   if (first === undefined) return undefined

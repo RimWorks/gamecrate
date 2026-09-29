@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test'
 
 import { installedItems, parseAcf } from '../src/mods/acf'
 
-// Tabs are what Steam actually writes, so `\t` here is deliberate.
 const SAMPLE = `"AppWorkshop"
 {
 \t"appid"\t\t"294100"
@@ -105,7 +104,13 @@ describe('parseAcf', () => {
     expect(parseAcf(text)).toEqual({ AppWorkshop: { appid: '294100' } })
   })
 
-  test('unescapes backslash and quote inside a value', () => {
+  // regression: an unknown escape used to lose its backslash, so \n came out as n
+test('an escape that is not a backslash or a quote keeps both characters', () => {
+  expect(parseAcf('"a"\t"line\\nbreak"')).toEqual({ a: 'line\\nbreak' })
+  expect(parseAcf('"a"\t"tab\\there"')).toEqual({ a: 'tab\\there' })
+})
+
+test('unescapes backslash and quote inside a value', () => {
     expect(parseAcf('"path"\t"C:\\\\Steam\\\\steamapps"')).toEqual({ path: 'C:\\Steam\\steamapps' })
     expect(parseAcf('"name"\t"a \\"quoted\\" mod"')).toEqual({ name: 'a "quoted" mod' })
   })

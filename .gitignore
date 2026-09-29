@@ -4,3 +4,6 @@ dist/
 
 # fetched by vale sync, never committed
 Styles/Google/
+
+# sonar-scanner working directory
+.scannerwork/

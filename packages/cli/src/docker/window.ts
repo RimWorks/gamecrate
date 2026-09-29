@@ -6,7 +6,6 @@ import { warn } from '../cli/output'
 import { setWindowIcon } from './icon'
 import { capture } from './run'
 
-/** Long enough for a cold RimWorld start on a spinning disk, short enough to give up on. */
 const WAIT_MS = 180_000
 const POLL_MS = 500
 
@@ -25,10 +24,6 @@ export function newMatches(now: Toplevel[], seen: Set<string>, executable: strin
   return now.filter((w) => !seen.has(w.id) && classMatches(w.wmClass, wanted))
 }
 
-/**
- * Either name may be the longer one: a toolkit takes the window class from the product, so
- * RimWorldLinux opens a window classed RimWorld. Three characters, or "rim" would claim it.
- */
 function classMatches(wmClass: string, wanted: string): boolean {
   return wmClass
     .toLowerCase()
@@ -42,26 +37,7 @@ export function parseWindowPid(stdout: string): number | undefined {
   return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
 }
 
-/**
- * Another supervisor's window. Our own claim, or a dead or non-gamecrate pid, is not.
- * Deliberately not `isRunning`: the cmdline read already throws for a dead pid, and it stays
- * readable for a supervisor owned by another user, where a signal check is denied and would
- * have us steal that run's window.
- *
- * Matched on each argument's own basename rather than anywhere in the raw cmdline, so a
- * gamecrate log path or data directory in an unrelated process's arguments is not a peer. An
- * editor opened on a directory literally named gamecrate still is; nothing in /proc separates
- * those two.
- *
- * It also stops matching `bun run src/index.ts`, where the old substring match caught the repo
- * directory in the script path. Installed users are unaffected, the bin and gamecrate.js both
- * match; it costs peer detection between two concurrent from-source dev runs.
- *
- * Residual: before adoption `_NET_WM_PID` is the container's pid namespace, so this looks a
- * container-local number up in the host's `/proc`. A false hit makes the run skip its own
- * window for the whole wait. Container game pids are small and low host pids are kernel
- * threads with an empty cmdline, so in practice the read returns nothing and no match happens.
- */
+/** Another supervisor's window. Our own claim, or a dead or non-gamecrate pid, is not. */
 export function isPeerClaim(pid: number, self: number): boolean {
   if (pid === self) return false
   try {
@@ -72,21 +48,12 @@ export function isPeerClaim(pid: number, self: number): boolean {
   }
 }
 
-/**
- * claimPid stamps our own pid, so a live peer's pid on a window means it got there first.
- * Load-bearing, not an optimisation. This check is what squeezes the window in which two
- * supervisors can both reach claimPid down to about one xprop exec; the read-back in claimPid
- * only detects a loser inside that window. Remove this and two concurrent runs adopt the same
- * window again, with every test still green: the skip has no seam, so covering it means mocking
- * capture, which nothing in docker.test.ts does.
- */
 async function claimedByPeer(id: string): Promise<boolean> {
   const { stdout } = await capture(['xprop', '-id', id, '_NET_WM_PID'])
   const pid = parseWindowPid(stdout)
   return pid !== undefined && isPeerClaim(pid, process.pid)
 }
 
-/** `wmctrl -lx` is `id desktop class host title`, so the class is the third field. */
 async function toplevels(): Promise<Toplevel[] | null> {
   const { code, stdout } = await capture(['wmctrl', '-lx'])
   if (code === 127) return null
@@ -111,12 +78,8 @@ export interface AdoptOptions {
 }
 
 /**
- * Retitles the window a headed X11 run opens and fixes what the WM knows about it. Snapshots
- * the screen first and takes the first window that was not there: an X client inside a
- * container reports a container-local _NET_WM_PID and hostname, so neither of those identifies
- * the run from out here. The WM_CLASS comes from the executable, which narrows it to this game
- * rather than any window that opened. Once adopted, _NET_WM_PID holds our pid, so a second run
- * starting at the same time can see the window is already spoken for and keep waiting for its own.
+ * Retitles the window a headed X11 run opens and fixes what the WM knows about it. Once
+ * adopted, _NET_WM_PID holds our pid, so a second run sees it is already spoken for.
  */
 export async function adoptNewWindow(opts: AdoptOptions): Promise<WindowWatch> {
   const before = await toplevels()
@@ -146,11 +109,9 @@ async function pollForWindow(seen: Set<string>, opts: AdoptOptions, stopped: () 
   }
 }
 
-/** True once the watch is over, whether it adopted a window or was stopped mid-sweep. */
 async function adoptFirstMatch(seen: Set<string>, opts: AdoptOptions, stopped: () => boolean): Promise<boolean> {
   for (const match of newMatches((await toplevels()) ?? [], seen, opts.executable)) {
     if (stopped()) return true
-    // Another run's window. Leave it alone and keep waiting for ours to open.
     if (await claimedByPeer(match.id)) continue
     if (!(await adopt(match.id, opts))) continue
 
@@ -162,12 +123,6 @@ async function adoptFirstMatch(seen: Set<string>, opts: AdoptOptions, stopped: (
   return false
 }
 
-/**
- * KWin answers a stripped close button by destroying the window, and sometimes by signalling
- * the pid as well, so the only dependable news is that the window went away. RimWorld outlives
- * it either way, alive with nothing on screen, which is what leaves the run to be torn down
- * from out here.
- */
 async function watchForClose(id: string, stopped: () => boolean, onClosed: () => void) {
   let misses = 0
   while (!stopped()) {
@@ -177,7 +132,6 @@ async function watchForClose(id: string, stopped: () => boolean, onClosed: () =>
     const now = await toplevels()
     if (now === null) return
 
-    // Two polls, so a window being reconfigured rather than closed is not mistaken for one.
     misses = now.some((w) => w.id === id) ? 0 : misses + 1
     if (misses >= 2) {
       onClosed()
@@ -186,12 +140,6 @@ async function watchForClose(id: string, stopped: () => boolean, onClosed: () =>
   }
 }
 
-/**
- * True to keep this window: the claim is ours, or there is no xprop to ask with. The caller
- * retitles only after a true, so returning false with no xprop would skip every candidate for
- * the whole wait and give up having done nothing, costing the retitle a missing xprop does not
- * otherwise cost. False only when another run won the claim, so the caller keeps looking.
- */
 async function adopt(id: string, opts: AdoptOptions): Promise<boolean> {
   const protocols = await capture(['xprop', '-id', id, 'WM_PROTOCOLS'])
   if (protocols.code === 127) {
@@ -204,26 +152,13 @@ async function adopt(id: string, opts: AdoptOptions): Promise<boolean> {
   return true
 }
 
-/**
- * The window carries its container pid, and the spoofed hostname makes the WM read that as
- * local, so a kill by pid would signal whichever host process holds that number out here.
- * Point it at the launcher: its SIGTERM path is a `docker stop`, which is graceful and then
- * final, and RimWorld hangs mid-shutdown often enough that the final part matters.
- */
 async function claimPid(id: string): Promise<boolean> {
   const pid = String(process.pid)
   await capture(['xprop', '-id', id, '-f', '_NET_WM_PID', '32c', '-set', '_NET_WM_PID', pid])
-  // claimedByPeer is what bounds this, not the read-back: a second supervisor only reaches here
-  // if its read beat our write, so both writes land within one xprop exec of each other. The
-  // read-back is only what catches that overlap. Delete the pre-check and the race is unbounded.
   const readBack = await capture(['xprop', '-id', id, '_NET_WM_PID'])
   return parseWindowPid(readBack.stdout) === process.pid
 }
 
-/**
- * Withdrawing the claim is what makes the titlebar X do anything: the WM stops asking and kills
- * the client instead. Everything else in the list stays, _NET_WM_PING especially.
- */
 async function dropDeleteProtocol(id: string, atoms: string[]): Promise<void> {
   if (!atoms.includes('WM_DELETE_WINDOW')) return
 

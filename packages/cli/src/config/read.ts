@@ -51,9 +51,8 @@ export async function readConfigFile(path: string): Promise<unknown> {
 }
 
 /**
- * Source order of the keys under one top-level object. Object.keys sorts all-integer keys
- * to the front, and NAME_PATTERN lets a profile be called 2024, so the syntax tree is the
- * only honest answer to "which profile was written first".
+ * Source order of the keys under one top-level object. Object.keys sorts all-integer keys to
+ * the front, so the syntax tree is the only honest answer.
  */
 export function orderedKeys(text: string, path: string, key: string): string[] {
   if (isYaml(path)) {

@@ -68,7 +68,7 @@ export const FIXTURE_VERSION: GameConfig['version'] = { file: 'Version.txt' }
 export const FIXTURE_STEAM_BUILD: GameConfig['steamBuild'] = {
   branches: [{ name: 'public' }],
   variants: [
-    { name: 'linux', base: 'xvfb', include: [] },
+    { name: 'linux', base: 'linux', include: [] },
     { name: 'linux-ref', base: 'none', include: ['Managed', 'Version.txt'] },
   ],
 }

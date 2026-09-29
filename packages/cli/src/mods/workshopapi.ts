@@ -19,8 +19,7 @@ type Detail = { result: number; timeUpdated: number }
 
 /**
  * Which of these items changed, without spawning anything. `roots` is every workshop content
- * root, what `downloadRoots` returns, and none of them has to exist. The whole check is best
- * effort: any failure downgrades to the items that are not on disk, never to fetching everything.
+ * root, what `mountedRoots` returns, and none of them has to exist.
  */
 export async function checkDrift(
   ids: string[],
@@ -52,7 +51,6 @@ export async function checkDrift(
     const detail = details.get(id)
     if (detail === undefined) continue
     if (detail.result !== 1) {
-      // removed, private or hidden: anonymous steamcmd cannot fetch it, so queueing it only fails later
       warnings.push(`workshop item ${id} is not available (result ${detail.result}); skipping it`)
       needed.delete(id)
       unavailable.push(id)
@@ -64,13 +62,6 @@ export async function checkDrift(
   return { needed: [...needed], unavailable, warnings }
 }
 
-/**
- * `loaded` is the `timeupdated` of the copy a launch actually mounts: the first root, in
- * `downloadRoots` order, that both lists the id and has its directory on disk. The index picks
- * by root order and never by mtime, so comparing steam against any other copy leaves a stale
- * mod loaded forever. `listed` is every id any .acf claims, which is what decides whether an
- * id is missing. A root with no readable .acf contributes nothing.
- */
 async function installs(ids: string[], roots: string[]): Promise<{ loaded: Map<string, number>; listed: Set<string> }> {
   const loaded = new Map<string, number>()
   const listed = new Set<string>()
@@ -93,7 +84,6 @@ async function onDisk(roots: string[], id: string): Promise<boolean> {
   return false
 }
 
-/** One deadline for every chunk, so a hundred ids still answer inside the 5s budget or not at all. */
 async function published(ids: string[], fetchImpl: typeof fetch): Promise<Map<string, Detail>> {
   const out = new Map<string, Detail>()
   if (ids.length === 0) return out
@@ -129,7 +119,6 @@ function readDetails(payload: unknown): Map<string, Detail> {
   return out
 }
 
-/** A content root ends in `workshop/content/<appid>`, and the acf sits two levels above it. */
 function acfPath(root: string): string {
   return join(dirname(dirname(root)), `appworkshop_${basename(root)}.acf`)
 }

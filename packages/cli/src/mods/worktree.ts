@@ -5,10 +5,6 @@ import { isAbsolute, resolve, sep } from 'node:path'
 import { expandHome } from '../config/load'
 import type { Problem, WorktreeRequest, WorktreeSource } from '../types'
 
-/**
- * One spawn answers every question: where the tree starts, whether it is linked, and what
- * branch it is on. `gitDir !== gitCommonDir` is the exact linked-worktree test.
- */
 function inspect(dir: string): { toplevel: string; gitDir: string; gitCommonDir: string; branch: string } | null {
   const r = spawnSync(
     'git',
@@ -30,11 +26,7 @@ function canonical(p: string): string {
   }
 }
 
-/**
- * Resolves one worktree request. Returns null when `dir` is not inside a LINKED worktree,
- * which is what keeps a primary checkout, a non-repo directory and a pruned gitdir from
- * counting as a selection.
- */
+/** Resolves one worktree request. Answers a Problem when `dir` is not inside a linked worktree. */
 export function resolveWorktree(dir: string, source: WorktreeSource, order: number): WorktreeRequest | Problem {
   const raw = expandHome(dir)
   const abs = isAbsolute(raw) ? raw : resolve(process.cwd(), raw)
@@ -71,8 +63,7 @@ export function contains(request: WorktreeRequest, dir: string): boolean {
 
 /**
  * Assembles every request in precedence order: explicit flags first (left to right), then the
- * env var, then cwd. Only a linked worktree survives; everything else becomes an ignorable
- * Problem so the caller can decide how loudly to say so.
+ * env var, then cwd. Only a linked worktree survives.
  */
 export function collectRequests(
   flags: string[],
@@ -89,7 +80,6 @@ export function collectRequests(
   const add = (dir: string, source: WorktreeSource): void => {
     const got = resolveWorktree(dir, source, order)
     if ('root' in got) {
-      // A directory named twice is one request, at its strongest position.
       if (!requests.some((r) => r.root === got.root)) {
         requests.push(got)
         order += 1
