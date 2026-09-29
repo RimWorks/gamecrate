@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+set -e
+
+echo "pre-push: lint"
+npm run lint
+
+echo "pre-push: typecheck"
+npm run build --silent
+npm run typecheck
+
+echo "pre-push: test"
+npm test
+
+if command -v vale >/dev/null 2>&1; then
+  if [ -d Styles/Google ]; then
+    echo "pre-push: vale"
+    vale .
+  else
+    echo "pre-push: vale skipped, run 'vale sync' once to fetch Styles/Google"
+  fi
+else
+  echo "pre-push: vale skipped, not installed"
+fi
