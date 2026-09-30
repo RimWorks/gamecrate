@@ -34,34 +34,58 @@ gamecrate verify dev
 `game:` key in the nearest `.gamecrate.yml`, or takes the only game you configured. `--game`
 overrides both, and settles it when two games declare the same profile name.
 
-| Subcommand | What it does |
-| --- | --- |
-| `run [profile]` | Resolve, stage, and launch |
-| `list` | Games, profiles, and where each profile came from |
-| `mods [profile]` | The resolved mod set: source kind plus absolute path |
-| `mods add <source>` | Pin a mod into a library from a path, a workshop id, or a git URL |
-| `mods rm <id>...` | Drop library pins by package id |
-| `mods sync [id]...` | Fetch every git and workshop source again, fixed pins too |
-| `init` | Pick a game, install its plugin, and write a config to start from |
-| `doctor` | Preflight: Docker, CDI, registry auth, game dirs, scan roots, permissions, workshop root |
-| `clean [profile]` | Tiered wipe of a profile |
-| `clone <src> <dst>` | Reflink-copy a profile's `game/` directory, which holds its saves |
-| `logs [profile]` | Print the last run's captured logs. `-f` follows the live run instead |
-| `attach [profile]` | Stream a detached run's output from the start. Ctrl-C leaves the game running |
-| `wait [profile]` | Block until a detached run ends, then exit with its code |
-| `ps` | Every live run: game, profile/instance, mode, pid, container, then uptime or status |
-| `stop [profile]` | Stop a detached run and release its lock |
-| `build [profile]` | Build or pull the runtime image, no launch |
-| `steam build` | Download the game from Steam and append it onto a runtime base as an image |
-| `steam login` | Sign in to Steam once and store the session for `steam build` |
-| `shell [profile]` | Same mounts, bash instead of the game |
-| `verify [profile]` | What the running container bound, and whether it looks current |
-| `refs [profile]` | Print a directory of the game's managed assemblies for a mod project to reference |
-| `config edit` | Open the global config in `$VISUAL` or `$EDITOR`, validate on save |
-| `fix-perms [profile]` | Chown foreign-owned files back to the caller |
-| `help [topic]` | Help for a subcommand, a subverb, or a game |
-| `completion <bash\|zsh>` | Print a shell completion script |
-| `version` | Print the version |
+<!-- generated:subcommands -->
+
+### Start a game and control a run
+
+- `run [profile]`: Stage a profile's mods and start the game
+- `attach [profile]`: Watch a background run. Ctrl-c leaves the game running
+- `wait [profile]`: Wait for a background run to end, then exit with its code
+- `ps`: List the runs going now with their profile and uptime
+- `stop [profile]`: Stop a background run and free the profile it holds
+- `shell [profile]`: Open a bash prompt in the container, with the same mods
+
+### See what a profile gives you
+
+- `list`: List the games and profiles, and where each is defined
+- `mods [profile]`: List the mods a profile loads, or edit the library behind it
+  - `mods add <source>`: Add one mod source to the library
+  - `mods rm <id>...`: Remove mod sources from the library by id
+  - `mods sync [id]...`: Fetch each git, release, and workshop source again
+- `refs [profile]`: Print a path to the game's DLLs, to reference from a csproj
+- `logs [profile]`: Print the log the last run captured
+- `verify [profile]`: Check which mods a live run loaded, and whether they are current
+
+### Build images and mods
+
+- `build [profile]`: Build or pull the runtime image without starting the game
+- `steam`: Build a game image from Steam, or log in to Steam
+  - `steam build`: Download the game from Steam and build an image
+  - `steam login`: Save a Steam session so a build can download the game
+
+### Clean up and check your setup
+
+- `init`: Set up a config: pick a game, install its plugin, write a profile
+- `doctor`: Check docker, logins, game folders, and permissions
+- `clean [profile]`: Delete a profile's staged mods, logs, saves, or downloads
+- `clone <src> <dst>`: Copy one profile's saves and settings to another profile
+- `config`: Read and edit the gamecrate config files
+  - `config edit`: Open the global config in an editor and check it on save
+- `fix-perms [profile]`: Give yourself back any profile file another user owns
+
+### About gamecrate itself
+
+- `help [topic]`: Show help for a subcommand or a game
+- `version`: Print the gamecrate version
+- `completion <bash|zsh>`: Print a completion script for bash or zsh
+
+<!-- /generated:subcommands -->
+
+A few of those do more than one line says. `doctor` checks Docker, the Container Device
+Interface, registry auth, game directories, scan roots, permissions, and the workshop root, and
+reports them together. `clone` reflink-copies a profile's `game/` directory, which is where its
+saves live. `ps` prints game, profile or instance, mode, pid, container, then uptime or status.
+`config edit` opens the file in `$VISUAL` or `$EDITOR` and validates it on save.
 
 `gamecrate` on its own prints help. It never launches, even in a directory whose
 `.gamecrate.yml` declares a game. Use `gamecrate run` for that.
@@ -81,121 +105,103 @@ that points at the subcommand that does take it, so `gamecrate run dev --push` f
 
 ## Flags
 
-`--game`, `--json`, and `--help` apply everywhere. A value flag given twice is a usage error,
-unless the flag is marked repeatable.
+Every flag and the subcommands that take it. A value flag given twice is a usage error unless it
+is marked repeatable. [Environment variables](#environment-variables) lists the ones that stand
+in for a flag.
 
-- `--game <name>` picks the game to act on. Use it when no profile says which and no config
-default settles it.
+<!-- generated:flags -->
 
-Several flags below reach more than one subcommand:
+| Flag | Subcommands | What it does |
+| --- | --- | --- |
+| `--alias <tag>` | `steam build` | One more moving tag to put on each branch built. Repeatable. |
+| `--all` | `clean` | Delete the whole profile and the game downloads (needs --yes) |
+| `--asset <glob>` | `mods add` | Which release asset to unpack, like *.zip |
+| `--base <ref>` | `steam build` | Build on this runtime base instead of the published one |
+| `--beta <name>` | `steam build` | Build only this Steam branch. Repeatable. |
+| `--branch <name>` | `mods add` | Follow this git branch |
+| `--build` | `run` | Compile the local C# mods before launching |
+| `--commit <sha>` | `mods add` | Pin to this git commit |
+| `--detach` | `run` | Run in the background and give the prompt back |
+| `--docker-arg <arg>` | `run`, `shell` | One extra argument to pass to docker run. Repeatable. |
+| `--downloads` | `clean` | Delete this game's workshop downloads, keeping steamcmd |
+| `--dry-run` | `run`, `fix-perms` | Resolve and check everything, write nothing |
+| `-f, --follow` | `logs` | Keep printing as the run writes more |
+| `--force` | `mods add`, `steam build` | Overwrite an existing mod entry, or rebuild an image anyway |
+| `--game <name>` | every subcommand | The game to act on, when no profile says which |
+| `--git <url>` | `mods add` | Clone the mod from this git repository |
+| `--global` | `mods add`, `mods rm` | Write to the global config in ~/.config/gamecrate |
+| `-h, --help` | every subcommand | Show this help |
+| `--image <ref>` | `run`, `refs`, `build`, `steam build` | The image to launch, or the repository a steam build tags |
+| `--instance <name>` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Run a second named copy with its own saves, logs, and container |
+| `--json` | every subcommand | Print JSON instead of text |
+| `--log <path>` | `run`, `shell` | Also write everything the run prints to this file |
+| `--logs` | `clean` | Delete the logs the runs captured |
+| `--marker <str>` | `run` | Exit 0 as soon as this text appears in the game log |
+| `--mod <id>` | `run`, `mods`, `shell` | Add one more mod to what the profile loads. Repeatable. |
+| `--mode <headed\|headless\|screenshot>` | `run` | Show a game window, hide it, or take one screenshot |
+| `--network <none\|bridge\|host>` | `run` | The container's network. host lets a mod serve a port |
+| `--no-build` | `run` | Never compile, even when a mod's DLL is out of date |
+| `--no-detach` | `run` | Stay in the foreground, whatever the config asks for |
+| `--no-load` | `steam build` | Skip the docker daemon and keep no local image. Use it on a CI runner with --push |
+| `--no-replace` | `run` | Refuse to launch when this profile already runs |
+| `--no-stale-check` | `run` | Do not warn when a mod's code is newer than its DLL |
+| `--no-worktree` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Ignore the current git checkout and $GAMECRATE_WORKTREE |
+| `--only <id>` | `run`, `mods`, `shell` | Load only these mods and none of the rest. Repeatable. |
+| `--path <dir>` | `mods add` | Take the mod from this directory |
+| `--plain` | `run`, `steam build` | Plain scrolling output instead of the live dashboard |
+| `--platform <os/arch>` | `steam build` | The os and arch the built manifest claims. Default `linux/amd64`. |
+| `--plugin <spec>` | `steam build` | Name the plugin package to use. Repeatable. |
+| `--print` | `steam login` | Also print the session as base64 |
+| `--print-plan` | `run` | Print what the launch would do instead of launching |
+| `--project` | `mods add`, `mods rm`, `init` | Write to the .gamecrate config beside your code |
+| `--pull <always\|missing\|never>` | `run`, `build` | When to pull the runtime image from its registry |
+| `--push` | `steam build` | Push the built image to a registry |
+| `-q, --quiet` | `run`, `shell` | Print nothing to the terminal. --log still gets everything |
+| `--release <owner/repo>` | `mods add` | Download the mod from this GitHub repository's releases |
+| `--render-wait <seconds>` | `run` | Seconds to let the game draw before the screenshot |
+| `--replace` | `run`, `shell` | Stop whatever already holds this profile, then launch |
+| `--resolution <width>x<height>` | `run` | Set the game window size, like 1920x1080 |
+| `--root` | `run`, `shell` | Run as root in the container instead of as you |
+| `--sort <topo\|none>` | `run`, `mods` | Load order: as the profile lists them, or by dependency |
+| `--staging` | `clean` | Delete the staged copies of the mods only (the default) |
+| `--subdir <path>` | `mods add` | The mod folder inside the repository |
+| `--tag <name>` | `mods add` | Pin to this git tag |
+| `--timeout <seconds>` | `run` | Stop a marker or headless run after this many seconds |
+| `--use <packageId>=<path>` | `run`, `shell` | Load this one mod from this directory, whatever the profile says. Repeatable. |
+| `--username <name>` | `steam login` | Use this username and skip the prompt |
+| `--variant <name>` | `steam build` | Build only this image variant. Repeatable. |
+| `--without <id>` | `run`, `mods`, `shell` | Leave one mod out of what the profile loads. Repeatable. |
+| `--workshop <id>` | `mods add` | Take the mod from this Steam Workshop item |
+| `--worktree <path>` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Load mods from this git checkout, in its own instance ($GAMECRATE_WORKTREE). Repeatable. |
+| `-y, --yes` | `init`, `clean`, `clone`, `fix-perms` | Answer yes to the confirmation prompt |
 
-| Flag | Subcommands that take it |
-| --- | --- |
-| `--mod`, `--without`, `--only` | `run`, `shell`, `mods` |
-| `--sort` | `run`, `mods` |
-| `--use` | `run`, `shell` |
-| `--instance`, `--worktree`, `--no-worktree` | `run`, `shell`, `clean`, `logs`, `attach`, `wait`, `stop`, `verify` |
-| `--image` | `run`, `build`, `refs`, `steam build` |
-| `--yes` | `init`, `clean`, `clone`, `fix-perms` |
+<!-- /generated:flags -->
 
-Mod set:
+Some of those carry a rule the one-line summary has no room for:
 
-- `--mod <id>` adds a mod to the profile set. Repeatable.
-- `--without <id>` drops a mod from the resolved set. Repeatable.
-- `--only <id>` restricts the resolved set to these mods. Repeatable.
-- `--use <packageId>=<path>` forces one mod to load from a directory. Repeatable.
-- `--sort <topo|none>` picks a topological sort, the default, or the profile order.
-
-Library writes. Only `--global` and `--project` reach `mods rm`; the rest are `mods add` only:
-
-- `--path <dir>`, `--workshop <id>`, and `--git <url>` are the three source kinds. `mods add`
-takes exactly one.
-- `--branch <name>`, `--tag <name>`, and `--commit <sha>` pin a `--git` source. Pick one.
-- `--subdir <path>` starts the manifest walk below the repository root.
-- `--global` writes the global config, `--project` the nearest `.gamecrate` file. `add` and `rm`
-need one of the two.
-- `--force` overwrites a pin that is already there. `mods rm` has no force: a missing id always
-fails.
-
-Worktrees and instances:
-
-- `--worktree <path>` promotes mods from a linked git worktree, in its own instance. Repeatable,
-and earlier flags outrank later ones.
-- `--no-worktree` turns worktree promotion off completely. It ignores the current directory,
-`$GAMECRATE_WORKTREE`, any `--worktree` flag you also typed, and an instance's configured
-`worktree`.
-- `--instance <name>` runs under a named sub-profile with its own saves, logs, and container.
-
-Display and lifetime:
-
-- `--mode <headed|headless|screenshot>` chooses how the game displays. Default `headed`.
-- `--resolution <width>x<height>` overrides the game resolution.
-- `--marker <str>` exits 0 as soon as that string appears in the log.
-- `--timeout <seconds>` bounds a run with a `--marker`, in any mode, and a `--mode headless`
-run without one. A `--mode screenshot` run with no marker is bounded by `--render-wait`
-instead, and a headed run by its window, so neither of those reads this. Default 420.
-- `--render-wait <seconds>` sets the settle time before a screenshot. Default 25.
-
-Container and build:
-
-- `--network <none|bridge|host>` sets the container network mode.
-- `--pull <always|missing|never>` decides when to pull the runtime image. `run` defaults to
-`missing`, `build` to `always`.
-- `--build` compiles local C# mods first. `--no-build` never compiles, even when an assembly
-looks stale.
-- `--no-stale-check` drops the warning about sources newer than assemblies. The check still runs.
-A source must beat its assembly by more than a second to count. One build writes both within
-microseconds of each other, and that is not a stale build.
-- `--docker-arg <arg>` adds one argv element to `docker run`. Repeatable, and the one flag whose
-value may start with a dash.
-- `--root` runs as root instead of mapping your uid.
-- `--replace` stops whatever holds this profile and instance, then launches. `shell` takes it
-too. `--no-replace` refuses instead, and only `run` takes that.
-- `--detach` launches in the background. `--no-detach` stays in the foreground, whatever the
-profile or the repo config asks for.
-
-Steam images. `steam build` takes every flag in this list, and `run`, `build` and `refs` take
-`--image`:
-
-- `--image <ref>` sets the target repository for `steam build`, without a tag. On `run`,
-`build` and `refs` it uses that exact ref instead of the configured one, and reads the game
-out of the image.
-- `--beta <name>` builds only that Steam branch. Repeatable. Default: every branch the plugin
-declares.
-- `--variant <name>` builds only that image variant. Repeatable. Default: every variant.
-- `--alias <tag>` puts one more [moving tag](images.md#tags) on each branch built. Repeatable.
-- `--plugin <spec>` picks the plugin package to build with. Repeatable.
-- `--load` loads the result into the local Docker daemon. `--push` sends it to a registry.
-Without either, `--load` is assumed.
-- `--base <ref>` overrides the published runtime base a variant appends onto.
-- `--platform <os/arch>` sets what the manifest claims. Default `linux/amd64`.
-- `--force` rebuilds even when the published build id already matches the image's label.
-
-`steam login` takes two of its own:
-
-- `--print` also prints the session as base64, for a CI secret.
-- `--username <name>` skips the username prompt.
-
-Output and dry runs:
-
-- `--dry-run` resolves and validates fully, then writes nothing.
-- `--print-plan` prints the resolved launch plan instead of launching.
-- `--log <path>` writes a copy of the launch output to a file. The terminal still gets it.
-`run` and `shell` read this flag.
-- `-q`, `--quiet` drops the terminal copy. A `--log` file still receives everything, and the
-reason a run failed still reaches you.
-- `--plain` turns off the live dashboard and scrolls the output instead. `run` and `steam build`
-read it.
-- `--json` switches to machine-readable output.
-- `-f`, `--follow` keeps printing as the run writes. `logs` takes it.
-
-`clean` adds four tier flags: `--staging` (the default), `--logs`, `--downloads`, and `--all`.
-`--downloads` drops the game's workshop items and keeps `steamcmd` itself. `--all` deletes saves
-and the downloads, so it needs `--yes`. `clone` and `fix-perms` take `--yes` too, and `fix-perms`
-takes `--dry-run`.
-
-`init` takes `--yes` and `--project`. `--project` writes the `.gamecrate` file beside your code
-instead of the global config.
+- `--timeout` bounds a run with a `--marker`, in any mode, and a `--mode headless` run without
+one. A `--mode screenshot` run with no marker is bounded by `--render-wait` instead, and a headed
+run by its window, so neither of those reads it. Default 420. `--render-wait` defaults to 25.
+- `--pull` defaults to `missing` on `run` and `always` on `build`.
+- `--no-stale-check` drops the warning, not the check. A source must beat its assembly by more
+than a second to count, because one build writes both within microseconds of each other.
+- `--docker-arg` is the one flag whose value may start with a dash.
+- `--worktree` is repeatable and an earlier flag outranks a later one. `--no-worktree` cancels
+worktree promotion completely: the current directory, `$GAMECRATE_WORKTREE`, a `--worktree` flag
+you also typed, and an instance's configured `worktree`.
+- `mods add` takes exactly one of `--path`, `--workshop` or `--git`, and at most one of
+`--branch`, `--tag` or `--commit`. Both `add` and `rm` need `--global` or `--project`. `mods rm`
+has no `--force`: a missing id always fails.
+- `steam build` always loads what it built into the local docker daemon, `--push` or not.
+`--no-load` skips that. A CI runner that only publishes wants it, or it keeps a game-sized image
+it never runs.
+- `--image` sets the target repository for `steam build`, without a tag. On `run`, `build` and
+`refs` it uses that exact reference instead of the configured one, and reads the game out of the
+image.
+- `clean` defaults to `--staging`. `--all` deletes saves and downloads, so it needs `--yes`.
+`--downloads` drops the game's workshop items and keeps `steamcmd` itself.
+- `--quiet` still lets the reason a run failed reach you, and a `--log` file still receives
+everything.
 
 Pairs that contradict each other are usage errors: `--build` with `--no-build`, `--replace` with
 `--no-replace`, `--detach` with `--no-detach`, and `--detach` with either `--dry-run` or
@@ -205,9 +211,20 @@ Pairs that contradict each other are usage errors: `--build` with `--no-build`, 
 
 Each variable stands in for one flag, and only when you leave that flag off:
 
-`GAMECRATE_INSTANCE`, `GAMECRATE_MODE`, `GAMECRATE_MARKER`, `GAMECRATE_TIMEOUT`,
-`GAMECRATE_RENDER_WAIT`, `GAMECRATE_NETWORK`, `GAMECRATE_PULL`, `GAMECRATE_BUILD`,
-`GAMECRATE_SORT`, `GAMECRATE_ROOT`.
+<!-- generated:variables -->
+
+- `GAMECRATE_INSTANCE` for `--instance`
+- `GAMECRATE_MODE` for `--mode`
+- `GAMECRATE_MARKER` for `--marker`
+- `GAMECRATE_TIMEOUT` for `--timeout`
+- `GAMECRATE_RENDER_WAIT` for `--render-wait`
+- `GAMECRATE_NETWORK` for `--network`
+- `GAMECRATE_PULL` for `--pull`
+- `GAMECRATE_BUILD` for `--build`
+- `GAMECRATE_SORT` for `--sort`
+- `GAMECRATE_ROOT` for `--root`
+
+<!-- /generated:variables -->
 
 A value goes through the flag's own parser, so a bad one fails the way a bad flag does.
 `GAMECRATE_ROOT` reads `1`, `true`, or `yes` as on. A `.gamecrate` file's keys sit below both:
@@ -222,14 +239,13 @@ cache. `VISUAL` and `EDITOR` name the editor `config edit` opens.
 `steam build` reads its credentials from the environment and never from a flag, because a flag
 value is readable in the process list on a shared machine:
 
-| Variable | What it holds |
-| --- | --- |
-| `STEAM_USERNAME` | The Steam account that owns the game |
-| `STEAM_CONFIG_VDF` | base64 of a logged-in `config.vdf`, for a runner with no session on disk |
-| `STEAM_BRANCH_PASSWORD_<BRANCH>` | The password for one private beta. The branch name goes uppercase, with dashes as underscores |
-| `STEAM_BRANCH_PASSWORD` | A fallback password, used only when you build a single branch |
-| `GAMECRATE_REGISTRY_USER` | The registry username for `--push` |
-| `GAMECRATE_REGISTRY_PASSWORD` | The registry token for `--push` |
+- `STEAM_USERNAME` is the Steam account that owns the game.
+- `STEAM_CONFIG_VDF` is base64 of a logged-in `config.vdf`, for a runner with no session on disk.
+- `STEAM_BRANCH_PASSWORD_<BRANCH>` is the password for one private beta. The branch name goes
+uppercase, with dashes as underscores.
+- `STEAM_BRANCH_PASSWORD` is a fallback password, used only when you build a single branch.
+- `GAMECRATE_REGISTRY_USER` is the registry username for `--push`.
+- `GAMECRATE_REGISTRY_PASSWORD` is the registry token for `--push`.
 
 A beta password reaches `steamcmd` through a `+runscript` file at mode 0600, so it never appears
 in an argument list either.

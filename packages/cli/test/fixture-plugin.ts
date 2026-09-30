@@ -98,7 +98,7 @@ export const FIXTURE_DEFAULTS: Partial<GameConfig> = {
 export function fixtureGame(): GameConfig {
   return structuredClone({
     ...FIXTURE_DEFAULTS,
-    image: { ref: 'atlas:latest', acquire: 'pull' },
+    image: { ref: 'atlas:latest' },
   }) as GameConfig
 }
 
@@ -130,7 +130,7 @@ export function pluginMap(...games: string[]): Map<string, GamePlugin> {
 export async function writePluginPackage(dir: string, exports: unknown, game = 'atlas'): Promise<void> {
   const defaults = {
     ...FIXTURE_DEFAULTS,
-    image: { ref: 'atlas-build:latest', acquire: 'build', context: '/fixtures/docker' },
+    image: { ref: 'atlas-build:latest', context: '/fixtures/docker' },
   }
   await mkdir(join(dir, 'dist'), { recursive: true })
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name: basename(dir), type: 'module', exports }))

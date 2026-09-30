@@ -100,8 +100,7 @@ export interface GameFilesSpec {
 
 export interface ImageSpec {
   ref: string
-  acquire: 'pull' | 'build'
-  /** Required when acquire is "build". */
+  /** The docker build context. Naming one builds ref; leaving it out pulls ref. */
   context?: string
   updates?: UpdateCheckSpec
 }
@@ -140,6 +139,10 @@ export interface LibraryEntry {
   workshop?: number
   path?: string
   git?: string
+  /** `owner/repo`, whose GitHub releases carry a built copy of the mod. */
+  release?: string
+  /** Glob over a release's asset names. Defaults to `*.zip`. */
+  asset?: string
   branch?: string
   tag?: string
   commit?: string
@@ -298,7 +301,7 @@ export interface RootConfig {
   games: Record<string, GameConfig>
 }
 
-export type ModSourceKind = 'local' | 'workshop' | 'official' | 'core'
+export type ModSourceKind = 'local' | 'release' | 'workshop' | 'official' | 'core'
 
 export interface ModManifest {
   packageId: string
@@ -544,6 +547,7 @@ export interface ParsedArgs {
         ref?: { kind: 'branch' | 'tag' | 'commit'; value: string }
         subdir?: string
       }
+    | { kind: 'release'; repo: string; tag?: string; asset?: string; subdir?: string }
   /** Which config file a write lands in. */
   target?: 'global' | 'project'
   /** Overwrite an existing entry instead of refusing. */

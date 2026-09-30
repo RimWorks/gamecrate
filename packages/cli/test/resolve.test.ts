@@ -83,7 +83,7 @@ function atlas(profiles: Record<string, ProfileConfig>): GameConfig {
     dataDir: { container: '/data', mode: 'arg', arg: '-savedatafolder=/data' },
     modsDir: { container: '/game/Mods' },
     logFile: { mode: 'arg', arg: '-logfile' },
-    image: { ref: 'atlas-build:latest', acquire: 'build' },
+    image: { ref: 'atlas-build:latest' },
     executable: './AtlasLinux',
     steamAppId: 294100,
     workshopRoot: null,
@@ -108,7 +108,7 @@ function beacon(profiles: Record<string, ProfileConfig>): GameConfig {
     dataDir: { container: '/data/Beacon Studios/Beacon', mode: 'env', env: { XDG_DATA_HOME: '/data' } },
     modsDir: { container: '/data/Beacon Studios/Beacon/SaveData/Mods', mask: ['/opt/beacon/Mods'] },
     logFile: { mode: 'copy-out', from: 'Logs/' },
-    image: { ref: 'beacon-game-play-base:latest', acquire: 'pull' },
+    image: { ref: 'beacon-game-play-base:latest' },
     executable: './Beacon',
     steamAppId: 294100,
     workshopRoot: null,
@@ -1035,7 +1035,7 @@ describe('generated config files', () => {
     const game = {
       ...atlas({ dsd: { mods: [] } }),
       gameFiles: { source: 'image' as const, container: '/game' },
-      image: { ref: 'ghcr.io/me/atlas:1', acquire: 'pull' as const },
+      image: { ref: 'ghcr.io/me/atlas:1' },
     }
     index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('rw-core'), kind: 'core' }])
     const { plan } = await resolvePlan({

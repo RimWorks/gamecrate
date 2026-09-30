@@ -31,7 +31,7 @@ import type { GameConfig, ParsedArgs, Problem, ProjectDefaults, RootConfig } fro
 
 const ATLAS_DEFAULTS: GameConfig = {
   ...(FIXTURE_DEFAULTS as GameConfig),
-  image: { ref: 'atlas-build:latest', acquire: 'build', context: '~/fixtures/docker' },
+  image: { ref: 'atlas-build:latest', context: '~/fixtures/docker' },
   scanRoots: [{ path: '~/fixtures/trees/atlas', maxDepth: 3 }],
   dlc: ['atlasco.atlas.one', 'atlasco.atlas.two'],
   library: { 'patchlib.patch': { workshop: 2009463077 } },
@@ -376,12 +376,25 @@ describe('validateConfig', () => {
   })
 
   test('conditional requirements follow the discriminant', () => {
-    const { problems } = merged({
-      games: { atlas: { image: { ref: 'x', acquire: 'build', context: undefined } } },
-    })
-    expect(problems).toEqual([])
+    expect(merged({ games: { atlas: { image: { ref: 'x' } } } }).problems).toEqual([])
     const bad = merged({ games: { atlas: { dataDir: { mode: 'env', container: '/d' } } } })
     expect(find(bad.problems, '/games/atlas/dataDir/env')).toBeDefined()
+  })
+
+  test('image.acquire is refused by name, since context decides now', () => {
+    const { problems } = merged({
+      games: { atlas: { image: { ref: 'x', acquire: 'build', context: '/ctx' } } },
+    })
+    const problem = find(problems, '/games/atlas/image/acquire')
+    expect(problem?.message).toBe('the key "acquire" was removed, and "context" decides now')
+    expect(problem?.suggestion).toBe(
+      'delete this line: an image with a "context" is built, one without it is pulled',
+    )
+  })
+
+  test('a context alone is allowed, and so is no context', () => {
+    expect(merged({ games: { atlas: { image: { ref: 'x', context: '/ctx' } } } }).problems).toEqual([])
+    expect(merged({ games: { atlas: { image: { ref: 'x' } } } }).problems).toEqual([])
   })
 
   test('the steamcmd block is optional, and so is its path', () => {
@@ -429,7 +442,7 @@ describe('validateConfig', () => {
 
     const { config } = await loadConfig(file)
     expect(config.games['atlas']?.image.ref).toBe(RUNTIME_BASE.linux)
-    expect(config.games['atlas']?.image.acquire).toBe('pull')
+    expect(config.games['atlas']?.image.context).toBeUndefined()
   })
 
   test('wrong types are reported, not coerced', () => {
@@ -730,7 +743,32 @@ describe('library entry sources', () => {
   test('a commit counts as a ref, and still needs a git url', () => {
     const problems = lib({ commit: 'abc1234', branch: 'dev' })
     expect(find(problems, 'only one of branch')?.message).toContain('branch, commit')
-    expect(find(problems, '/gitlib.git/commit')?.message).toBe('"commit" needs a "git" url')
+    expect(find(problems, '/gitlib.git/commit')?.message).toBe('"commit" needs a "git" url or a "release" repository')
+  })
+
+  test('a release entry takes a tag, an asset glob and a subdir', () => {
+    expect(lib({ release: 'Owner/Mod', tag: 'v1.2', asset: 'Mod-*.zip', subdir: 'Mod' })).toEqual([])
+    expect(lib({ release: 'Owner/Mod' })).toEqual([])
+  })
+
+  test('a release repository is owner/repo, not a url', () => {
+    const problems = lib({ release: 'https://github.com/Owner/Mod' })
+    expect(find(problems, '/gitlib.git/release')?.message).toContain('write it as owner/repo')
+  })
+
+  test('release and git cannot both be given', () => {
+    expect(find(lib({ release: 'Owner/Mod', git: 'https://example.test/x.git' }), 'only one of')?.message)
+      .toContain('git, release')
+  })
+
+  test('a release is pinned by tag, never by branch or commit', () => {
+    expect(find(lib({ release: 'Owner/Mod', branch: 'main' }), '/gitlib.git/branch')?.message)
+      .toBe('"branch" needs a "git" url; a "release" is pinned by "tag"')
+  })
+
+  test('asset needs a release', () => {
+    expect(find(lib({ git: 'https://example.test/x.git', asset: '*.zip' }), '/gitlib.git/asset')?.message)
+      .toBe('"asset" needs a "release" repository')
   })
 
   test('git and path cannot both be given', () => {
@@ -768,7 +806,7 @@ describe('library entry sources', () => {
   })
 
   test('an entry with no source at all is refused', () => {
-    expect(find(lib({}), 'needs a "workshop" id, a "path", or a "git" url')).toBeDefined()
+    expect(find(lib({}), 'needs a "workshop" id, a "path", a "git" url, or a "release" repository')).toBeDefined()
   })
 })
 

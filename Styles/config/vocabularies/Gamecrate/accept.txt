@@ -51,3 +51,5 @@ MSBuild
 csproj
 Xvfb
 Proton
+zsh
+buildid

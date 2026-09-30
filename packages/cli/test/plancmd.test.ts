@@ -64,7 +64,7 @@ function workspace(): { env: NodeJS.ProcessEnv } {
       plugins: [pluginDir],
       games: {
         atlas: {
-          image: { ref: 'atlas:latest', acquire: 'pull' },
+          image: { ref: 'atlas:latest' },
           scanRoots: [{ path: mods, maxDepth: 2 }],
           workshopRoot: join(dir, 'workshop'),
           profiles: { dsd: { mods: ['workshop:2009463077'] } },

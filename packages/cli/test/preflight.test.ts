@@ -42,7 +42,7 @@ const atlas: GameConfig = {
   dataDir: { container: '/data', mode: 'arg', arg: '-savedatafolder=/data' },
   modsDir: { container: '/game/Mods' },
   logFile: { mode: 'arg', arg: '-logfile' },
-  image: { ref: REF, acquire: 'pull' },
+  image: { ref: REF },
   executable: './AtlasLinux',
   steamAppId: 294100,
   workshopRoot: null,
@@ -131,9 +131,18 @@ describe('preflight image preconditions', () => {
     })
   })
 
+  test('an absent image with a context points at build, not at a pull', async () => {
+    const built = plan('headed')
+    built.gameConfig = { ...atlas, image: { ref: REF, context: '/ctx' } }
+    await withImage({ present: false }, async () => {
+      const problems = await preflight(built)
+      expect(problems.some((p) => p.suggestion === 'gamecrate build --game atlas')).toBe(true)
+    })
+  })
+
   test('an empty image.ref points at steam build', async () => {
     const empty = plan('headed')
-    empty.gameConfig = { ...atlas, image: { ref: '', acquire: 'pull' } }
+    empty.gameConfig = { ...atlas, image: { ref: '' } }
     const problems = await preflight(empty)
     expect(problems.some((p) => p.message.includes('no image.ref configured'))).toBe(true)
   })

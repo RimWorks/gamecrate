@@ -16,7 +16,7 @@ export function applyDefaultImage(config: unknown): unknown {
     const g = game as { image?: unknown; gameFiles?: { source?: unknown } }
     if (g.image !== undefined) continue
     if (g.gameFiles?.source !== 'mount') continue
-    g.image = { ref: RUNTIME_BASE.linux, acquire: 'pull' }
+    g.image = { ref: RUNTIME_BASE.linux }
   }
   return config
 }

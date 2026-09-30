@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-const built = { count: 0 }
+const built: { count: number; push?: boolean; load?: boolean } = { count: 0 }
 
 const realOs = { ...(await import('node:os')) }
 await mock.module('node:os', () => ({
@@ -13,8 +13,10 @@ await mock.module('node:os', () => ({
 }))
 
 await mock.module('../src/image/build', () => ({
-  steamBuild: () => {
+  steamBuild: (_input: unknown, opts: { push: boolean; load: boolean }) => {
     built.count += 1
+    built.push = opts.push
+    built.load = opts.load
     return Promise.resolve([])
   },
 }))
@@ -39,6 +41,8 @@ afterAll(() => {
 
 afterEach(() => {
   built.count = 0
+  delete built.push
+  delete built.load
   delete process.env.STEAM_CONFIG_VDF
   delete process.env.STEAM_USERNAME
 })
@@ -112,10 +116,43 @@ describe('resolveSession', () => {
   })
 })
 
-function build(config: RootConfig): Promise<number> {
+function build(config: RootConfig, extra: Partial<ParsedArgs> = {}): Promise<number> {
   const ctx: SteamContext = { config, plugins: new Map(), cwd: '/nowhere' }
-  return steamBuildCommand({ subcommand: 'steam', game: 'rimworld' } as ParsedArgs, ctx)
+  return steamBuildCommand({ subcommand: 'steam', game: 'rimworld', ...extra } as ParsedArgs, ctx)
 }
+
+describe('steam build loading', () => {
+  function ready(): RootConfig {
+    const { config } = tree('from-fallback')
+    mkdirSync(steamHome(config.dataRoot), { recursive: true })
+    writeFileSync(accountFile(config.dataRoot), 'from-login\n')
+    return config
+  }
+
+  test('a bare build loads and never pushes', async () => {
+    expect(await build(ready(), { load: true })).toBe(Exit.Ok)
+    expect(built.load).toBe(true)
+    expect(built.push).toBe(false)
+  })
+
+  test('--push loads as well, so the runner keeps the image it just built', async () => {
+    expect(await build(ready(), { load: true, push: true })).toBe(Exit.Ok)
+    expect(built.load).toBe(true)
+    expect(built.push).toBe(true)
+  })
+
+  test('--push --no-load pushes and keeps nothing local', async () => {
+    expect(await build(ready(), { load: false, push: true })).toBe(Exit.Ok)
+    expect(built.load).toBe(false)
+    expect(built.push).toBe(true)
+  })
+
+  test('--no-load with no --push builds and keeps the image nowhere', async () => {
+    expect(await build(ready(), { load: false })).toBe(Exit.Ok)
+    expect(built.load).toBe(false)
+    expect(built.push).toBe(false)
+  })
+})
 
 describe('steamBuildCommand', () => {
   test('a config that names no game still builds, because the plugin is the authority', async () => {
@@ -187,35 +224,31 @@ describe('steamBuildCommand', () => {
 })
 
 describe('resolveImage', () => {
-  test('--load with no config defaults the repo to gamecrate/<game>-game', () => {
-    expect(resolveImage({ load: true, push: false }, 'rimworld', undefined)).toBe('gamecrate/rimworld-game')
-  })
-
-  test('neither flag is the same default, because --load is the default', () => {
-    expect(resolveImage({ load: false, push: false }, 'rimworld', undefined)).toBe('gamecrate/rimworld-game')
+  test('a build with no config defaults the repo to gamecrate/<game>-game', () => {
+    expect(resolveImage({ push: false }, 'rimworld', undefined)).toBe('gamecrate/rimworld-game')
   })
 
   test('--push with no config and no --image is a usage error', () => {
-    const error = fails(() => resolveImage({ load: false, push: true }, 'rimworld', undefined))
+    const error = fails(() => resolveImage({ push: true }, 'rimworld', undefined))
     expect(error.code).toBe(Exit.Usage)
     expect(error.message).toContain('--push needs a target repository')
     expect(error.detail).toContain('games.rimworld.image.ref')
   })
 
   test('a given ref comes back with its tag stripped', () => {
-    expect(resolveImage({ load: true, push: false }, 'rimworld', 'ghcr.io/aaron/rimworld:1.5')).toBe(
+    expect(resolveImage({ push: false }, 'rimworld', 'ghcr.io/aaron/rimworld:1.5')).toBe(
       'ghcr.io/aaron/rimworld',
     )
   })
 
   test('a port in the registry is not a tag', () => {
-    expect(resolveImage({ load: false, push: true }, 'rimworld', 'localhost:5000/rimworld')).toBe(
+    expect(resolveImage({ push: true }, 'rimworld', 'localhost:5000/rimworld')).toBe(
       'localhost:5000/rimworld',
     )
   })
 
   test('a ref satisfies --push', () => {
-    expect(resolveImage({ load: false, push: true }, 'rimworld', 'ghcr.io/aaron/rimworld')).toBe(
+    expect(resolveImage({ push: true }, 'rimworld', 'ghcr.io/aaron/rimworld')).toBe(
       'ghcr.io/aaron/rimworld',
     )
   })

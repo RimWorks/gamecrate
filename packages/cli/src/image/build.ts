@@ -63,7 +63,7 @@ export interface CellProgress {
 export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions): Promise<CellResult[]> {
   const branches = branchesFor(input.branches, opts.onlyBranches)
   const variants = narrow(input.variants, opts.onlyVariants, 'variant', 'variants')
-  // before the first download, and only on a push: a --load build never talks to a registry
+  // before the first download, and only on a push: nothing else here talks to a registry
   if (opts.push) checkRegistryAuthEarly(input.image)
   // the declared first entry, not the first surviving one: --variant linux-ref never takes :latest
   const defaultBranch = input.branches[0]!.name
@@ -210,7 +210,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
         // only now: a half-pushed build must not move latest
         for (const tag of tags.slice(1)) await craneTag(versioned, tag)
       }
-      // base === null only reaches here on --push --load, which the skip above cannot take
+      // a scratch image carries no architecture, so the local daemon cannot run it
       if (opts.load && base !== null) {
         say(`loading ${versioned}`)
         await dockerLoad(tar, versioned)

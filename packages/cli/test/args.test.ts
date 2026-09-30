@@ -478,7 +478,7 @@ function game(overrides: Partial<GameConfig> = {}): GameConfig {
     dataDir: { container: '/data', mode: 'env', env: { XDG_DATA_HOME: '/data' } },
     modsDir: { container: '/opt/beacon/Mods' },
     logFile: { mode: 'copy-out', from: 'Logs' },
-    image: { ref: 'beacon:play', acquire: 'pull' },
+    image: { ref: 'beacon:play' },
     executable: './Beacon',
     steamAppId: 294100,
     workshopRoot: null,
@@ -1463,7 +1463,7 @@ describe('mods subverbs', () => {
   })
 
   test('--help is the only thing that skips the subverb checks', () => {
-    expect(fails(['mods', 'add', '--game', 'rimworld', '--global']).message).toContain('--path, --workshop or --git')
+    expect(fails(['mods', 'add', '--game', 'rimworld', '--global']).message).toContain('--path, --workshop, --git or --release')
     expect(fails(['mods', 'rm', '--game', 'rimworld', '--global']).message).toBe('mods rm needs at least one mod id')
     expect(fails(['mods', 'add', '--game', 'rimworld', '--git', 'u']).message).toBe('mods add needs --global or --project')
     const helped = parseArgs(['mods', 'add', '--game', 'rimworld', '--help'], NO_ENV)
@@ -1480,9 +1480,42 @@ describe('mods subverbs', () => {
 
   test('the git-only flags need --git', () => {
     const ref = fails(['mods', 'add', '--game', 'rimworld', '--path', '/a', '--tag', 'v1', '--global'])
-    expect(ref.message).toContain('--tag only applies to a --git source')
+    expect(ref.message).toContain('--tag only applies to a --git or --release source')
     const sub = fails(['mods', 'add', '--game', 'rimworld', '--path', '/a', '--subdir', 'Core', '--global'])
-    expect(sub.message).toContain('--subdir only applies to a --git source')
+    expect(sub.message).toContain('--subdir only applies to a --git or --release source')
+  })
+
+  test('a release source takes a repo, a tag, an asset glob and a subdir', () => {
+    const bare = parseArgs(['mods', 'add', '--game', 'rimworld', '--release', 'Owner/Mod', '--global'], NO_ENV)
+    expect(bare.source).toEqual({ kind: 'release', repo: 'Owner/Mod' })
+    const full = parseArgs(
+      ['mods', 'add', '--game', 'rimworld', '--release', 'Owner/Mod', '--tag', 'v1.2', '--asset', 'Mod-*.zip', '--subdir', 'Mod', '--global'],
+      NO_ENV,
+    )
+    expect(full.source).toEqual({ kind: 'release', repo: 'Owner/Mod', tag: 'v1.2', asset: 'Mod-*.zip', subdir: 'Mod' })
+  })
+
+  test('--release takes one owner and one repo', () => {
+    const error = fails(['mods', 'add', '--game', 'rimworld', '--release', 'https://github.com/Owner/Mod', '--global'])
+    expect(error.code).toBe(Exit.Usage)
+    expect(error.message).toContain('--release takes an owner/repo')
+  })
+
+  test('--release contradicts the other source kinds', () => {
+    const error = fails(['mods', 'add', '--game', 'rimworld', '--git', 'https://x/y.git', '--release', 'Owner/Mod', '--global'])
+    expect(error.message).toContain('a source has one kind')
+  })
+
+  test('a release is pinned by --tag, never by --branch or --commit', () => {
+    for (const flag of ['--branch', '--commit']) {
+      const error = fails(['mods', 'add', '--game', 'rimworld', '--release', 'Owner/Mod', flag, 'x', '--global'])
+      expect(error.message).toContain(`${flag} only applies to a --git source; pin a release with --tag`)
+    }
+  })
+
+  test('--asset needs --release', () => {
+    const error = fails(['mods', 'add', '--game', 'rimworld', '--git', 'https://x/y.git', '--asset', '*.zip', '--global'])
+    expect(error.message).toBe('--asset only applies to a --release source')
   })
 
   test('a git source pins one ref', () => {
@@ -1555,5 +1588,22 @@ describe('steam', () => {
 
   test('--platform defaults to linux/amd64', () => {
     expect(parseArgs(['steam', 'build', '--game', 'rimworld'], NO_ENV).platform).toBe('linux/amd64')
+  })
+
+  test('load defaults on, with and without --push', () => {
+    expect(parseArgs(['steam', 'build', '--game', 'rimworld'], NO_ENV).load).toBe(true)
+    expect(parseArgs(['steam', 'build', '--game', 'rimworld', '--push'], NO_ENV).load).toBe(true)
+  })
+
+  test('--no-load turns it off and leaves --push alone', () => {
+    const args = parseArgs(['steam', 'build', '--game', 'rimworld', '--push', '--no-load'], NO_ENV)
+    expect(args.load).toBe(false)
+    expect(args.push).toBe(true)
+  })
+
+  test('--load is gone, so it is a usage error', () => {
+    const error = fails(['steam', 'build', '--game', 'rimworld', '--load'])
+    expect(error.code).toBe(Exit.Usage)
+    expect(error.message).toContain('--load')
   })
 })

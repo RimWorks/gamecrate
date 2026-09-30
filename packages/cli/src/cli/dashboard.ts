@@ -83,11 +83,11 @@ function phaseColour(phase: string): string {
   return YELLOW
 }
 
-const MOD_ORDER = ['local', 'workshop', 'official', 'core']
+const MOD_ORDER = ['local', 'release', 'workshop', 'official', 'core']
 
 function modLine(mods: Record<string, number>): string {
   const colours: Record<string, string> = {
-    local: ORANGE, official: BLUE, workshop: CYAN, core: DIM,
+    local: ORANGE, release: GREEN, official: BLUE, workshop: CYAN, core: DIM,
   }
   const rank = (kind: string): number => {
     const at = MOD_ORDER.indexOf(kind)

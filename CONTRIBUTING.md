@@ -26,37 +26,53 @@ facts, so the same core serves every title. Most work lands in `packages/cli/src
 ## Project structure
 
 - `packages/cli/` - the `gamecrate` command, the config loader, and the plugin contract
-- `packages/rimworld/` - the RimWorld plugin: `About.xml`, `ModsConfig.xml`, and `Prefs.xml`
+- `packages/rimworld/` - the RimWorld plugin: `About.xml`, `ModsConfig.xml`, `Prefs.xml`, the
+  per-mod `Mod_*.xml` settings files, and `Version.txt`
 - `Styles/` - the Vale style used on every markdown file here
 
 ## Setup and build
 
 ```sh
-npm ci
-npm run build     # needs bun
+bun install --frozen-lockfile --ignore-scripts
+bun run build
+bun install --frozen-lockfile
 ```
 
-The build needs [bun](https://bun.sh). It writes `packages/cli/dist/gamecrate.js` for Node and
+[bun](https://bun.sh) installs and runs everything here. The lock file is `bun.lock`, and there
+is no `package-lock.json`. The build writes `packages/cli/dist/gamecrate.js` for Node and
 `packages/cli/dist/gamecrate` as a standalone binary.
 
+**The first install needs `--ignore-scripts`.** `@gamecrate/rimworld` has a `prepare` script
+that typechecks, and on a clean clone it runs before `@gamecrate/cli` emits the declarations it
+reads. CI passes the flag for the same reason and stops there. Locally, run `bun install` again
+after the build so husky installs the git hooks.
+
 **Build before you typecheck.** `@gamecrate/rimworld` typechecks against the declarations that
-`@gamecrate/cli` emits, and `dist` is gitignored. A clean clone fails `npm run typecheck` until
-`npm run build` has run once. CI does the same two steps in that order.
+`@gamecrate/cli` emits, and `dist` is gitignored. A clean clone fails `bun run typecheck` until
+`bun run build` has run once. CI does the same two steps in that order.
+
+The root `build` script names the two packages in order rather than using `--filter '*'`. Bun
+orders a filtered run by `dependencies` only. `@gamecrate/rimworld` names `@gamecrate/cli` under
+`devDependencies`, so a wildcard filter builds both at once and races the declarations.
 
 ## Testing
 
 ```sh
-npm test                                   # bun test, both packages
+bun test --parallel                        # the whole suite, both packages
 bun test packages/cli/test/args.test.ts    # one file
-npm run lint                               # oxlint
-npm run typecheck                          # tsc --noEmit, both packages
-vale README.md packages/*/README.md packages/cli/docs   # prose, after one vale sync
+bun run lint                               # oxlint
+bun run typecheck                          # tsc --noEmit, both packages
+bun run docs:check                         # the generated reference docs match the source
+vale .                                     # prose, after one vale sync
 ```
 
 - Run the full suite before committing. All tests must pass.
-- **`npm test` passes `--parallel`, and that flag is load-bearing.** It implies `--isolate`, which
-  gives each file its own process. A bare `bun test` shares one process, so `mock.module` leaks
-  between files and 111 tests fail. Running one file on its own is fine.
+- **`--parallel` is load-bearing.** It implies `--isolate`, which gives each file its own
+  process. A bare `bun test` shares one process, so `mock.module` leaks between files and 18
+  tests fail. Running one file on its own is fine.
+- `packages/cli/scripts/gen-docs.ts` writes `packages/cli/docs/reference.md`. Edit the source
+  and run `bun run docs`, never the file.
+- `.husky/pre-push` runs every check here on each push, and skips vale when it is missing.
 - While iterating, run the single test closest to your change.
 - The suite covers config parsing, mod resolution, staleness, worktrees, and argument parsing.
   It does not start Docker. Prove anything that touches a container with a real launch.
@@ -99,7 +115,7 @@ Two resolver details exist because the compiled binary behaves differently from 
 ## Config
 
 Two files, and the loader merges them in one direction. The global config lives at
-`~/.config/gamecrate/profiles.<ext>`, and a project's `.gamecrate.<ext>` sits beside the code
+`~/.config/gamecrate/config.<ext>`, and a project's `.gamecrate.<ext>` sits beside the code
 it launches. A plugin's `defaults` sit under the user's `games.<game>` block, so a user writes
 only what is theirs.
 
@@ -157,8 +173,7 @@ A container stopped by `--replace` returns `143`, not `1`. Never read a piped ex
 ## Code style
 
 - Linter: oxlint, configured in `.oxlintrc.json`. Run it; do not hand-format.
-- Vale checks prose in `README.md`, both package READMEs, and `packages/cli/docs`. Run
-  `vale sync` once first.
+- Vale checks every markdown file in the repo. Run `vale sync` once, then `vale .`.
 - Follow the patterns already in neighboring files.
 - Do not add comments that restate the code.
 - Do not reformat code you are not otherwise changing.

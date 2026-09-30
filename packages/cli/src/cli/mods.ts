@@ -11,11 +11,16 @@ import {
   cloneDir,
   defaultBranch,
   ensureClone,
+  ensureRelease,
   gitRefOf,
   lockDir,
   normalizeUrl,
+  releaseDir,
+  releasePinOf,
 } from '../mods/source'
 import type { GitRef } from '../mods/source'
+import { parseRepo, readRelease } from '../mods/release'
+import type { ReleasePin } from '../mods/release'
 import { downloadItems, downloadRoot } from '../mods/steamcmd'
 import { checkDrift } from '../mods/workshopapi'
 import { requirePlugin } from '../plugin'
@@ -59,7 +64,7 @@ export async function modsAdd(args: ParsedArgs, ctx: ModsContext): Promise<numbe
   const gameConfig = ctx.config.games[game]!
   const source = args.source
   if (source === undefined) {
-    throw new GamecrateError('mods add needs one of --path, --workshop or --git', Exit.Usage)
+    throw new GamecrateError('mods add needs one of --path, --workshop, --git or --release', Exit.Usage)
   }
   const target = await resolveTarget(args, ctx, game)
   const pins = await discover(source, gameConfig, requirePlugin(ctx.plugins, game), ctx)
@@ -135,24 +140,47 @@ export async function modsSync(args: ParsedArgs, ctx: ModsContext): Promise<numb
   const only = args.rest.map((id) => id.toLowerCase())
   const games = args.game === undefined ? Object.keys(ctx.config.games) : [requireGame(args, ctx.config)]
 
-  const { wanted, subscribed } = collectPins(ctx.config, games, only)
-  const named = [...wanted.map((pin) => pin.id), ...subscribed.flatMap((one) => one.pins.map((pin) => pin.id))]
+  const { wanted, released, subscribed } = collectPins(ctx.config, games, only)
+  const named = [
+    ...wanted.map((pin) => pin.id),
+    ...released.map((pin) => pin.id),
+    ...subscribed.flatMap((one) => one.pins.map((pin) => pin.id)),
+  ]
   const missing = only.filter((id) => !named.some((pinned) => pinned.toLowerCase() === id))
   if (missing.length > 0) {
     throw new GamecrateError(
-      `${missing.length} mod id(s) are not git- or workshop-pinned in the library`,
+      `${missing.length} mod id(s) are not git-, release- or workshop-pinned in the library`,
       Exit.Resolution,
       missing.map((id) => `  ${id}`).join('\n'),
     )
   }
-  if (wanted.length === 0 && subscribed.length === 0) {
+  if (wanted.length === 0 && released.length === 0 && subscribed.length === 0) {
     status('nothing to sync')
     return Exit.Ok
   }
 
   await syncGit(ctx, wanted)
+  await syncReleases(ctx, released)
   for (const one of subscribed) await syncWorkshop(ctx, one.game, one.pins)
   return Exit.Ok
+}
+
+interface ReleaseJob {
+  id: string
+  pin: ReleasePin
+}
+
+async function syncReleases(ctx: ModsContext, jobs: ReleaseJob[]): Promise<void> {
+  for (const job of jobs) {
+    const repoDir = dirname(releaseDir(ctx.config.dataRoot, job.pin.repo, 'x'))
+    const unlock = await lockDir(repoDir)
+    try {
+      const result = await ensureRelease(ctx.config.dataRoot, job.pin, 'force', ctx.fetch)
+      status(`synced ${job.id} from ${parseRepo(job.pin.repo)} into ${result.dir}`)
+    } finally {
+      await unlock()
+    }
+  }
 }
 
 interface GitPin {
@@ -170,19 +198,22 @@ function collectPins(
   config: RootConfig,
   games: string[],
   only: string[],
-): { wanted: GitPin[]; subscribed: { game: string; pins: WorkshopPin[] }[] } {
+): { wanted: GitPin[]; released: ReleaseJob[]; subscribed: { game: string; pins: WorkshopPin[] }[] } {
   const wanted: GitPin[] = []
+  const released: ReleaseJob[] = []
   const subscribed: { game: string; pins: WorkshopPin[] }[] = []
   for (const name of games) {
     const pins: WorkshopPin[] = []
     for (const [id, entry] of Object.entries(config.games[name]?.library ?? {})) {
       if (only.length > 0 && !only.includes(id.toLowerCase())) continue
+      const release = releasePinOf(entry)
       if (entry.git !== undefined) wanted.push({ id, git: entry.git, entry })
+      else if (release !== undefined) released.push({ id, pin: release })
       else if (entry.workshop !== undefined) pins.push({ id, item: String(entry.workshop) })
     }
     if (pins.length > 0) subscribed.push({ game: name, pins })
   }
-  return { wanted, subscribed }
+  return { wanted, released, subscribed }
 }
 
 async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
@@ -247,6 +278,10 @@ function gitPin(url: string, entry: LibraryEntry): { url: string; subdir?: strin
 function describe(source: NonNullable<ParsedArgs['source']>): string {
   if (source.kind === 'path') return source.value
   if (source.kind === 'workshop') return `workshop item ${source.value}`
+  if (source.kind === 'release') {
+    const at = source.tag === undefined ? 'the latest release' : `release ${source.tag}`
+    return `${source.repo} ${at}${source.subdir === undefined ? '' : ` (${source.subdir})`}`
+  }
   return source.subdir === undefined ? source.url : `${source.url} (${source.subdir})`
 }
 
@@ -343,6 +378,8 @@ async function discover(
     return id === undefined ? [] : [{ id, entry: { workshop: source.value } }]
   }
 
+  if (source.kind === 'release') return await discoverRelease(source, game, plugin, ctx)
+
   const ref = source.ref ?? defaultBranch(source.url)
   const dir = cloneDir(ctx.config.dataRoot, source.url, ref)
   const unlock = await lockDir(dir)
@@ -363,6 +400,39 @@ async function discover(
     if (pinned?.kind === 'branch') entry.branch = pinned.value
     else if (pinned?.kind === 'tag') entry.tag = pinned.value
     else if (pinned?.kind === 'commit') entry.commit = pinned.value
+    const rel = relative(root, at)
+    if (rel !== '') entry.subdir = rel
+    return { id, entry }
+  })
+}
+
+async function discoverRelease(
+  source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'release' }>,
+  game: GameConfig,
+  plugin: GamePlugin,
+  ctx: ModsContext,
+): Promise<Pin[]> {
+  const repo = parseRepo(source.repo)
+  const pin: ReleasePin = {
+    repo,
+    ...(source.tag === undefined ? {} : { tag: source.tag }),
+    ...(source.asset === undefined ? {} : { asset: source.asset }),
+  }
+  const tag = pin.tag ?? (await readRelease(pin, ctx.fetch)).tag
+  const unlock = await lockDir(dirname(releaseDir(ctx.config.dataRoot, repo, tag)))
+  let root: string
+  try {
+    root = (await ensureRelease(ctx.config.dataRoot, { ...pin, tag }, 'force', ctx.fetch)).dir
+  } finally {
+    await unlock()
+  }
+
+  const start = source.subdir === undefined ? root : join(root, source.subdir)
+  const found = await walk(start, game.manifest.file, plugin)
+  return found.map(({ id, dir: at }) => {
+    const entry: LibraryEntry = { release: repo }
+    if (source.tag !== undefined) entry.tag = source.tag
+    if (source.asset !== undefined) entry.asset = source.asset
     const rel = relative(root, at)
     if (rel !== '') entry.subdir = rel
     return { id, entry }

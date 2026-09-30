@@ -31,6 +31,8 @@ export interface SubverbSpec {
   positionals: PositionalSlot[]
   /** Flag names this subverb alone accepts, beyond the global set. */
   flags: readonly string[]
+  /** Behavior no flag description covers, printed after the flag block. */
+  notes?: readonly string[]
 }
 
 export interface SubcommandSpec {
@@ -46,7 +48,17 @@ export interface SubcommandSpec {
   subverbs?: Readonly<Record<string, SubverbSpec>>
   /** Refuse the bare form and print help instead, for a verb that is only a namespace. */
   needsSubverb?: true
+  /** Behavior no flag description covers, printed after the flag block. */
+  notes?: readonly string[]
 }
+
+const WRITE_NOTES = [
+  'Pass --global or --project to say where the write lands. Both, or neither, is an error.',
+  'A --project write goes to the nearest .gamecrate file, and never creates one.',
+  'It exits 3 when no .gamecrate file is in scope.',
+  'It also exits 3 when that file has no top-level game:, or when its game: names another game.',
+  'A write edits the file as text, so your comments and key order survive.',
+] as const
 
 export const RUN_FLAGS = [
   '--mod',
@@ -90,6 +102,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     usage: '[profile]',
     positionals: ['profile'],
     flags: RUN_FLAGS,
+    notes: ['A profile belongs to one game, so the profile alone names it.'],
   },
   {
     name: 'list',
@@ -111,21 +124,30 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
         usage: '<source>',
         positionals: [],
         flags: [
-          '--path', '--workshop', '--git', '--branch', '--tag', '--commit', '--subdir',
+          '--path', '--workshop', '--git', '--release', '--asset',
+          '--branch', '--tag', '--commit', '--subdir',
           '--global', '--project', '--force',
         ],
+        notes: WRITE_NOTES,
       },
       rm: {
         summary: 'Remove mod sources from the library by id',
         usage: '<id>...',
         positionals: ['rest'],
         flags: ['--global', '--project'],
+        notes: WRITE_NOTES,
       },
       sync: {
-        summary: 'Refetch each git and workshop source',
+        summary: 'Fetch each git, release, and workshop source again',
         usage: '[id]...',
         positionals: ['rest'],
         flags: [],
+        notes: [
+          "It works on one game when --game, the nearest .gamecrate file's game:, or a config with one game says which.",
+          'It works on every game in the config when none of those three says which.',
+          'It reaches every git, release, and workshop pin it finds when you name no ids.',
+          'A launch refreshes the workshop items a profile names on its own, so those need no sync.',
+        ],
       },
     },
     flags: ['--mod', '--without', '--only', '--sort'],
@@ -149,7 +171,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'doctor',
     group: 'maintain',
-    summary: 'Check docker, logins, game folders and permissions',
+    summary: 'Check docker, logins, game folders, and permissions',
     usage: '',
     positionals: [],
     flags: [],
@@ -157,7 +179,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'clean',
     group: 'maintain',
-    summary: "Delete a profile's staged mods, logs, saves or downloads",
+    summary: "Delete a profile's staged mods, logs, saves, or downloads",
     usage: '[profile]',
     positionals: ['profile'],
     flags: ['--staging', '--logs', '--all', '--downloads', '--yes', '--instance', '--worktree', '--no-worktree'],
@@ -197,7 +219,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
   {
     name: 'ps',
     group: 'launch',
-    summary: 'List the runs going now, with their profile and uptime',
+    summary: 'List the runs going now with their profile and uptime',
     usage: '',
     positionals: [],
     flags: [],
@@ -232,7 +254,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
         positionals: [],
         flags: [
           '--variant', '--beta', '--alias', '--image', '--plugin',
-          '--load', '--push', '--base', '--platform', '--force', '--plain',
+          '--no-load', '--push', '--base', '--platform', '--force', '--plain',
         ],
       },
       login: {
@@ -362,7 +384,7 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--worktree': (cmd) => cmd.option( '--worktree <path>', 'Load mods from this git checkout, in its own instance ($GAMECRATE_WORKTREE)', collect, []),
   '--use': (cmd) => cmd.option('--use <packageId>=<path>', 'Load this one mod from this directory, whatever the profile says', collect, []),
   '--no-worktree': (cmd) => cmd.option('--no-worktree', 'Ignore the current git checkout and $GAMECRATE_WORKTREE'),
-  '--instance': (cmd) => cmd.option('--instance <name>', 'Run a second named copy with its own saves, logs and container'),
+  '--instance': (cmd) => cmd.option('--instance <name>', 'Run a second named copy with its own saves, logs, and container'),
   '--mode': (cmd) => cmd.addOption(enumOption(`--mode <${MODES.join('|')}>`, 'Show a game window, hide it, or take one screenshot', MODES)),
   '--marker': (cmd) => cmd.option('--marker <str>', 'Exit 0 as soon as this text appears in the game log'),
   '--timeout': (cmd) => cmd.option('--timeout <seconds>', 'Stop a marker or headless run after this many seconds', (v) => seconds('--timeout', v)),
@@ -397,6 +419,8 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--path': (cmd) => cmd.option('--path <dir>', 'Take the mod from this directory'),
   '--workshop': (cmd) => cmd.option('--workshop <id>', 'Take the mod from this Steam Workshop item', workshopId),
   '--git': (cmd) => cmd.option('--git <url>', 'Clone the mod from this git repository'),
+  '--release': (cmd) => cmd.option('--release <owner/repo>', "Download the mod from this GitHub repository's releases"),
+  '--asset': (cmd) => cmd.option('--asset <glob>', 'Which release asset to unpack, like *.zip'),
   '--branch': (cmd) => cmd.option('--branch <name>', 'Follow this git branch'),
   '--tag': (cmd) => cmd.option('--tag <name>', 'Pin to this git tag'),
   '--commit': (cmd) => cmd.option('--commit <sha>', 'Pin to this git commit'),
@@ -409,12 +433,13 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--alias': (cmd) => cmd.option('--alias <tag>', 'One more moving tag to put on each branch built', collect, []),
   '--plugin': (cmd) => cmd.option('--plugin <spec>', 'Name the plugin package to use', collect, []),
   '--image': (cmd) => cmd.option('--image <ref>', 'The image to launch, or the repository a steam build tags'),
-  '--load': (cmd) => cmd.option('--load', 'Load the built image into the local docker daemon'),
+  '--no-load': (cmd) =>
+    cmd.option('--no-load', 'Skip the docker daemon and keep no local image. Use it on a CI runner with --push'),
   '--push': (cmd) => cmd.option('--push', 'Push the built image to a registry'),
   '--base': (cmd) => cmd.option('--base <ref>', 'Build on this runtime base instead of the published one'),
   '--platform': (cmd) => cmd.option('--platform <os/arch>', 'The os and arch the built manifest claims', 'linux/amd64'),
   '--print': (cmd) => cmd.option('--print', 'Also print the session as base64'),
-  '--username': (cmd) => cmd.option('--username <name>', 'Use this account name and skip the prompt'),
+  '--username': (cmd) => cmd.option('--username <name>', 'Use this username and skip the prompt'),
   '--help': (cmd) => cmd.option('-h, --help', 'Show this help'),
 }
 
@@ -1063,10 +1088,14 @@ function workshopId(value: string): number {
 
 const REF_FLAGS = ['branch', 'tag', 'commit'] as const
 
+const RELEASE_REPO = /^[\w.-]+\/[\w.-]+$/
+
 function modSource(values: Values): NonNullable<ParsedArgs['source']> {
   const path = values['path'] as string | undefined
   const workshop = values['workshop'] as number | undefined
   const url = values['git'] as string | undefined
+  const repo = values['release'] as string | undefined
+  const asset = values['asset'] as string | undefined
   const subdir = values['subdir'] as string | undefined
   const refs = REF_FLAGS.filter((name) => values[name] !== undefined)
 
@@ -1074,25 +1103,46 @@ function modSource(values: Values): NonNullable<ParsedArgs['source']> {
     ['--path', path],
     ['--workshop', workshop],
     ['--git', url],
+    ['--release', repo],
   ].filter(([, value]) => value !== undefined).map(([flag]) => flag as string)
-  if (kinds.length === 0) throw usage('mods add needs one of --path, --workshop or --git')
+  if (kinds.length === 0) throw usage('mods add needs one of --path, --workshop, --git or --release')
   if (kinds.length > 1) throw usage(`${kinds[0]} and ${kinds[1]} contradict: a source has one kind`)
 
-  if (url === undefined) {
+  if (url === undefined && repo === undefined) {
     let stray: string | undefined
     if (refs[0] !== undefined) stray = `--${refs[0]}`
     else if (subdir !== undefined) stray = '--subdir'
-    if (stray !== undefined) throw usage(`${stray} only applies to a --git source`)
+    if (stray !== undefined) throw usage(`${stray} only applies to a --git or --release source`)
   }
+  if (repo === undefined && asset !== undefined) throw usage('--asset only applies to a --release source')
   if (refs.length > 1) throw usage(`--${refs[0]} and --${refs[1]} contradict: a git source has one ref`)
   if (subdir !== undefined) checkSubdir(subdir)
 
   if (path !== undefined) return { kind: 'path', value: path }
   if (workshop !== undefined) return { kind: 'workshop', value: workshop }
+  if (repo !== undefined) return releaseSource(repo, asset, subdir, refs, values)
 
   const source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'git' }> = { kind: 'git', url: url! }
   const ref = refs[0]
   if (ref !== undefined) source.ref = { kind: ref, value: values[ref] as string }
+  if (subdir !== undefined) source.subdir = subdir
+  return source
+}
+
+function releaseSource(
+  repo: string,
+  asset: string | undefined,
+  subdir: string | undefined,
+  refs: readonly (typeof REF_FLAGS)[number][],
+  values: Values,
+): Extract<NonNullable<ParsedArgs['source']>, { kind: 'release' }> {
+  if (!RELEASE_REPO.test(repo)) throw usage(`--release takes an owner/repo, got ${repo}`)
+  const stray = refs.find((name) => name !== 'tag')
+  if (stray !== undefined) throw usage(`--${stray} only applies to a --git source; pin a release with --tag`)
+  const source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'release' }> = { kind: 'release', repo }
+  const tag = values['tag'] as string | undefined
+  if (tag !== undefined) source.tag = tag
+  if (asset !== undefined) source.asset = asset
   if (subdir !== undefined) source.subdir = subdir
   return source
 }

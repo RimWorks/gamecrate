@@ -507,7 +507,7 @@ function gameWith(library: GameConfig['library'], profiles: Record<string, Profi
     dataDir: { container: '/data', mode: 'arg', arg: '-savedatafolder=/data' },
     modsDir: { container: '/game/Mods' },
     logFile: { mode: 'arg', arg: '-logfile' },
-    image: { ref: 'atlas-build:latest', acquire: 'build' },
+    image: { ref: 'atlas-build:latest' },
     executable: './AtlasLinux',
     steamAppId: 294100,
     workshopRoot: null,

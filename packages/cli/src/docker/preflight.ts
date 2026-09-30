@@ -14,7 +14,6 @@ const CDI_SPEC = '/etc/cdi/nvidia.yaml'
 /** Every check the launch depends on, collected so one run reports all of them at once. */
 export async function preflight(plan: LaunchPlan, asShell = false): Promise<Problem[]> {
   const problems: Problem[] = []
-  const game = plan.gameConfig
 
   const dockerOk = await checkDocker(problems)
   if (dockerOk) {
@@ -25,13 +24,6 @@ export async function preflight(plan: LaunchPlan, asShell = false): Promise<Prob
   checkGameDir(plan, problems)
   checkBindSources(plan, problems)
   if (plan.mode === 'headed') checkDisplay(plan, problems)
-
-  if (game.gameFiles.source === 'image' && game.image.acquire === 'build' && !game.image.context) {
-    problems.push({
-      where: `/games/${plan.game}/image/context`,
-      message: 'image.acquire is "build" but no build context is configured',
-    })
-  }
 
   return problems
 }
@@ -106,7 +98,7 @@ async function checkAbsentImage(
     return
   }
 
-  if (image.acquire === 'build') {
+  if (image.context !== undefined) {
     problems.push({
       where,
       message: `image ${image.ref} is not present locally`,

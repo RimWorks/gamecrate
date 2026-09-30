@@ -127,9 +127,10 @@ export function repoOf(ref: string): string {
  */
 export function withImageOverride(game: GameConfig, ref?: string): GameConfig {
   if (ref === undefined) return game
+  const { context: _built, ...image } = game.image
   return {
     ...game,
-    image: { ...game.image, ref, acquire: 'pull' },
+    image: { ...image, ref },
     gameFiles: { ...game.gameFiles, source: 'image' },
   }
 }

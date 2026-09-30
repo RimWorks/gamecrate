@@ -37,10 +37,9 @@ export function versionPrefixes(version: string): string[] {
   return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('.'))
 }
 
-/** Every tag this cell writes. Versioned forms first, latest forms after. */
 /**
- * Every tag this cell writes, versioned forms first. A null version leaves only the moving
- * forms, so the first entry is this cell's own `latest`.
+ * Every tag this cell writes, versioned forms first, aliases last. A null version leaves only
+ * the moving forms, so the first entry is this cell's own `latest`.
  */
 export function tagsFor(input: TagInput): string[] {
   const scope = input.defaultBranch ? '' : `-${input.branch}`

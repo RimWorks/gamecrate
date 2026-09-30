@@ -54,10 +54,10 @@ describe('applyDefaultImage', () => {
 
   test('a mounted install gets the published linux runtime', () => {
     const out = applyDefaultImage(game({ gameFiles: { source: 'mount', host: '/games/atlas' } })) as {
-      games: { atlas: { image: { ref: string; acquire: string } } }
+      games: { atlas: { image: { ref: string; context?: string } } }
     }
     expect(out.games.atlas.image.ref).toBe(RUNTIME_BASE.linux)
-    expect(out.games.atlas.image.acquire).toBe('pull')
+    expect(out.games.atlas.image.context).toBeUndefined()
   })
 
   test('an image that carries the game gets no default, since no ref can stand in', () => {
@@ -69,7 +69,7 @@ describe('applyDefaultImage', () => {
 
   test('a ref already written is left alone', () => {
     const out = applyDefaultImage(
-      game({ gameFiles: { source: 'mount', host: '/x' }, image: { ref: 'mine:1', acquire: 'pull' } }),
+      game({ gameFiles: { source: 'mount', host: '/x' }, image: { ref: 'mine:1' } }),
     ) as { games: { atlas: { image: { ref: string } } } }
     expect(out.games.atlas.image.ref).toBe('mine:1')
   })

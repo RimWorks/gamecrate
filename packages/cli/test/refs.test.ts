@@ -10,7 +10,7 @@ import type { GameConfig } from '../src/types'
 function config(managed?: string[]): GameConfig {
   return {
     gameFiles: { source: 'image', container: '/game' },
-    image: { ref: 'ghcr.io/me/atlas:1.6', acquire: 'pull' },
+    image: { ref: 'ghcr.io/me/atlas:1.6' },
     managed,
   } as unknown as GameConfig
 }

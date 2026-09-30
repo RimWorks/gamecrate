@@ -550,7 +550,7 @@ describe('official mods from an image', () => {
   const fromImage: GameConfig = {
     ...(FIXTURE_DEFAULTS as GameConfig),
     gameFiles: { source: 'image', container: '/game' },
-    image: { ref: 'ghcr.io/me/atlas:1', acquire: 'pull' },
+    image: { ref: 'ghcr.io/me/atlas:1' },
     core: 'test.core',
   }
 

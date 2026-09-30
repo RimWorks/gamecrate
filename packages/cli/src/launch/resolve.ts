@@ -74,7 +74,7 @@ function refFor(
   const pin = libraryPin(game, object.id)
   if (pin?.path !== undefined) return `path:${pin.path}`
   if (pin?.workshop !== undefined) return `workshop:${pin.workshop}`
-  if (pin?.git !== undefined) {
+  if (pin?.git !== undefined || pin?.release !== undefined) {
     const dir = sources.get(object.id.toLowerCase())
     if (dir !== undefined) return `path:${pin.subdir === undefined ? dir : join(dir, pin.subdir)}`
   }

@@ -2,14 +2,17 @@
 set -e
 
 echo "pre-push: lint"
-npm run lint
+bun run lint
 
 echo "pre-push: typecheck"
-npm run build --silent
-npm run typecheck
+bun run --silent build
+bun run typecheck
+
+echo "pre-push: docs"
+bun run docs:check
 
 echo "pre-push: test"
-npm test
+bun test --parallel
 
 if command -v vale >/dev/null 2>&1; then
   if [ -d Styles/Google ]; then

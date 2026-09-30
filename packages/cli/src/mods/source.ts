@@ -9,11 +9,16 @@ import { globToRegExp, resolveProfile } from '../config/load'
 import { isRunning } from '../launch/prepare'
 import { Exit, GamecrateError, own } from '../types'
 import type { GameConfig, LibraryEntry, ModEntry, ParsedArgs, ProfileConfig } from '../types'
+import { installRelease, parseRepo, readRelease } from './release'
+import type { ReleasePin } from './release'
 import { ago } from './staleness'
 
 export type GitRef = { kind: 'branch' | 'tag' | 'commit'; value: string }
 
 const SLUG_LIMIT = 24
+
+/** The directory-name prefix that tells the index an extraction is not a checkout. */
+export const RELEASE_PREFIX = 'release-'
 
 /**
  * A library pin by id, case-blind. Exact then lowercase covers every normal config without a
@@ -53,6 +58,78 @@ export function cloneDir(dataRoot: string, url: string, ref: GitRef): string {
   const normal = normalizeUrl(url)
   const name = `${slug(lastSegment(normal))}-${hash(normal, 12)}`
   return join(sourcesRoot(dataRoot), name, `${ref.kind}-${slug(ref.value)}-${hash(ref.value, 6)}`)
+}
+
+export function releaseDir(dataRoot: string, repo: string, tag: string): string {
+  const normal = parseRepo(repo)
+  const name = `${slug(lastSegment(normal))}-${hash(normal, 12)}`
+  return join(sourcesRoot(dataRoot), name, `${RELEASE_PREFIX}${slug(tag)}-${hash(tag, 6)}`)
+}
+
+export function releasePinOf(entry: LibraryEntry): ReleasePin | undefined {
+  if (entry.release === undefined) return undefined
+  return {
+    repo: entry.release,
+    ...(entry.tag === undefined ? {} : { tag: entry.tag }),
+    ...(entry.asset === undefined ? {} : { asset: entry.asset }),
+  }
+}
+
+/**
+ * The extraction an unpinned `release` left behind, when there is exactly one. Ambiguous means
+ * no answer, so a command that may not reach the network says "not fetched" instead of guessing.
+ */
+export function soleReleaseDir(dataRoot: string, repo: string): string | undefined {
+  const at = dirname(releaseDir(dataRoot, repo, 'x'))
+  let names: string[]
+  try {
+    names = readdirSync(at, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(RELEASE_PREFIX))
+      .map((entry) => entry.name)
+  } catch {
+    return undefined
+  }
+  return names.length === 1 ? join(at, names[0]!) : undefined
+}
+
+/**
+ * A pinned tag never moves, so its extraction is reused untouched. Unpinned asks github which
+ * release is latest, which is what makes a new release refetch. `force` re-downloads either way.
+ */
+export async function ensureRelease(
+  dataRoot: string,
+  pin: ReleasePin,
+  mode: SyncMode,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SyncResult> {
+  if (pin.tag !== undefined) {
+    const dir = releaseDir(dataRoot, pin.repo, pin.tag)
+    if (existsSync(dir) && mode !== 'force') return { dir }
+    if (mode === 'use') {
+      throw new GamecrateError(
+        `no extraction of ${pin.repo} ${pin.tag} on disk`,
+        Exit.Resolution,
+        'fetch it with: gamecrate mods sync',
+      )
+    }
+    await installRelease(pin, await readRelease(pin, fetchImpl), dir, fetchImpl)
+    return { dir }
+  }
+
+  if (mode === 'use') {
+    const found = soleReleaseDir(dataRoot, pin.repo)
+    if (found !== undefined) return { dir: found }
+    throw new GamecrateError(
+      `no extraction of ${pin.repo} on disk`,
+      Exit.Resolution,
+      'fetch it with: gamecrate mods sync',
+    )
+  }
+  const release = await readRelease(pin, fetchImpl)
+  const dir = releaseDir(dataRoot, pin.repo, release.tag)
+  if (existsSync(dir) && mode !== 'force') return { dir }
+  await installRelease(pin, release, dir, fetchImpl)
+  return { dir }
 }
 
 function lastSegment(url: string): string {
@@ -254,6 +331,10 @@ function pinnableIds(game: GameConfig, profile: ProfileConfig, args: Partial<Par
   return out
 }
 
+function releaseCacheDir(dataRoot: string, pin: ReleasePin): string | undefined {
+  return pin.tag === undefined ? soleReleaseDir(dataRoot, pin.repo) : releaseDir(dataRoot, pin.repo, pin.tag)
+}
+
 /** The map `prepareSources` builds, read off the cache alone: no lock, no clone, no network. */
 export function cachedSources(
   game: GameConfig,
@@ -266,7 +347,14 @@ export function cachedSources(
     const key = id.toLowerCase()
     if (dirs.has(key)) continue
     const pin = libraryPin(game, id)
-    if (pin?.git === undefined) continue
+    if (pin === undefined) continue
+    const released = releasePinOf(pin)
+    if (released !== undefined) {
+      const at = releaseCacheDir(dataRoot, released)
+      if (at !== undefined && existsSync(at)) dirs.set(key, at)
+      continue
+    }
+    if (pin.git === undefined) continue
     const ref = gitRefOf(pin)
     const dir = ref === undefined ? soleBranchClone(dataRoot, pin.git) : cloneDir(dataRoot, pin.git, ref)
     if (dir !== undefined && existsSync(dir)) dirs.set(key, dir)
@@ -297,6 +385,7 @@ export async function prepareSources(
   args: ParsedArgs,
   dataRoot: string,
   allowFetch: boolean,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<PreparedSources> {
   const dirs = new Map<string, string>()
   const warnings: string[] = []
@@ -307,11 +396,21 @@ export async function prepareSources(
   }
   const branches = new Map<string, GitRef>()
   const jobs = new Map<string, { pin: GitPin; ref: GitRef }>()
+  const releases = new Map<string, { pin: ReleasePin; keys: string[] }>()
   for (const id of pinnableIds(game, resolveProfile(game, profileName), args)) {
     const key = id.toLowerCase()
     if (dirs.has(key)) continue
     const pin = libraryPin(game, id)
-    if (pin?.git === undefined) continue
+    if (pin === undefined) continue
+    const released = releasePinOf(pin)
+    if (released !== undefined) {
+      const at = `${parseRepo(released.repo)}\u0000${released.tag ?? ''}\u0000${released.asset ?? ''}`
+      const job = releases.get(at)
+      if (job === undefined) releases.set(at, { pin: released, keys: [key] })
+      else job.keys.push(key)
+      continue
+    }
+    if (pin.git === undefined) continue
     let ref = gitRefOf(pin)
     if (ref === undefined) {
       const url = normalizeUrl(pin.git)
@@ -331,6 +430,18 @@ export async function prepareSources(
       const result = await ensureClone(dataRoot, job.pin, job.ref, allowFetch ? 'fetch' : 'use')
       fetched.push(result.dir)
       if (result.warning !== undefined) warnings.push(result.warning)
+    }
+    const held = new Set<string>()
+    for (const at of [...releases.keys()].sort((a, b) => Number(a > b) - Number(a < b))) {
+      const job = releases.get(at) as { pin: ReleasePin; keys: string[] }
+      const repoDir = dirname(releaseDir(dataRoot, job.pin.repo, 'x'))
+      if (!held.has(repoDir)) {
+        held.add(repoDir)
+        locks.push(await lockDir(repoDir))
+      }
+      const result = await ensureRelease(dataRoot, job.pin, allowFetch ? 'fetch' : 'use', fetchImpl)
+      fetched.push(result.dir)
+      for (const key of job.keys) dirs.set(key, result.dir)
     }
   } catch (error) {
     await release()

@@ -122,13 +122,12 @@ function subcommandHelp(sub: SubcommandSpec): string {
   if (verbs.length > 0) {
     lines.push('', `  ${NAME} help ${sub.name} <subverb> lists that subverb's own flags.`)
   }
-  if (sub.name === 'run') {
-    lines.push(
-      '',
-      '  A profile belongs to one game, so the profile alone names it.',
-    )
-  }
+  lines.push(...noteBlock(sub.notes))
   return lines.join('\n') + '\n'
+}
+
+function noteBlock(notes?: readonly string[]): string[] {
+  return notes === undefined || notes.length === 0 ? [] : ['', ...notes.map((note) => `  ${note}`)]
 }
 
 function subverbHelp(sub: SubcommandSpec, verb: string, spec: SubverbSpec): string {
@@ -137,6 +136,7 @@ function subverbHelp(sub: SubcommandSpec, verb: string, spec: SubverbSpec): stri
     '',
     `  ${spec.summary}`,
     ...flagBlock([...spec.flags, ...sub.flags, ...GLOBAL_FLAGS]),
+    ...noteBlock(spec.notes),
   ]
   return lines.join('\n') + '\n'
 }

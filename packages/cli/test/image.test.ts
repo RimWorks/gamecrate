@@ -143,7 +143,7 @@ describe('run wires the checks in before staging', () => {
 
 describe('imageFor', () => {
   const game = {
-    image: { ref: 'dsd-rimworld:latest', acquire: 'pull' as const },
+    image: { ref: 'dsd-rimworld:latest' },
     profiles: {
       plain: { mods: [] },
       pinned: { mods: [], gameVersion: '2.0' },
@@ -185,13 +185,13 @@ describe('repoOf', () => {
 
 describe('withImageOverride', () => {
   const mounted = {
-    image: { ref: 'a:1', acquire: 'build' as const, context: '/ctx' },
+    image: { ref: 'a:1', context: '/ctx' },
     gameFiles: { source: 'mount' as const, host: '/games/atlas', container: '/game' },
   } as unknown as GameConfig
 
   test('an override switches the game files to the image, so no bind shadows it', () => {
     const out = withImageOverride(mounted, 'b:2')
-    expect(out.image).toEqual({ ref: 'b:2', acquire: 'pull', context: '/ctx' })
+    expect(out.image).toEqual({ ref: 'b:2' })
     expect(out.gameFiles.source).toBe('image')
   })
 

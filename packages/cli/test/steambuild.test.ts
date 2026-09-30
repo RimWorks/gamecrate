@@ -367,7 +367,7 @@ describe('steamBuild', () => {
     expect(state.calls).not.toContain('docker load')
   })
 
-  test('--load labels the versioned tag, tags the rest off it, and never touches a registry', async () => {
+  test('a local build labels the versioned tag, tags the rest off it, and never touches a registry', async () => {
     const results = await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(byVariant(results, 'linux').status).toBe('built')
     // the tar already carries the versioned tag, so only the moving ones are tagged
@@ -420,7 +420,7 @@ describe('steamBuild', () => {
     expect(state.calls).not.toContain('docker build')
   })
 
-  test('a --load cell with no local image builds, and one with an unlabelled image builds too', async () => {
+  test('a local cell with no image builds, and one with an unlabelled image builds too', async () => {
     const load = { ...opts, push: false, load: true, onlyVariants: ['linux'] }
     expect(byVariant(await steamBuild(ONE, load), 'linux').reason).toBe('no-image')
 
@@ -470,12 +470,12 @@ describe('steamBuild', () => {
     expect(state.calls).toEqual(['creds'])
   })
 
-  test('a --load run never asks for registry credentials', async () => {
+  test('a run with no --push never asks for registry credentials', async () => {
     await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(state.calls).not.toContain('creds')
   })
 
-  test('a second --load run reads back its own labels and skips', async () => {
+  test('a second local run reads back its own labels and skips', async () => {
     const load = { ...opts, push: false, load: true, onlyVariants: ['linux'] }
     await steamBuild(ONE, load)
     state.calls.length = 0
@@ -503,7 +503,7 @@ describe('steamBuild', () => {
     )
   })
 
-  test('a reference-only skip says so under --load', async () => {
+  test('a reference-only skip says so with no --push', async () => {
     await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux-ref'] })
     expect(state.said).toEqual(['public/linux-ref  skipped, reference-only, use --push'])
   })

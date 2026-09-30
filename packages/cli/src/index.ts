@@ -65,6 +65,7 @@ import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/s
 import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
+import { releaseToken, unzipPresent } from './mods/release'
 import { downloadRoot, removeDownloads, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
 import { emit } from './channels'
 import type { SteamcmdRunner } from './mods/steamcmd'
@@ -812,11 +813,27 @@ async function doctor(config: RootConfig, plugins: Map<string, GamePlugin>): Pro
       ...problems,
       ...(await preflight(plan)),
       ...steamcmdProblems(game, gameConfig, config),
+      ...releaseProblems(game, gameConfig),
       ...(await baseDriftProblems(game, gameConfig)),
     ]
     if (!reportDoctor(game, all)) failed = true
   }
   return failed ? Exit.Environment : Exit.Ok
+}
+
+/** A release pin needs unzip on the host, so say so here instead of failing mid-launch. */
+function releaseProblems(game: string, gameConfig: GameConfig): Problem[] {
+  const pinned = Object.entries(gameConfig.library ?? {}).filter(([, entry]) => entry.release !== undefined)
+  if (pinned.length === 0) return []
+  status(`${game}: ${pinned.length} release-pinned mod(s)${releaseToken() === undefined ? ', no GITHUB_TOKEN set' : ''}`)
+  if (unzipPresent()) return []
+  return [
+    {
+      where: `/games/${game}/library`,
+      message: `${pinned.length} mod(s) come from a GitHub release, and unzip is not on PATH`,
+      suggestion: 'install unzip',
+    },
+  ]
 }
 
 async function baseDriftProblems(game: string, gameConfig: GameConfig): Promise<Problem[]> {

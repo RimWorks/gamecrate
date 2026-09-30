@@ -60,11 +60,11 @@ function repoOf(ref: string): string {
 }
 
 /**
- * `configured` is --image if given, else the config's ref. --load gets a default because a local
- * build has no registry to name; --push refuses, because a guessed path pushes to the wrong account.
+ * `configured` is --image if given, else the config's ref. --push refuses to guess a name,
+ * because a guessed path pushes to the wrong account.
  */
 export function resolveImage(
-  flags: { load: boolean; push: boolean },
+  flags: { push: boolean },
   game: string,
   configured: string | undefined,
 ): string {
@@ -134,7 +134,7 @@ export async function resolveSteamBuildInput(
   }
 
   const push = overrides.push === true
-  const image = resolveImage({ load: !push, push }, game, overrides.image ?? merged.image?.ref)
+  const image = resolveImage({ push }, game, overrides.image ?? merged.image?.ref)
 
   return {
     game,

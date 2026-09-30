@@ -31,11 +31,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test --parallel",
-    "build": "npm run build:node && npm run build:types",
+    "build": "bun run build:node && bun run build:types",
     "build:node": "bun build ./src/index.ts --target=node --outfile dist/index.js",
     "build:types": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
-    "prepack": "npm run build"
+    "prepare": "bun run build",
+    "prepack": "bun run build"
   },
   "dependencies": {
     "saxes": "^6.0.0",

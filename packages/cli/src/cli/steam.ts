@@ -81,7 +81,7 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
   steamAccount(ctx.config.dataRoot)
 
   const push = args.push === true
-  const load = args.load === true || !push
+  const load = args.load !== false
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const input = await resolveSteamBuildInput(
     game,

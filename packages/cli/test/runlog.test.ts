@@ -28,7 +28,7 @@ async function fixture(): Promise<{ dir: string; env: Record<string, string> }> 
   const defaults = {
     ...FIXTURE_DEFAULTS,
     gameFiles: { source: 'mount', host: join(dir, 'game'), container: '/game' },
-    image: { ref: 'atlas-build:latest', acquire: 'build', context: join(dir, 'docker') },
+    image: { ref: 'atlas-build:latest', context: join(dir, 'docker') },
   }
   await writeFile(
     join(pkg, 'dist', 'plugin.js'),

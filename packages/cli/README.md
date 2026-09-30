@@ -84,7 +84,6 @@ Every subcommand takes `--json`, which prints a machine-readable result instead 
 | --- | --- |
 | [Configuration](docs/configuration.md) | Write the config file, load a plugin, define profiles, or set per-repository defaults |
 | [Mod sources](docs/mod-sources.md) | Pin a mod to a directory, a git repository, or a workshop item gamecrate downloads, and learn which copy wins |
-| [The `mods` commands](docs/mods-commands.md) | Add, remove, and sync library pins from the command line |
 | [Running](docs/running.md) | Launch, run in the background, read the result, close a window, and clean up |
 | [Game images](docs/images.md) | Build a launchable image from a game you own on Steam |
 | [Reference](docs/reference.md) | Every subcommand, flag, environment variable, and exit code |

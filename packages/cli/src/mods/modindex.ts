@@ -11,6 +11,7 @@ import { GamecrateError, Exit, own } from '../types'
 import { installedItems, parseAcf } from './acf'
 import { capture } from '../docker/run'
 import { imageDigest } from '../launch/prepare'
+import { RELEASE_PREFIX } from './source'
 import { downloadRoot } from './steamcmd'
 import { contains } from './worktree'
 import type { GamePlugin } from '../plugin'
@@ -540,7 +541,9 @@ function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
   const kept = new Map<string, ModRecord>()
   const stamps = new Map<string, number>()
   for (const record of [...records].sort((a, b) => Number(a.dir > b.dir) - Number(a.dir < b.dir))) {
-    const clone = relative(sourcesDir, record.dir).split(sep).slice(0, 2).join(sep)
+    const parts = relative(sourcesDir, record.dir).split(sep)
+    const clone = parts.slice(0, 2).join(sep)
+    if (parts[1]?.startsWith(RELEASE_PREFIX) === true) record.kind = 'release'
     const at = join(sourcesDir, clone)
     let stamp = stamps.get(at)
     if (stamp === undefined) {
