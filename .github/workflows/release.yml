@@ -24,6 +24,8 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
+    env:
+      npm_config_workspaces_update: 'false'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,9 +54,9 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Install release tooling
+      - name: Install release tooling with npm, the only thing that lays out npm itself
         run: |
-          bun add --no-save \
+          npm install --no-save --ignore-scripts --no-package-lock \
             semantic-release@25.0.9 \
             @discordservers/semantic-release-monorepo@9.0.1
 
@@ -62,10 +64,10 @@ jobs:
         working-directory: packages/cli
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bunx semantic-release
+        run: npx --no-install semantic-release
 
       - name: Release @gamecrate/rimworld
         working-directory: packages/rimworld
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bunx semantic-release
+        run: npx --no-install semantic-release
