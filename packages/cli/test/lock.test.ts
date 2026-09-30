@@ -315,7 +315,7 @@ describe('exit record', () => {
 describe('stopRun', () => {
   test('a live supervisor gets a signal, not a docker stop', async () => {
     const plan = await planFor()
-    const child = spawnArgv(['sh', '-c', 'exec -a "gamecrate --supervised" sleep 30'], 'ignore')
+    const child = spawnArgv(['sleep', '30'], 'ignore')
     const record = {
       pid: child.pid!,
       container: 'gamecrate-nope-nope',
