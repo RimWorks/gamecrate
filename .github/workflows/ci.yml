@@ -49,5 +49,13 @@ jobs:
       - name: Docs are generated from the source
         run: bun run docs:check
 
+      # TODO(bun#37968): drop this step when oven-sh/bun#38008 ships
+      - name: One worker per test file
+        run: |
+          files=$(ls packages/*/test/*.test.ts | wc -l)
+          grep -Fq -- '--parallel=$(ls packages/*/test/*.test.ts | wc -l)' package.json \
+            || { echo "the test script must give each of the $files test files its own worker"; exit 1; }
+
       - name: Test
-        run: bun test --parallel
+        timeout-minutes: 10
+        run: bun run test

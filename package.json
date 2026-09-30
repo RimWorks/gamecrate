@@ -8,7 +8,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun test --parallel",
+    "test": "bun test --parallel=$(ls packages/*/test/*.test.ts | wc -l)",
     "build": "bun run --filter @gamecrate/cli build && bun run --filter @gamecrate/rimworld build",
     "docs": "bun run --filter @gamecrate/cli docs",
     "docs:check": "bun run --filter @gamecrate/cli docs:check",
@@ -16,6 +16,6 @@
   },
   "devDependencies": {
     "husky": "^9.1.7",
-    "oxlint": "1.83.0"
+    "oxlint": "1.86.0"
   }
 }
