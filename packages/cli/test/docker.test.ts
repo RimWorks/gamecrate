@@ -931,9 +931,13 @@ describe('iconProperty', () => {
 describe('exited', () => {
   test('a signal becomes 128 plus its number, the way a shell reports it', async () => {
     for (const [signal, want] of [['SIGKILL', 137], ['SIGTERM', 143], ['SIGINT', 130]] as const) {
-      const proc = spawnArgv(['sh', '-c', 'sleep 5'], ['ignore', 'pipe', 'pipe'])
-      setTimeout(() => proc.kill(signal), 30)
-      expect(await exited(proc)).toBe(want)
+      const proc = spawnArgv(['sh', '-c', 'sleep 30'], ['ignore', 'pipe', 'pipe'])
+      const untilItTakesIt = setInterval(() => proc.kill(signal), 20)
+      try {
+        expect(await exited(proc)).toBe(want)
+      } finally {
+        clearInterval(untilItTakesIt)
+      }
     }
   })
 
