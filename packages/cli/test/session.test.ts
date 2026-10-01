@@ -327,7 +327,7 @@ describe('startSession', () => {
     })
     try {
       session.setPhase('exited 1')
-      await session.waitForQuit()
+      await expect(session.waitForQuit()).resolves.toBeUndefined()
     } finally {
       session.close()
     }
@@ -337,7 +337,7 @@ describe('startSession', () => {
     const h = harness()
     try {
       h.type('q')
-      await h.session.waitForQuit()
+      await expect(h.session.waitForQuit()).resolves.toBeUndefined()
     } finally {
       h.session.close()
     }

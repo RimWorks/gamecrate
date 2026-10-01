@@ -395,6 +395,7 @@ describe('steamBuild', () => {
       branches: [{ name: 'public', executable: { linux: './RimWorld' } }],
     }
     await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorld')
   })
 
   test('a branch override for another variant leaves this one alone', async () => {
