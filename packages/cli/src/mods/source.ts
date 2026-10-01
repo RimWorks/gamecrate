@@ -390,46 +390,57 @@ function sorted(keys: Iterable<string>): string[] {
   return [...keys].sort((a, b) => Number(a > b) - Number(a < b))
 }
 
+function addReleaseJob(plan: SourcePlan, key: string, released: ReleasePin): void {
+  const at = `${parseRepo(released.repo)}\u0000${released.tag ?? ''}\u0000${released.asset ?? ''}`
+  const job = plan.releases.get(at)
+  if (job === undefined) plan.releases.set(at, { pin: released, keys: [key] })
+  else job.keys.push(key)
+}
+
+function addGitJob(
+  plan: SourcePlan,
+  branches: Map<string, GitRef>,
+  dataRoot: string,
+  key: string,
+  pin: LibraryEntry & { git: string },
+): void {
+  let ref = gitRefOf(pin)
+  if (ref === undefined) {
+    const url = normalizeUrl(pin.git)
+    ref = branches.get(url) ?? defaultBranch(pin.git)
+    branches.set(url, ref)
+  }
+  const dir = cloneDir(dataRoot, pin.git, ref)
+  plan.dirs.set(key, dir)
+  if (plan.jobs.has(dir)) return
+  plan.jobs.set(dir, { pin: { url: pin.git }, ref })
+}
+
 function planSources(
   game: GameConfig,
   profileName: string,
   args: ParsedArgs,
   dataRoot: string,
 ): SourcePlan {
-  const dirs = new Map<string, string>()
+  const plan: SourcePlan = { dirs: new Map(), jobs: new Map(), releases: new Map() }
   const branches = new Map<string, GitRef>()
-  const jobs = new Map<string, { pin: GitPin; ref: GitRef }>()
-  const releases = new Map<string, { pin: ReleasePin; keys: string[] }>()
 
   for (const id of pinnableIds(game, resolveProfile(game, profileName), args)) {
     const key = id.toLowerCase()
-    if (dirs.has(key)) continue
+    if (plan.dirs.has(key)) continue
     const pin = libraryPin(game, id)
     if (pin === undefined) continue
 
     const released = releasePinOf(pin)
     if (released !== undefined) {
-      const at = `${parseRepo(released.repo)}\u0000${released.tag ?? ''}\u0000${released.asset ?? ''}`
-      const job = releases.get(at)
-      if (job === undefined) releases.set(at, { pin: released, keys: [key] })
-      else job.keys.push(key)
+      addReleaseJob(plan, key, released)
       continue
     }
-
     if (pin.git === undefined) continue
-    let ref = gitRefOf(pin)
-    if (ref === undefined) {
-      const url = normalizeUrl(pin.git)
-      ref = branches.get(url) ?? defaultBranch(pin.git)
-      branches.set(url, ref)
-    }
-    const dir = cloneDir(dataRoot, pin.git, ref)
-    dirs.set(key, dir)
-    if (jobs.has(dir)) continue
-    jobs.set(dir, { pin: { url: pin.git }, ref })
+    addGitJob(plan, branches, dataRoot, key, { ...pin, git: pin.git })
   }
 
-  return { dirs, jobs, releases }
+  return plan
 }
 
 interface Acquired {

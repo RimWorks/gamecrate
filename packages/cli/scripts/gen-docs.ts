@@ -32,7 +32,7 @@ const NAMED = new Map<Node, string>([
 
 const code = (text: string): string => "`" + text + "`"
 
-const cell = (text: string): string => text.replaceAll('|', '\\|')
+const cell = (text: string): string => text.replaceAll('|', String.raw`\|`)
 
 function def(node: Node): Def {
   return node._zod.def
