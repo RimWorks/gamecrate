@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import type { LaunchPlan } from '../types'
 import { warn } from '../cli/output'
 
-export const CONTAINER_OPEN_FIFO = '/tmp/xdg-open.fifo'
+export const CONTAINER_OPEN_FIFO = '/run/gamecrate-open.fifo'
 
 export const OPEN_FIFO_FILE = 'xdg-open.fifo'
 export const OPEN_SHIM_FILE = 'xdg-open'

@@ -523,13 +523,13 @@ describe('buildRunSpec: devices and display', () => {
     const args = toDockerArgs(buildRunSpec(headed, [], identity))
     expect(mountFor(args, '/usr/local/bin/xdg-open')).toContain('readonly')
     expect(mountFor(args, '/usr/local/bin/xdg-open')).toContain(join(headed.runDirHost, 'xdg-open'))
-    expect(mountFor(args, '/tmp/xdg-open.fifo')).not.toContain('readonly')
+    expect(mountFor(args, '/run/gamecrate-open.fifo')).not.toContain('readonly')
   })
 
   test('an offscreen run installs no xdg-open shim', () => {
     const args = toDockerArgs(buildRunSpec(plan('atlas', atlas, {}), [], identity))
     expect(mountFor(args, '/usr/local/bin/xdg-open')).toBeUndefined()
-    expect(mountFor(args, '/tmp/xdg-open.fifo')).toBeUndefined()
+    expect(mountFor(args, '/run/gamecrate-open.fifo')).toBeUndefined()
   })
 
   test('an offscreen run reaches for no display server and names no hostname', () => {
