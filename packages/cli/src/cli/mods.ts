@@ -286,7 +286,8 @@ function describe(source: NonNullable<ParsedArgs['source']>): string {
   if (source.kind === 'workshop') return `workshop item ${source.value}`
   if (source.kind === 'release') {
     const at = source.tag === undefined ? 'the latest release' : `release ${source.tag}`
-    return `${source.repo} ${at}${source.subdir === undefined ? '' : ` (${source.subdir})`}`
+    const where = source.subdir === undefined ? '' : ` (${source.subdir})`
+    return `${source.repo} ${at}${where}`
   }
   return source.subdir === undefined ? source.url : `${source.url} (${source.subdir})`
 }

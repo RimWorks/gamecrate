@@ -165,7 +165,7 @@ interface Watched {
   decoder: TextDecoder
 }
 
-async function staleSize(path: string, startedAt: number): Promise<number> {
+function staleSize(path: string, startedAt: number): Promise<number> {
   return stat(path).then(
     (info) => (info.mtimeMs < startedAt ? info.size : 0),
     () => 0,

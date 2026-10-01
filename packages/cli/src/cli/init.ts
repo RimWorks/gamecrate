@@ -116,7 +116,7 @@ function npm(argv: string[], cwd: string): void {
   }
 }
 
-async function installPlugin(dir: string, plugin: PluginChoice): Promise<void> {
+function installPlugin(dir: string, plugin: PluginChoice): void {
   status(`installing ${plugin.name} globally`)
   npm(['install', '-g', plugin.name], dir)
 }
@@ -178,7 +178,7 @@ export async function initCommand(args: ParsedArgs): Promise<number> {
   }
 
   await mkdir(dir, { recursive: true })
-  await installPlugin(dir, plugin)
+  installPlugin(dir, plugin)
 
   if (existing !== undefined && extname(existing) !== '.yml') {
     throw new GamecrateError(

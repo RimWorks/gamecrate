@@ -30,7 +30,7 @@ const NAMED = new Map<Node, string>([
   [SCHEMAS.libraryEntry as unknown as Node, 'library entry'],
 ])
 
-const code = (text: string): string => `\`${text}\``
+const code = (text: string): string => "`" + text + "`"
 
 const cell = (text: string): string => text.replaceAll('|', '\\|')
 
@@ -190,7 +190,8 @@ function subcommands(): string {
     for (const sub of here) {
       out.push(`- ${code(shape(sub))}: ${sub.summary}`)
       for (const [verb, spec] of Object.entries(sub.subverbs ?? {})) {
-        out.push(`  - ${code(`${sub.name} ${verb} ${spec.usage}`.trim())}: ${spec.summary}`)
+        const label = `${sub.name} ${verb} ${spec.usage}`.trim()
+        out.push(`  - ${code(label)}: ${spec.summary}`)
       }
     }
     out.push('')
@@ -225,7 +226,8 @@ function what(option: Option): string {
   const summary = option.description.trim()
   const extra = note(option)
   if (extra === '') return summary
-  return `${summary.endsWith('.') ? summary : `${summary}.`} ${extra}`
+  const sentence = summary.endsWith('.') ? summary : `${summary}.`
+  return `${sentence} ${extra}`
 }
 
 function flags(): string {

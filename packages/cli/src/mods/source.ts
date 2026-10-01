@@ -348,18 +348,22 @@ export function cachedSources(
     if (dirs.has(key)) continue
     const pin = libraryPin(game, id)
     if (pin === undefined) continue
-    const released = releasePinOf(pin)
-    if (released !== undefined) {
-      const at = releaseCacheDir(dataRoot, released)
-      if (at !== undefined && existsSync(at)) dirs.set(key, at)
-      continue
-    }
-    if (pin.git === undefined) continue
-    const ref = gitRefOf(pin)
-    const dir = ref === undefined ? soleBranchClone(dataRoot, pin.git) : cloneDir(dataRoot, pin.git, ref)
-    if (dir !== undefined && existsSync(dir)) dirs.set(key, dir)
+    const dir = cachedDirOf(pin, dataRoot)
+    if (dir !== undefined) dirs.set(key, dir)
   }
   return dirs
+}
+
+function cachedDirOf(pin: LibraryEntry, dataRoot: string): string | undefined {
+  const released = releasePinOf(pin)
+  if (released !== undefined) {
+    const at = releaseCacheDir(dataRoot, released)
+    return at !== undefined && existsSync(at) ? at : undefined
+  }
+  if (pin.git === undefined) return undefined
+  const ref = gitRefOf(pin)
+  const dir = ref === undefined ? soleBranchClone(dataRoot, pin.git) : cloneDir(dataRoot, pin.git, ref)
+  return dir !== undefined && existsSync(dir) ? dir : undefined
 }
 
 function soleBranchClone(dataRoot: string, url: string): string | undefined {
@@ -375,33 +379,34 @@ function soleBranchClone(dataRoot: string, url: string): string | undefined {
   return names.length === 1 ? join(repo, names[0]!) : undefined
 }
 
-/**
- * Clones or fetches every git-pinned mod the run will ask for, before the index is built, and
- * keeps one lock per clone until the caller releases it.
- */
-export async function prepareSources(
+interface SourcePlan {
+  dirs: Map<string, string>
+  jobs: Map<string, { pin: GitPin; ref: GitRef }>
+  releases: Map<string, { pin: ReleasePin; keys: string[] }>
+}
+
+/** Locks are taken in this order, so two gamecrate processes cannot hold each other's. */
+function sorted(keys: Iterable<string>): string[] {
+  return [...keys].sort((a, b) => Number(a > b) - Number(a < b))
+}
+
+function planSources(
   game: GameConfig,
   profileName: string,
   args: ParsedArgs,
   dataRoot: string,
-  allowFetch: boolean,
-  fetchImpl: typeof fetch = fetch,
-): Promise<PreparedSources> {
+): SourcePlan {
   const dirs = new Map<string, string>()
-  const warnings: string[] = []
-  const fetched: string[] = []
-  const locks: (() => Promise<void>)[] = []
-  const release = async (): Promise<void> => {
-    for (const unlock of locks) await unlock()
-  }
   const branches = new Map<string, GitRef>()
   const jobs = new Map<string, { pin: GitPin; ref: GitRef }>()
   const releases = new Map<string, { pin: ReleasePin; keys: string[] }>()
+
   for (const id of pinnableIds(game, resolveProfile(game, profileName), args)) {
     const key = id.toLowerCase()
     if (dirs.has(key)) continue
     const pin = libraryPin(game, id)
     if (pin === undefined) continue
+
     const released = releasePinOf(pin)
     if (released !== undefined) {
       const at = `${parseRepo(released.repo)}\u0000${released.tag ?? ''}\u0000${released.asset ?? ''}`
@@ -410,6 +415,7 @@ export async function prepareSources(
       else job.keys.push(key)
       continue
     }
+
     if (pin.git === undefined) continue
     let ref = gitRefOf(pin)
     if (ref === undefined) {
@@ -423,29 +429,75 @@ export async function prepareSources(
     jobs.set(dir, { pin: { url: pin.git }, ref })
   }
 
+  return { dirs, jobs, releases }
+}
+
+interface Acquired {
+  locks: (() => Promise<void>)[]
+  fetched: string[]
+  warnings: string[]
+}
+
+async function cloneGitJobs(
+  plan: SourcePlan,
+  dataRoot: string,
+  allowFetch: boolean,
+  out: Acquired,
+): Promise<void> {
+  for (const dir of sorted(plan.jobs.keys())) {
+    const job = plan.jobs.get(dir) as { pin: GitPin; ref: GitRef }
+    out.locks.push(await lockDir(dir))
+    const result = await ensureClone(dataRoot, job.pin, job.ref, allowFetch ? 'fetch' : 'use')
+    out.fetched.push(result.dir)
+    if (result.warning !== undefined) out.warnings.push(result.warning)
+  }
+}
+
+async function fetchReleaseJobs(
+  plan: SourcePlan,
+  dataRoot: string,
+  allowFetch: boolean,
+  fetchImpl: typeof fetch,
+  out: Acquired,
+): Promise<void> {
+  const held = new Set<string>()
+  for (const at of sorted(plan.releases.keys())) {
+    const job = plan.releases.get(at) as { pin: ReleasePin; keys: string[] }
+    const repoDir = dirname(releaseDir(dataRoot, job.pin.repo, 'x'))
+    if (!held.has(repoDir)) {
+      held.add(repoDir)
+      out.locks.push(await lockDir(repoDir))
+    }
+    const result = await ensureRelease(dataRoot, job.pin, allowFetch ? 'fetch' : 'use', fetchImpl)
+    out.fetched.push(result.dir)
+    for (const key of job.keys) plan.dirs.set(key, result.dir)
+  }
+}
+
+/**
+ * Clones or fetches every git-pinned mod the run will ask for, before the index is built, and
+ * keeps one lock per clone until the caller releases it.
+ */
+export async function prepareSources(
+  game: GameConfig,
+  profileName: string,
+  args: ParsedArgs,
+  dataRoot: string,
+  allowFetch: boolean,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PreparedSources> {
+  const plan = planSources(game, profileName, args, dataRoot)
+  const out: Acquired = { locks: [], fetched: [], warnings: [] }
+  const release = async (): Promise<void> => {
+    for (const unlock of out.locks) await unlock()
+  }
+
   try {
-    for (const dir of [...jobs.keys()].sort((a, b) => Number(a > b) - Number(a < b))) {
-      const job = jobs.get(dir) as { pin: GitPin; ref: GitRef }
-      locks.push(await lockDir(dir))
-      const result = await ensureClone(dataRoot, job.pin, job.ref, allowFetch ? 'fetch' : 'use')
-      fetched.push(result.dir)
-      if (result.warning !== undefined) warnings.push(result.warning)
-    }
-    const held = new Set<string>()
-    for (const at of [...releases.keys()].sort((a, b) => Number(a > b) - Number(a < b))) {
-      const job = releases.get(at) as { pin: ReleasePin; keys: string[] }
-      const repoDir = dirname(releaseDir(dataRoot, job.pin.repo, 'x'))
-      if (!held.has(repoDir)) {
-        held.add(repoDir)
-        locks.push(await lockDir(repoDir))
-      }
-      const result = await ensureRelease(dataRoot, job.pin, allowFetch ? 'fetch' : 'use', fetchImpl)
-      fetched.push(result.dir)
-      for (const key of job.keys) dirs.set(key, result.dir)
-    }
+    await cloneGitJobs(plan, dataRoot, allowFetch, out)
+    await fetchReleaseJobs(plan, dataRoot, allowFetch, fetchImpl, out)
   } catch (error) {
     await release()
     throw error
   }
-  return { dirs, warnings, fetched, release }
+  return { dirs: plan.dirs, warnings: out.warnings, fetched: out.fetched, release }
 }

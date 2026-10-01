@@ -429,7 +429,7 @@ export async function resolvePlan(
   const plugin = requirePlugin(options.plugins, gameName)
   const index = options.index ?? (await buildIndex(gameName, game, plugin, sourcesRoot(root.dataRoot), root.dataRoot))
   await applyWorktreeRequests(index, instance.requests, game)
-  problems.push(...(await applySourceOverrides(index, args.use ?? [], game)))
+  problems.push(...applySourceOverrides(index, args.use ?? [], game))
 
   const { staged, present } = stageSlots({
     game, gameName, profileName, profile, args, index, sources, unfetched, problems, warnings,

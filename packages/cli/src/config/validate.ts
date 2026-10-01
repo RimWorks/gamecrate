@@ -216,42 +216,60 @@ const libraryEntry = obj({
   commit: str.describe('The commit to check out. Needs `git`.').optional(),
   subdir: str.describe('The mod directory inside the repo. Relative, with no `..` segment.').optional(),
 }).check((ctx) => {
-  const v = ctx.value
-  const push = (message: string, path?: string[]): void => {
+  const v = ctx.value as Bag
+  const push: Push = (message, path) => {
     ctx.issues.push({ code: 'custom', message, input: v, ...(path === undefined ? {} : { path }) })
   }
 
+  checkOneSource(v, push)
+  checkReleasePin(v, push)
+  checkGitOnlyKeys(v, push)
+  checkSubdir(v, push)
+})
+
+type Push = (message: string, path?: string[]) => void
+
+function refKeys(v: Bag): string[] {
+  return (['branch', 'tag', 'commit'] as const).filter((k) => v[k] !== undefined)
+}
+
+function checkOneSource(v: Bag, push: Push): void {
   const sources = (['workshop', 'path', 'git', 'release'] as const).filter((k) => v[k] !== undefined)
   if (sources.length === 0) {
     push('library entry needs a "workshop" id, a "path", a "git" url, or a "release" repository')
   }
   if (sources.length > 1) push(`library entry takes only one of ${sources.join(', ')}`)
 
-  const refs = (['branch', 'tag', 'commit'] as const).filter((k) => v[k] !== undefined)
+  const refs = refKeys(v)
   if (refs.length > 1) push(`library entry takes only one of branch, tag or commit, got ${refs.join(', ')}`)
+}
 
+function checkReleasePin(v: Bag, push: Push): void {
   const release = v['release']
   if (typeof release === 'string' && !RELEASE_REPO.test(release)) {
     push(`"${release}" is not a GitHub repository; write it as owner/repo`, ['release'])
   }
   if (release !== undefined) {
-    for (const key of refs.filter((name) => name !== 'tag')) {
+    for (const key of refKeys(v).filter((name) => name !== 'tag')) {
       push(`"${key}" needs a "git" url; a "release" is pinned by "tag"`, [key])
     }
   }
   if (v['asset'] !== undefined && release === undefined) push('"asset" needs a "release" repository', ['asset'])
+}
 
-  if (v['git'] === undefined && release === undefined) {
-    for (const key of [...refs, ...(v['subdir'] === undefined ? [] : ['subdir'])]) {
-      push(`"${key}" needs a "git" url or a "release" repository`, [key])
-    }
+function checkGitOnlyKeys(v: Bag, push: Push): void {
+  if (v['git'] !== undefined || v['release'] !== undefined) return
+  for (const key of [...refKeys(v), ...(v['subdir'] === undefined ? [] : ['subdir'])]) {
+    push(`"${key}" needs a "git" url or a "release" repository`, [key])
   }
+}
 
+function checkSubdir(v: Bag, push: Push): void {
   const subdir = v['subdir']
   if (typeof subdir === 'string' && (subdir.startsWith('/') || subdir.split('/').includes('..'))) {
     push('"subdir" must be a relative path inside the repo, with no ".." segment', ['subdir'])
   }
-})
+}
 
 function repeats(entries: unknown[], key: string): { index: number; name: string }[] {
   const seen = new Set<string>()

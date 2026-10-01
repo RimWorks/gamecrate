@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { open, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -346,9 +347,22 @@ export async function replacePrevious(plan: LaunchPlan): Promise<void> {
   }
 }
 
-// TODO(clktck): node has no sysconf(_SC_CLK_TCK); shell out to getconf CLK_TCK if a machine disagrees
-const CLOCK_TICKS_PER_SECOND = 100
+const DEFAULT_CLOCK_TICKS = 100
 const START_TIME_SLACK_MS = 2000
+
+let clockTicks: number | undefined
+
+/** Node exposes no sysconf(_SC_CLK_TCK), and /proc/<pid>/stat field 22 is denominated in it. */
+function clockTicksPerSecond(): number {
+  if (clockTicks !== undefined) return clockTicks
+  try {
+    const ticks = Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim())
+    clockTicks = Number.isFinite(ticks) && ticks > 0 ? ticks : DEFAULT_CLOCK_TICKS
+  } catch {
+    clockTicks = DEFAULT_CLOCK_TICKS
+  }
+  return clockTicks
+}
 
 /**
  * A pid alone is not proof. Detach leaves a long-lived process per run, so a recycled number
@@ -376,7 +390,7 @@ function processStart(pid: number): number | undefined {
     const ticks = Number(fields[19])
     const boot = bootTime()
     if (!Number.isFinite(ticks) || boot === undefined) return undefined
-    return boot + (ticks / CLOCK_TICKS_PER_SECOND) * 1000
+    return boot + (ticks / clockTicksPerSecond()) * 1000
   } catch {
     return undefined
   }

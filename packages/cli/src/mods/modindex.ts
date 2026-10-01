@@ -376,11 +376,11 @@ const WORKTREE_EXCLUDE = ['**/.retired/**', '**/node_modules/**', '**/bin/**', '
  * Forces one packageId to come from a named directory, whatever the profile pinned. This is the
  * only override that reaches a mod already in preCore/core/dlc/base.
  */
-export async function applySourceOverrides(
+export function applySourceOverrides(
   index: ModIndex,
   overrides: string[],
   config: GameConfig,
-): Promise<Problem[]> {
+): Problem[] {
   const problems: Problem[] = []
   if (overrides.length === 0) return problems
 

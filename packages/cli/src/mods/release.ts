@@ -170,7 +170,7 @@ export async function downloadAsset(
 const WINDOWS_ABSOLUTE = /^([a-zA-Z]:|\\)/
 
 function escapes(entry: string): boolean {
-  const name = entry.replace(/\\/g, '/')
+  const name = entry.replaceAll('\\', '/')
   if (name.startsWith('/') || WINDOWS_ABSOLUTE.test(entry)) return true
   return name.split('/').includes('..')
 }

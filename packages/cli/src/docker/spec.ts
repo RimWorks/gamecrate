@@ -219,13 +219,10 @@ function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPl
 
 function addLinkOpener(mounts: Mount[], plan: LaunchPlan): void {
   const runDir = hostPath(plan.runDirHost)
-  mounts.push({
-    type: 'bind',
-    source: join(runDir, OPEN_SHIM_FILE),
-    target: CONTAINER_XDG_OPEN,
-    readonly: true,
-  })
-  mounts.push({ type: 'bind', source: join(runDir, OPEN_FIFO_FILE), target: CONTAINER_OPEN_FIFO })
+  mounts.push(
+    { type: 'bind', source: join(runDir, OPEN_SHIM_FILE), target: CONTAINER_XDG_OPEN, readonly: true },
+    { type: 'bind', source: join(runDir, OPEN_FIFO_FILE), target: CONTAINER_OPEN_FIFO },
+  )
 }
 
 function addX11(mounts: Mount[], env: Record<string, string>): void {

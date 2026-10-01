@@ -1090,42 +1090,69 @@ const REF_FLAGS = ['branch', 'tag', 'commit'] as const
 
 const RELEASE_REPO = /^[\w.-]+\/[\w.-]+$/
 
-function modSource(values: Values): NonNullable<ParsedArgs['source']> {
-  const path = values['path'] as string | undefined
-  const workshop = values['workshop'] as number | undefined
-  const url = values['git'] as string | undefined
-  const repo = values['release'] as string | undefined
-  const asset = values['asset'] as string | undefined
-  const subdir = values['subdir'] as string | undefined
-  const refs = REF_FLAGS.filter((name) => values[name] !== undefined)
+interface SourceFlags {
+  path: string | undefined
+  workshop: number | undefined
+  url: string | undefined
+  repo: string | undefined
+  asset: string | undefined
+  subdir: string | undefined
+  refs: (typeof REF_FLAGS)[number][]
+}
 
+function sourceFlags(values: Values): SourceFlags {
+  return {
+    path: values['path'] as string | undefined,
+    workshop: values['workshop'] as number | undefined,
+    url: values['git'] as string | undefined,
+    repo: values['release'] as string | undefined,
+    asset: values['asset'] as string | undefined,
+    subdir: values['subdir'] as string | undefined,
+    refs: REF_FLAGS.filter((name) => values[name] !== undefined),
+  }
+}
+
+function checkOneKind(f: SourceFlags): void {
   const kinds = [
-    ['--path', path],
-    ['--workshop', workshop],
-    ['--git', url],
-    ['--release', repo],
+    ['--path', f.path],
+    ['--workshop', f.workshop],
+    ['--git', f.url],
+    ['--release', f.repo],
   ].filter(([, value]) => value !== undefined).map(([flag]) => flag as string)
   if (kinds.length === 0) throw usage('mods add needs one of --path, --workshop, --git or --release')
   if (kinds.length > 1) throw usage(`${kinds[0]} and ${kinds[1]} contradict: a source has one kind`)
+}
 
-  if (url === undefined && repo === undefined) {
+function checkSourceFlags(f: SourceFlags): void {
+  checkOneKind(f)
+
+  if (f.url === undefined && f.repo === undefined) {
     let stray: string | undefined
-    if (refs[0] !== undefined) stray = `--${refs[0]}`
-    else if (subdir !== undefined) stray = '--subdir'
+    if (f.refs[0] !== undefined) stray = `--${f.refs[0]}`
+    else if (f.subdir !== undefined) stray = '--subdir'
     if (stray !== undefined) throw usage(`${stray} only applies to a --git or --release source`)
   }
-  if (repo === undefined && asset !== undefined) throw usage('--asset only applies to a --release source')
-  if (refs.length > 1) throw usage(`--${refs[0]} and --${refs[1]} contradict: a git source has one ref`)
-  if (subdir !== undefined) checkSubdir(subdir)
+  if (f.repo === undefined && f.asset !== undefined) {
+    throw usage('--asset only applies to a --release source')
+  }
+  if (f.refs.length > 1) {
+    throw usage(`--${f.refs[0]} and --${f.refs[1]} contradict: a git source has one ref`)
+  }
+  if (f.subdir !== undefined) checkSubdir(f.subdir)
+}
 
-  if (path !== undefined) return { kind: 'path', value: path }
-  if (workshop !== undefined) return { kind: 'workshop', value: workshop }
-  if (repo !== undefined) return releaseSource(repo, asset, subdir, refs, values)
+function modSource(values: Values): NonNullable<ParsedArgs['source']> {
+  const f = sourceFlags(values)
+  checkSourceFlags(f)
 
-  const source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'git' }> = { kind: 'git', url: url! }
-  const ref = refs[0]
+  if (f.path !== undefined) return { kind: 'path', value: f.path }
+  if (f.workshop !== undefined) return { kind: 'workshop', value: f.workshop }
+  if (f.repo !== undefined) return releaseSource(f.repo, f.asset, f.subdir, f.refs, values)
+
+  const source: Extract<NonNullable<ParsedArgs['source']>, { kind: 'git' }> = { kind: 'git', url: f.url! }
+  const ref = f.refs[0]
   if (ref !== undefined) source.ref = { kind: ref, value: values[ref] as string }
-  if (subdir !== undefined) source.subdir = subdir
+  if (f.subdir !== undefined) source.subdir = f.subdir
   return source
 }
 
