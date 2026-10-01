@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mapLimit } from '../concurrency'
 import { dirname, join, relative, resolve } from 'node:path'
 
 import { expandHome, findGlobalConfig, findProjectConfig, globalConfigDir } from '../config/load'
@@ -218,7 +219,10 @@ function collectPins(
 
 async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
   const branches = new Map<string, GitRef>()
+  const resolved: { pin: GitPin; ref: GitRef; dir: string }[] = []
   const fetched = new Set<string>()
+  const jobs: { pin: GitPin; ref: GitRef; dir: string }[] = []
+
   for (const pin of wanted) {
     let ref = gitRefOf(pin.entry)
     if (ref === undefined) {
@@ -227,12 +231,14 @@ async function syncGit(ctx: ModsContext, wanted: GitPin[]): Promise<void> {
       branches.set(url, ref)
     }
     const dir = cloneDir(ctx.config.dataRoot, pin.git, ref)
-    if (!fetched.has(dir)) {
-      fetched.add(dir)
-      await fetchClone(ctx, pin, ref, dir)
-    }
-    status(`synced ${pin.id} at ${ref.kind} ${ref.value}`)
+    resolved.push({ pin, ref, dir })
+    if (fetched.has(dir)) continue
+    fetched.add(dir)
+    jobs.push({ pin, ref, dir })
   }
+
+  await mapLimit(jobs, ({ pin, ref, dir }) => fetchClone(ctx, pin, ref, dir))
+  for (const { pin, ref } of resolved) status(`synced ${pin.id} at ${ref.kind} ${ref.value}`)
 }
 
 async function fetchClone(ctx: ModsContext, pin: GitPin, ref: GitRef, dir: string): Promise<void> {

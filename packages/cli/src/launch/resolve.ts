@@ -8,6 +8,7 @@ import { decideStale, scanBuildTimes, staleReport } from '../mods/staleness'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import { requirePlugin } from '../plugin'
 import type { GamePlugin } from '../plugin'
+import { mapLimit } from '../concurrency'
 import { resolveInstance } from './instance'
 import type {
   DynamicModEntry,
@@ -348,19 +349,16 @@ async function describeMod(
   { record, explicit }: Staged,
   game: GameConfig,
   index: ModIndex,
-  warnings: string[],
-): Promise<ResolvedMod> {
+): Promise<{ mod: ResolvedMod; warning?: string }> {
   const times = record.kind === 'local' ? await scanBuildTimes(record.dir) : null
   const report = times === null ? null : staleReport(times)
-  if (record.worktree) {
-    warnings.push(
-      `${record.packageId} comes from worktree ${record.worktree.branch} (${record.worktree.source}): ${record.dir}`,
-    )
-  }
+  const warning = record.worktree
+    ? `${record.packageId} comes from worktree ${record.worktree.branch} (${record.worktree.source}): ${record.dir}`
+    : undefined
   const shadowed = (index.byPackageId.get(record.packageId.toLowerCase()) ?? [])
     .filter((other) => other.dir !== record.dir)
     .map((other) => other.dir)
-  return {
+  const mod: ResolvedMod = {
     packageId: record.packageId,
     hostDir: record.dir,
     containerDir: `${game.modsDir.container}/${record.packageId}`,
@@ -374,6 +372,7 @@ async function describeMod(
       : { worktree: { ...record.worktree, selected: record.selectedWorktree !== undefined } }),
     ...(shadowed.length === 0 ? {} : { shadowed }),
   }
+  return warning === undefined ? { mod } : { mod, warning }
 }
 
 function checkDataDir(problems: Problem[], gameName: string, game: GameConfig): void {
@@ -442,8 +441,9 @@ export async function resolvePlan(
   const ordered = args.sort === 'none' ? staged : topoSort(staged, problems, game.core)
   warnings.push(...incompatibilityWarnings(ordered))
 
-  const mods: ResolvedMod[] = []
-  for (const entry of ordered) mods.push(await describeMod(entry, game, index, warnings))
+  const described = await mapLimit(ordered, (entry) => describeMod(entry, game, index))
+  const mods = described.map(({ mod }) => mod)
+  for (const { warning } of described) if (warning !== undefined) warnings.push(warning)
   problems.push(...index.problems)
 
   checkDataDir(problems, gameName, game)
