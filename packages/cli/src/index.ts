@@ -1387,8 +1387,12 @@ function reportFatal(error: unknown): number {
   return Exit.GameFailed
 }
 
-try {
-  process.exit(await main(process.argv.slice(2)))
-} catch (error) {
-  process.exit(reportFatal(error))
+export { main, reportFatal }
+
+if (import.meta.main) {
+  try {
+    process.exit(await main(process.argv.slice(2)))
+  } catch (error) {
+    process.exit(reportFatal(error))
+  }
 }
