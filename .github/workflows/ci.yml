@@ -4,6 +4,9 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        required: false
   workflow_dispatch:
 
 permissions:
@@ -20,6 +23,8 @@ jobs:
   check:
     name: lint, typecheck, test
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,4 +63,14 @@ jobs:
 
       - name: Test
         timeout-minutes: 10
-        run: bun run test
+        run: bun run test:coverage
+
+      - name: Sonar
+        if: env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v8
+        with:
+          args: >-
+            -Dsonar.projectKey=RimWorks_gamecrate
+            -Dsonar.organization=rimworks
+            -Dsonar.exclusions=packages/*/dist/**,packages/cli/test/fixtures/**,Styles/**
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info

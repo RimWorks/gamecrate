@@ -7,3 +7,4 @@ Styles/Google/
 
 # sonar-scanner working directory
 .scannerwork/
+coverage/

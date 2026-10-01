@@ -1,0 +1,2 @@
+[test]
+coveragePathIgnorePatterns = ["packages/*/dist/**", "packages/*/test/**", "packages/cli/scripts/**"]
