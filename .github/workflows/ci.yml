@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   prose:
-    uses: RimWorks/mod-ci/.github/workflows/prose.yml@v1.10
+    uses: RimWorks/mod-ci/.github/workflows/prose.yml@v3
 
   check:
     name: lint, typecheck, test
