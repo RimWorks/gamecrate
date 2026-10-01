@@ -30,7 +30,7 @@ describe('mapLimit', () => {
   test('visits every item exactly once', async () => {
     const seen: number[] = []
     await mapLimit(Array.from({ length: 50 }, (_, n) => n), async (n) => void seen.push(n), 7)
-    expect(seen.length).toBe(50)
+    expect(seen).toHaveLength(50)
     expect(new Set(seen).size).toBe(50)
   })
 

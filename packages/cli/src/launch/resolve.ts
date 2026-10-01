@@ -443,7 +443,7 @@ export async function resolvePlan(
 
   const described = await mapLimit(ordered, (entry) => describeMod(entry, game, index))
   const mods = described.map(({ mod }) => mod)
-  for (const { warning } of described) if (warning !== undefined) warnings.push(warning)
+  warnings.push(...described.flatMap(({ warning }) => (warning === undefined ? [] : [warning])))
   problems.push(...index.problems)
 
   checkDataDir(problems, gameName, game)
