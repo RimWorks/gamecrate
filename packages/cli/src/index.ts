@@ -32,6 +32,8 @@ import {
   resolveProfile,
 } from './config/load'
 import { resolveIdentity } from './docker/identity'
+import type { LinkOpener } from './docker/openlinks'
+import { startLinkOpener, wantsLinkOpener } from './docker/openlinks'
 import { preflight } from './docker/preflight'
 import { capture, exited, spawnArgv, runContainer, stopContainer, STOP_TIMEOUT_SECONDS, waitForMarker } from './docker/run'
 import { buildRunSpec, containerName, refuseProtonHeaded, windowIcon, windowTitle } from './docker/spec'
@@ -454,9 +456,12 @@ async function execute(inputs: ExecuteInputs): Promise<LaunchResult> {
 
   const trustExit = facts.launcher !== 'proton'
 
+  let opener: LinkOpener | undefined
   try {
+    opener = wantsLinkOpener(plan) ? startLinkOpener(runDir) : undefined
     return await dispatchRun(spec, plan, runDir, trustExit, asShell, wantsDashboard)
   } finally {
+    opener?.stop()
     await copyOutLogs(plan)
   }
 }

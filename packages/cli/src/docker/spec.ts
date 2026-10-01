@@ -11,6 +11,7 @@ import type {
 } from '../types'
 import { expandHome, resolveProfile } from '../config/load'
 import { GamecrateError, Exit } from '../types'
+import { CONTAINER_OPEN_FIFO, OPEN_FIFO_FILE, OPEN_SHIM_FILE, wantsLinkOpener } from './openlinks'
 
 /** Container-side XDG_RUNTIME_DIR. A sized tmpfs; display and audio sockets land inside it. */
 export const CONTAINER_RUNTIME_DIR = '/tmp/xdg'
@@ -23,6 +24,8 @@ const X11_SOCKET_DIR = '/tmp/.X11-unix'
 const CONTAINER_XAUTHORITY = '/tmp/xauth'
 
 const CONTAINER_XDG_DIR = '/xdg'
+
+const CONTAINER_XDG_OPEN = '/usr/local/bin/xdg-open'
 
 const RUNTIME_DIR_SIZE = '64m'
 const HOME_SIZE = '64m'
@@ -114,6 +117,7 @@ export function buildRunSpec(
 
   addScratch(mounts, env, plan, identity)
   if (headed) addSession(mounts, env, plan)
+  if (wantsLinkOpener(plan)) addLinkOpener(mounts, plan)
 
   const deviceCgroupRules: string[] = []
   if (settings.input) {
@@ -211,6 +215,17 @@ function addSession(mounts: Mount[], env: Record<string, string>, plan: LaunchPl
     mounts.push({ type: 'bind', source: socket.source, target: `${CONTAINER_RUNTIME_DIR}/${socket.name}` })
   }
   env.PULSE_SERVER = `unix:${CONTAINER_RUNTIME_DIR}/pulse/native`
+}
+
+function addLinkOpener(mounts: Mount[], plan: LaunchPlan): void {
+  const runDir = hostPath(plan.runDirHost)
+  mounts.push({
+    type: 'bind',
+    source: join(runDir, OPEN_SHIM_FILE),
+    target: CONTAINER_XDG_OPEN,
+    readonly: true,
+  })
+  mounts.push({ type: 'bind', source: join(runDir, OPEN_FIFO_FILE), target: CONTAINER_OPEN_FIFO })
 }
 
 function addX11(mounts: Mount[], env: Record<string, string>): void {

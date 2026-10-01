@@ -518,6 +518,20 @@ describe('buildRunSpec: devices and display', () => {
     }
   })
 
+  test('a headed launch binds the xdg-open shim read-only and its fifo writable', () => {
+    const headed = plan('atlas', atlas, {}, 'headed')
+    const args = toDockerArgs(buildRunSpec(headed, [], identity))
+    expect(mountFor(args, '/usr/local/bin/xdg-open')).toContain('readonly')
+    expect(mountFor(args, '/usr/local/bin/xdg-open')).toContain(join(headed.runDirHost, 'xdg-open'))
+    expect(mountFor(args, '/tmp/xdg-open.fifo')).not.toContain('readonly')
+  })
+
+  test('an offscreen run installs no xdg-open shim', () => {
+    const args = toDockerArgs(buildRunSpec(plan('atlas', atlas, {}), [], identity))
+    expect(mountFor(args, '/usr/local/bin/xdg-open')).toBeUndefined()
+    expect(mountFor(args, '/tmp/xdg-open.fifo')).toBeUndefined()
+  })
+
   test('an offscreen run reaches for no display server and names no hostname', () => {
     const spec = buildRunSpec(plan('atlas', atlas, { display: 'x11' }), [], identity)
     expect(spec.env.DISPLAY).toBeUndefined()
