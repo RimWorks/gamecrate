@@ -44,6 +44,7 @@ afterEach(() => {
   delete built.push
   delete built.load
   delete process.env.STEAM_CONFIG_VDF
+  delete process.env.STEAM_CONFIG_VDF_B64
   delete process.env.STEAM_USERNAME
 })
 
@@ -80,19 +81,68 @@ function primeSteamHome(config: RootConfig, body: string): string {
 }
 
 describe('resolveSession', () => {
-  test('STEAM_CONFIG_VDF outranks both files on disk', () => {
+  test('STEAM_CONFIG_VDF_B64 outranks both files on disk', () => {
     const { config } = tree('from-fallback')
     primeSteamHome(config, 'from-datadir')
-    const path = resolveSession(config, { STEAM_CONFIG_VDF: Buffer.from('from-env').toString('base64') })
+    const path = resolveSession(config, { STEAM_CONFIG_VDF_B64: Buffer.from('from-env').toString('base64') })
     expect(path).toBe(join(steamHome(config.dataRoot), '.steam', 'config', 'config.vdf'))
     for (const seeded of sessionPaths(steamHome(config.dataRoot))) {
       expect(readFileSync(seeded, 'utf8')).toBe('from-env')
     }
   })
 
-  test('an empty STEAM_CONFIG_VDF is not a session', () => {
+  test('STEAM_CONFIG_VDF_B64 outranks the file STEAM_CONFIG_VDF names', () => {
+    const { config, home } = tree()
+    const named = join(home, 'session.b64')
+    mkdirSync(home, { recursive: true })
+    writeFileSync(named, Buffer.from('from-file').toString('base64'))
+    const path = resolveSession(config, {
+      STEAM_CONFIG_VDF_B64: Buffer.from('from-env').toString('base64'),
+      STEAM_CONFIG_VDF: named,
+    })
+    expect(readFileSync(path, 'utf8')).toBe('from-env')
+  })
+
+  test('STEAM_CONFIG_VDF reads base64 out of the file it names', () => {
+    const { config, home } = tree('from-fallback')
+    primeSteamHome(config, 'from-datadir')
+    const named = join(home, 'session.b64')
+    writeFileSync(named, `${Buffer.from('from-file').toString('base64')}\n`)
+    const path = resolveSession(config, { STEAM_CONFIG_VDF: named })
+    expect(path).toBe(join(steamHome(config.dataRoot), '.steam', 'config', 'config.vdf'))
+    for (const seeded of sessionPaths(steamHome(config.dataRoot))) {
+      expect(readFileSync(seeded, 'utf8')).toBe('from-file')
+    }
+  })
+
+  test('STEAM_CONFIG_VDF takes a raw config.vdf as well', () => {
+    const { config, home } = tree('from-fallback')
+    const named = join(home, 'config.vdf')
+    const raw = '"InstallConfigStore"\n{\n\t"Software" {}\n}\n'
+    writeFileSync(named, raw)
+    expect(readFileSync(resolveSession(config, { STEAM_CONFIG_VDF: named }), 'utf8')).toBe(raw)
+  })
+
+  test('a STEAM_CONFIG_VDF pointing nowhere fails instead of falling back', () => {
+    const { config, home } = tree('from-fallback')
+    const missing = join(home, 'absent.vdf')
+    const error = fails(() => resolveSession(config, { STEAM_CONFIG_VDF: missing }))
+    expect(error.code).toBe(Exit.Environment)
+    expect(error.detail).toContain(missing)
+  })
+
+  test('a base64 session left in STEAM_CONFIG_VDF never reaches the error text', () => {
     const { config } = tree('from-fallback')
-    const path = resolveSession(config, { STEAM_CONFIG_VDF: '' })
+    const session = Buffer.from('"InstallConfigStore"\n{\n'.padEnd(600, ' ')).toString('base64')
+    const error = fails(() => resolveSession(config, { STEAM_CONFIG_VDF: session }))
+    expect(error.code).toBe(Exit.Environment)
+    expect(`${error.message} ${error.detail}`).not.toContain(session.slice(0, 32))
+    expect(error.detail).toContain('STEAM_CONFIG_VDF_B64')
+  })
+
+  test('an empty value in either variable is not a session', () => {
+    const { config } = tree('from-fallback')
+    const path = resolveSession(config, { STEAM_CONFIG_VDF_B64: '', STEAM_CONFIG_VDF: '' })
     expect(readFileSync(path, 'utf8')).toBe('from-fallback')
   })
 
@@ -158,7 +208,7 @@ describe('steamBuildCommand', () => {
   test('a config that names no game still builds, because the plugin is the authority', async () => {
     const { config } = tree()
     const empty = { ...config, games: {} } as unknown as RootConfig
-    process.env.STEAM_CONFIG_VDF = Buffer.from('from-env').toString('base64')
+    process.env.STEAM_CONFIG_VDF_B64 = Buffer.from('from-env').toString('base64')
     process.env.STEAM_USERNAME = 'tester'
     const ctx: SteamContext = { config: empty, plugins: new Map(), cwd: '/nowhere' }
     const reason = await steamBuildCommand({ subcommand: 'steam', subverb: 'build', game: 'rimworld' } as ParsedArgs, ctx)
@@ -167,9 +217,9 @@ describe('steamBuildCommand', () => {
     expect(reason).toBe('resolved')
   })
 
-  test('materializes STEAM_CONFIG_VDF onto disk before it builds anything', async () => {
+  test('materializes STEAM_CONFIG_VDF_B64 onto disk before it builds anything', async () => {
     const { config } = tree()
-    process.env.STEAM_CONFIG_VDF = Buffer.from('from-env').toString('base64')
+    process.env.STEAM_CONFIG_VDF_B64 = Buffer.from('from-env').toString('base64')
     process.env.STEAM_USERNAME = 'tester'
 
     expect(await build(config)).toBe(Exit.Ok)

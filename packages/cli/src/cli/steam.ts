@@ -49,15 +49,40 @@ function seedSession(home: string, body: Buffer): void {
   }
 }
 
+const BASE64_BODY = /^[A-Za-z0-9+/\s]+={0,2}\s*$/
+
+function looksLikeSession(value: string): boolean {
+  return value.length > 100 && BASE64_BODY.test(value)
+}
+
+function decodeSession(body: Buffer): Buffer {
+  const text = body.toString('utf8')
+  return BASE64_BODY.test(text) ? Buffer.from(text, 'base64') : body
+}
+
 /**
- * STEAM_CONFIG_VDF, then the file `steam login` wrote, then a hand-primed session in the user's
- * own home. An expired session reports as a missing one: from out here the two files look identical.
+ * STEAM_CONFIG_VDF_B64, then the file STEAM_CONFIG_VDF names, holding base64 or a raw config.vdf,
+ * then the file `steam login` wrote, then a session in the user's own home. Expired reads as missing.
  */
 export function resolveSession(config: RootConfig, env: Record<string, string | undefined> = process.env): string {
   const home = steamHome(config.dataRoot)
-  const raw = env['STEAM_CONFIG_VDF']
-  if (raw !== undefined && raw !== '') {
-    seedSession(home, Buffer.from(raw, 'base64'))
+  const inline = env['STEAM_CONFIG_VDF_B64']
+  if (inline !== undefined && inline !== '') {
+    seedSession(home, Buffer.from(inline, 'base64'))
+    return sessionPaths(home)[0] as string
+  }
+  const named = env['STEAM_CONFIG_VDF']
+  if (named !== undefined && named !== '') {
+    if (!existsSync(named)) {
+      throw new GamecrateError(
+        'steam session file not found',
+        Exit.Environment,
+        looksLikeSession(named)
+          ? 'STEAM_CONFIG_VDF names a file now. pass a base64 session as STEAM_CONFIG_VDF_B64 instead'
+          : `STEAM_CONFIG_VDF names ${named}, which does not exist. point it at a file, or pass the session inline as STEAM_CONFIG_VDF_B64`,
+      )
+    }
+    seedSession(home, decodeSession(readFileSync(named)))
     return sessionPaths(home)[0] as string
   }
   const mine = findSession(home)
@@ -70,7 +95,7 @@ export function resolveSession(config: RootConfig, env: Record<string, string | 
   throw new GamecrateError(
     'no steam session found',
     Exit.Environment,
-    `run gamecrate steam login, or set STEAM_CONFIG_VDF. looked under ${home} and ${homedir()}`,
+    `run gamecrate steam login, or set STEAM_CONFIG_VDF_B64 or STEAM_CONFIG_VDF. looked under ${home} and ${homedir()}`,
   )
 }
 

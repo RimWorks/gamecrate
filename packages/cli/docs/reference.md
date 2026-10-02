@@ -240,7 +240,10 @@ cache. `VISUAL` and `EDITOR` name the editor `config edit` opens.
 value is readable in the process list on a shared machine:
 
 - `STEAM_USERNAME` is the Steam account that owns the game.
-- `STEAM_CONFIG_VDF` is base64 of a logged-in `config.vdf`, for a runner with no session on disk.
+- `STEAM_CONFIG_VDF_B64` is base64 of a logged-in `config.vdf`, for a runner with no session on
+disk.
+- `STEAM_CONFIG_VDF` is the path to a file holding that session, as base64 or as a raw
+`config.vdf`. `STEAM_CONFIG_VDF_B64` outranks it.
 - `STEAM_BRANCH_PASSWORD_<BRANCH>` is the password for one private beta. The branch name goes
 uppercase, with dashes as underscores.
 - `STEAM_BRANCH_PASSWORD` is a fallback password, used only when you build a single branch.
