@@ -63,6 +63,7 @@ import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } 
 import { resolveInstance } from './launch/instance'
 import { notFetched, resolvePlan } from './launch/resolve'
 import { listRuns } from './run/registry'
+import { prune } from './run/prune'
 import { detectForeignOwnership, ensureProfileTree, stageMods } from './launch/stage'
 import { buildIndex } from './mods/modindex'
 import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
@@ -77,7 +78,7 @@ import { requirePlugin } from './plugin'
 import type { GamePlugin } from './plugin'
 import { ago, decideStale, duration, scanBuildTimes, staleReport } from './mods/staleness'
 import { resolveWorktree } from './mods/worktree'
-import { GamecrateError, Exit, NAME_PATTERN, reasonFor, STDOUT_LOG } from './types'
+import { GamecrateError, Exit, NAME_PATTERN, PRUNE_DEFAULTS, reasonFor, STDOUT_LOG } from './types'
 import type {
   BuildPolicy,
   DockerRunSpec,
@@ -181,6 +182,8 @@ async function dispatch(
       return refs(args, config, defaults)
     case 'clean':
       return clean(args, config, defaults)
+    case 'prune':
+      return pruneCommand(args, config)
     case 'clone':
       return clone(args, config)
     case 'logs':
@@ -384,7 +387,7 @@ async function launch(
     )
   }
 
-  const runDir = openRunLog(plan.logsDirHost)
+  const runDir = openRunLog(plan.logsDirHost, undefined, config.prune?.keepRuns ?? PRUNE_DEFAULTS.keepRuns)
   plan.runDirHost = runDir
   const supervisorLog =
     args.supervised && args.log === undefined ? captureOutput(join(runDir, 'supervisor.log')) : undefined
@@ -1089,6 +1092,30 @@ function renderVerify(
 function shortenHome(path: string): string {
   const home = homedir()
   return path === home || path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path
+}
+
+async function pruneCommand(args: ParsedArgs, config: RootConfig): Promise<number> {
+  const wanted = { ...PRUNE_DEFAULTS, ...config.prune }
+  const result = await prune({
+    dataRoot: config.dataRoot,
+    games: config.games,
+    keepRuns: args.keep ?? wanted.keepRuns,
+    maxAgeDays: args.olderThan ?? wanted.maxAgeDays,
+    locks: wanted.locks,
+    downloads: wanted.downloads,
+    containers: wanted.containers,
+    dryRun: args.dryRun,
+  })
+
+  if (args.json) {
+    emit('data', `${JSON.stringify({ dryRun: args.dryRun, ...result })}\n`)
+  } else {
+    const verb = args.dryRun ? 'would delete' : 'deleted'
+    for (const action of result.actions) status(`${verb} ${action.kind} ${action.target}: ${action.reason}`)
+    status(`${verb} ${result.actions.length} thing(s)`)
+    for (const error of result.errors) warn(`kept ${error.target}: ${error.message}`)
+  }
+  return result.errors.length === 0 ? Exit.Ok : Exit.Environment
 }
 
 async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {

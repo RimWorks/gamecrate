@@ -298,8 +298,26 @@ export interface RootConfig {
   buildConcurrency?: number
   /** Where the steamcmd binary is. Root level, not per game, because it names a host tool. */
   steamcmd?: { path?: string }
+  /** What `prune` deletes, and what a launch's own run rotation keeps. */
+  prune?: PruneConfig
   games: Record<string, GameConfig>
 }
+
+export interface PruneConfig {
+  keepRuns?: number
+  maxAgeDays?: number
+  locks?: boolean
+  downloads?: boolean
+  containers?: boolean
+}
+
+export const PRUNE_DEFAULTS = {
+  keepRuns: 10,
+  maxAgeDays: 30,
+  locks: true,
+  downloads: true,
+  containers: true,
+} as const satisfies Required<PruneConfig>
 
 export type ModSourceKind = 'local' | 'release' | 'workshop' | 'official' | 'core'
 
@@ -537,6 +555,9 @@ export interface ParsedArgs {
   platform?: string
   print?: boolean
   username?: string
+  /** `prune` only: one-run overrides for the `prune` config block. */
+  olderThan?: number
+  keep?: number
   /** Where `mods add` pulls the mod from. */
   source?:
     | { kind: 'path'; value: string }
@@ -562,7 +583,7 @@ export type ProjectDefaults = Partial<
     | 'noDetach' | 'noReplace' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
     | 'verbTyped' | 'quiet' | 'plain'
     | 'variant' | 'branches' | 'aliases' | 'plugin' | 'image' | 'load' | 'push' | 'base'
-    | 'platform' | 'print' | 'username'
+    | 'platform' | 'print' | 'username' | 'olderThan' | 'keep'
   >
 > & {
   defaultProfile?: string
@@ -578,7 +599,7 @@ export const STDOUT_LOG = 'stdout.log'
 
 /** Names that can never be a game or profile key. Enforced at config load. */
 export const RESERVED_NAMES: readonly string[] = [
-  'run', 'list', 'mods', 'doctor', 'clean', 'clone', 'logs', 'build',
+  'run', 'list', 'mods', 'doctor', 'clean', 'prune', 'clone', 'logs', 'build',
   'shell', 'config', 'fix-perms', 'verify', 'help', 'version', 'modless',
   'ps', 'stop', 'attach', 'wait', 'add', 'rm', 'sync', 'steam', 'login', 'refs', 'edit',
   'completion', 'init',

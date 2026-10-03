@@ -5,6 +5,7 @@ import { activeSink, emit, useSink } from '../channels'
 import type { Channel, OutputRedirect } from '../channels'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
+import { PRUNE_DEFAULTS } from '../types'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
 import { GamecrateError, Exit, STDOUT_LOG } from '../types'
 
@@ -195,14 +196,14 @@ export function runTimestamp(now: Date = new Date()): string {
 }
 
 /** Makes <logsDir>/runs/<ts>, repoints `current` at it, rotates the old ones, returns the dir. */
-export function openRunLog(logsDir: string, now?: Date): string {
+export function openRunLog(logsDir: string, now?: Date, keep: number = PRUNE_DEFAULTS.keepRuns): string {
   const runsDir = join(logsDir, 'runs')
   mkdirSync(runsDir, { recursive: true })
 
   const dir = uniqueRunDir(runsDir, runTimestamp(now))
   mkdirSync(dir)
   linkCurrent(logsDir, dir)
-  rotateRuns(logsDir, 10)
+  rotateRuns(logsDir, keep)
   return dir
 }
 

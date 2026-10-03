@@ -53,3 +53,6 @@ Xvfb
 Proton
 zsh
 buildid
+systemd
+cron
+crontab

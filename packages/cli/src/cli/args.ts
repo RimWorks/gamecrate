@@ -185,6 +185,19 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     flags: ['--staging', '--logs', '--all', '--downloads', '--yes', '--instance', '--worktree', '--no-worktree'],
   },
   {
+    name: 'prune',
+    group: 'maintain',
+    summary: 'Delete old run logs, dead locks, stale downloads, and exited containers',
+    usage: '',
+    positionals: [],
+    flags: ['--older-than', '--keep', '--dry-run'],
+    notes: [
+      'Sweeps every game and profile under dataRoot, so it takes no profile.',
+      'The `prune` block in your config decides what it touches and how much it keeps.',
+      'Keeps the newest run a profile has whatever the numbers say, so `logs` still works.',
+    ],
+  },
+  {
     name: 'clone',
     group: 'maintain',
     summary: "Copy one profile's saves and settings to another profile",
@@ -406,6 +419,8 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--sort': (cmd) => cmd.addOption( enumOption(`--sort <${SORTS.join('|')}>`, 'Load order: as the profile lists them, or by dependency', SORTS)),
   '--docker-arg': (cmd) => cmd.option('--docker-arg <arg>', 'One extra argument to pass to docker run', collect, []),
   '--dry-run': (cmd) => cmd.option('--dry-run', 'Resolve and check everything, write nothing'),
+  '--older-than': (cmd) => cmd.option('--older-than <days>', 'Treat anything this many days old as old enough to delete', (v) => whole('--older-than', v)),
+  '--keep': (cmd) => cmd.option('--keep <count>', 'How many run log directories each profile keeps', (v) => whole('--keep', v)),
   '--print-plan': (cmd) => cmd.option('--print-plan', 'Print what the launch would do instead of launching'),
   '--game': (cmd) => cmd.option('--game <name>', 'The game to act on, when no profile says which'),
   '--json': (cmd) => cmd.option('--json', 'Print JSON instead of text'),
@@ -688,6 +703,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.platform = (values['platform'] as string | undefined) ?? 'linux/amd64'
   out.print = values['print'] === true
   out.username = values['username'] as string | undefined
+  out.olderThan = values['olderThan'] as number | undefined
+  out.keep = values['keep'] as number | undefined
 
   applyPositionals(out, positional, seen, opts, out.help)
   applyTargets(out, values, seen)
@@ -1060,12 +1077,16 @@ function flagNames(program: Command): string[] {
   return allOptions(program).flatMap((o) => [o.long, o.short].filter((f): f is string => f !== undefined))
 }
 
-function seconds(flag: string, value: string): number {
+function whole(flag: string, value: string, unit = 'number'): number {
   const n = Number(value)
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
-    throw usage(`${flag} takes a whole number of seconds, got ${value}`)
+    throw usage(`${flag} takes a whole ${unit}, got ${value}`)
   }
   return n
+}
+
+function seconds(flag: string, value: string): number {
+  return whole(flag, value, 'number of seconds')
 }
 
 export function parseResolution(value: string): { width: number; height: number } {

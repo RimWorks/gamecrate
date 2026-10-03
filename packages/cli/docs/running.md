@@ -36,8 +36,10 @@ Everything a profile writes hangs off `<dataRoot>/<game>/<profile>`, and an inst
 - `.gamecrate/last-exit.json` records what the last supervised run returned.
 - `.gamecrate/launches.jsonl` holds one line per launch: image digest, mods, worktrees.
 
-gamecrate keeps the ten newest run directories. The container is named
-`gamecrate-<game>-<profile>`, plus `-<instance>` for an instance.
+Every launch keeps the ten newest run directories and deletes the rest. Set `prune.keepRuns` to
+change that number, and see [Pruning old runs](#pruning-old-runs) for the sweep that covers
+everything else. The container is named `gamecrate-<game>-<profile>`, plus `-<instance>` for an
+instance.
 
 ## Modes and how a run ends
 
@@ -188,6 +190,95 @@ own caption and close button. `xprop` marks the window with gamecrate's pid and 
 claim on `WM_DELETE_WINDOW`, so the titlebar X ends the run with exit `0` and the reason
 `window-closed`. `wmctrl` retitles it to `<game> <profile>`, or `<game> <profile> / <instance>`.
 gamecrate warns and skips the window step when either one is missing.
+
+## Pruning old runs
+
+A launch trims run directories for the profile it is launching, and nothing else. `gamecrate prune`
+sweeps every game, profile, and instance under `dataRoot`, so it takes no profile.
+
+```sh
+gamecrate prune --dry-run
+gamecrate prune
+```
+
+| Deletes | When | Config key |
+| --- | --- | --- |
+| A run directory under `logs/runs/` | It is past the newest `keepRuns`, or older than `maxAgeDays` | `prune.keepRuns`, `prune.maxAgeDays` |
+| `.gamecrate/lock` | Its process is gone and its container is not running | `prune.locks` |
+| A workshop item under the steamcmd download root | Nothing has touched it in `maxAgeDays` days | `prune.downloads` |
+| A container labelled `gamecrate.game` | It has exited | `prune.containers` |
+
+The newest run directory a profile has always survives, whatever the two numbers say. That keeps
+`gamecrate logs` working on a profile you have not launched in months.
+
+Deleting a workshop item also deletes the `appworkshop_<appid>.acf` file beside it. The mod index
+caches against that file. Leaving it would keep a cached record pointing at a directory that is
+gone. steamcmd writes a fresh `.acf` and re-downloads the item when a profile next needs it.
+
+```jsonc
+{
+  "prune": {
+    "keepRuns": 10,
+    "maxAgeDays": 30,
+    "locks": true,
+    "downloads": true,
+    "containers": true
+  }
+}
+```
+
+`--keep <count>` and `--older-than <days>` override the two numbers for one run. `--dry-run` lists
+every target and deletes none of them. `--json` prints the same list as JSON. The exit code is `0`,
+or `5` when something refused to delete.
+
+### Running prune on a schedule
+
+Weekly is enough for most setups. A systemd user timer is the better of the two options. It logs to
+the journal, and `Persistent=true` catches up on a sweep the machine missed while it was off.
+
+`~/.config/systemd/user/gamecrate-prune.service`:
+
+```ini
+[Unit]
+Description=Prune old gamecrate runs
+
+[Service]
+Type=oneshot
+ExecStart=%h/.bun/bin/gamecrate prune
+```
+
+`~/.config/systemd/user/gamecrate-prune.timer`:
+
+```ini
+[Unit]
+Description=Prune old gamecrate runs every week
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now gamecrate-prune.timer
+systemctl --user list-timers gamecrate-prune.timer
+journalctl --user -u gamecrate-prune
+```
+
+For cron instead, one line in `crontab -e`:
+
+```cron
+0 4 * * 0 /home/you/.bun/bin/gamecrate prune >> /tmp/gamecrate-prune.log 2>&1
+```
+
+Two things bite on cron. It runs with a short `PATH` and no login shell, so write the absolute path
+that `which gamecrate` prints. And it has no desktop session, so rootless Docker needs
+`DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock` set in the crontab, or the container sweep finds
+nothing and the rest still runs. Both setups need the same `dataRoot` your interactive shell uses,
+which means the same user and the same config file.
 
 ## Other subcommands
 

@@ -38,21 +38,40 @@ export function parseDockerRuns(stdout: string): RunRecord[] {
   return out
 }
 
-/** <dataRoot>/<game>/<profile>/.gamecrate/lock, plus one level of instances under each. */
-export async function walkLocks(dataRoot: string): Promise<LockRecord[]> {
-  const out: LockRecord[] = []
+export interface InstanceDir {
+  game: string
+  profile: string
+  instance?: string
+  dir: string
+}
+
+/** <dataRoot>/<game>/<profile>, plus one level of instances under each. */
+export async function walkInstanceDirs(dataRoot: string): Promise<InstanceDir[]> {
+  const out: InstanceDir[] = []
   for (const game of await entries(dataRoot)) {
     const gameDir = join(dataRoot, game)
     for (const profile of await entries(gameDir)) {
       const profileDir = join(gameDir, profile)
-      await push(out, join(profileDir, '.gamecrate', 'lock'))
+      out.push({ game, profile, dir: profileDir })
       const instancesDir = join(profileDir, 'instances')
       for (const instance of await entries(instancesDir)) {
-        await push(out, join(instancesDir, instance, '.gamecrate', 'lock'))
+        out.push({ game, profile, instance, dir: join(instancesDir, instance) })
       }
     }
   }
   return out
+}
+
+export async function walkLocks(dataRoot: string): Promise<LockRecord[]> {
+  const out: LockRecord[] = []
+  for (const found of await walkInstanceDirs(dataRoot)) {
+    await push(out, lockIn(found.dir))
+  }
+  return out
+}
+
+export function lockIn(instanceDir: string): string {
+  return join(instanceDir, '.gamecrate', 'lock')
 }
 
 async function entries(dir: string): Promise<string[]> {

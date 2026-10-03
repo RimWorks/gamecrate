@@ -68,6 +68,7 @@ overrides both, and settles it when two games declare the same profile name.
 - `init`: Set up a config: pick a game, install its plugin, write a profile
 - `doctor`: Check docker, logins, game folders, and permissions
 - `clean [profile]`: Delete a profile's staged mods, logs, saves, or downloads
+- `prune`: Delete old run logs, dead locks, stale downloads, and exited containers
 - `clone <src> <dst>`: Copy one profile's saves and settings to another profile
 - `config`: Read and edit the gamecrate config files
   - `config edit`: Open the global config in an editor and check it on save
@@ -124,7 +125,7 @@ in for a flag.
 | `--detach` | `run` | Run in the background and give the prompt back |
 | `--docker-arg <arg>` | `run`, `shell` | One extra argument to pass to docker run. Repeatable. |
 | `--downloads` | `clean` | Delete this game's workshop downloads, keeping steamcmd |
-| `--dry-run` | `run`, `fix-perms` | Resolve and check everything, write nothing |
+| `--dry-run` | `run`, `prune`, `fix-perms` | Resolve and check everything, write nothing |
 | `-f, --follow` | `logs` | Keep printing as the run writes more |
 | `--force` | `mods add`, `steam build` | Overwrite an existing mod entry, or rebuild an image anyway |
 | `--game <name>` | every subcommand | The game to act on, when no profile says which |
@@ -134,6 +135,7 @@ in for a flag.
 | `--image <ref>` | `run`, `refs`, `build`, `steam build` | The image to launch, or the repository a steam build tags |
 | `--instance <name>` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Run a second named copy with its own saves, logs, and container |
 | `--json` | every subcommand | Print JSON instead of text |
+| `--keep <count>` | `prune` | How many run log directories each profile keeps |
 | `--log <path>` | `run`, `shell` | Also write everything the run prints to this file |
 | `--logs` | `clean` | Delete the logs the runs captured |
 | `--marker <str>` | `run` | Exit 0 as soon as this text appears in the game log |
@@ -146,6 +148,7 @@ in for a flag.
 | `--no-replace` | `run` | Refuse to launch when this profile already runs |
 | `--no-stale-check` | `run` | Do not warn when a mod's code is newer than its DLL |
 | `--no-worktree` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Ignore the current git checkout and $GAMECRATE_WORKTREE |
+| `--older-than <days>` | `prune` | Treat anything this many days old as old enough to delete |
 | `--only <id>` | `run`, `mods`, `shell` | Load only these mods and none of the rest. Repeatable. |
 | `--path <dir>` | `mods add` | Take the mod from this directory |
 | `--plain` | `run`, `steam build` | Plain scrolling output instead of the live dashboard |
