@@ -1,7 +1,7 @@
 import { readdir, readlink, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
-import { runStartedAt } from '../cli/output'
+import { byteOrder, runStartedAt } from '../cli/output'
 import { expandHome } from '../config/load'
 import { capture } from '../docker/run'
 import { isRunning, readLock } from '../launch/prepare'
@@ -78,7 +78,7 @@ async function sweepRuns(result: PruneResult, logsDir: string, keepRuns: number,
   const names = (await readdir(runsDir, { withFileTypes: true }).catch(() => []))
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort()
+    .sort(byteOrder)
     .reverse()
   if (names.length === 0) return
 

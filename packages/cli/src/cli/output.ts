@@ -5,9 +5,8 @@ import { activeSink, emit, useSink } from '../channels'
 import type { Channel, OutputRedirect } from '../channels'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
-import { PRUNE_DEFAULTS } from '../types'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
-import { GamecrateError, Exit, STDOUT_LOG } from '../types'
+import { GamecrateError, Exit, PRUNE_DEFAULTS, STDOUT_LOG } from '../types'
 
 /** Tool status. Never the data channel: that one belongs to machine-readable output. */
 export function status(message: string): void {
@@ -280,7 +279,8 @@ function linkCurrent(logsDir: string, target: string): void {
   symlinkSync(join('runs', basename(target)), link, 'dir')
 }
 
-function byteOrder(a: string, b: string): number {
+/** Sorts by code unit, not by locale: a locale sort can reorder two run timestamps. */
+export function byteOrder(a: string, b: string): number {
   if (a < b) return -1
   return a > b ? 1 : 0
 }
