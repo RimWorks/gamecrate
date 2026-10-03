@@ -518,6 +518,25 @@ const root = obj({
   })
     .optional()
     .describe('Which `steamcmd` downloads workshop items. Absent looks on `PATH`, then runs the `steamcmd/steamcmd` image.'),
+  prune: obj({
+    keepRuns: num
+      .describe('How many run log directories a profile keeps. Every launch trims to this, and so does `prune`. Default `10`.')
+      .optional(),
+    maxAgeDays: num
+      .describe('How old something has to be before `prune` deletes it. Default `30`.')
+      .optional(),
+    locks: bool
+      .describe('Delete a lock file whose process and container are both gone. Default `true`.')
+      .optional(),
+    downloads: bool
+      .describe('Delete workshop downloads nothing touched in `maxAgeDays`. They come back on the next launch that needs them. Default `true`.')
+      .optional(),
+    containers: bool
+      .describe('Delete exited containers gamecrate started. Default `true`.')
+      .optional(),
+  })
+    .optional()
+    .describe('What `gamecrate prune` deletes. Every key has a flag that overrides it for one run.'),
   games: z.unknown(),
 })
 

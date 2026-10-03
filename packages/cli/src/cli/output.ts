@@ -6,7 +6,7 @@ import type { Channel, OutputRedirect } from '../channels'
 import { containerName } from '../docker/spec'
 import { staleWarning } from '../mods/staleness'
 import type { LaunchPlan, Problem, ResolvedMod } from '../types'
-import { GamecrateError, Exit, STDOUT_LOG } from '../types'
+import { GamecrateError, Exit, PRUNE_DEFAULTS, STDOUT_LOG } from '../types'
 
 /** Tool status. Never the data channel: that one belongs to machine-readable output. */
 export function status(message: string): void {
@@ -195,14 +195,14 @@ export function runTimestamp(now: Date = new Date()): string {
 }
 
 /** Makes <logsDir>/runs/<ts>, repoints `current` at it, rotates the old ones, returns the dir. */
-export function openRunLog(logsDir: string, now?: Date): string {
+export function openRunLog(logsDir: string, now?: Date, keep: number = PRUNE_DEFAULTS.keepRuns): string {
   const runsDir = join(logsDir, 'runs')
   mkdirSync(runsDir, { recursive: true })
 
   const dir = uniqueRunDir(runsDir, runTimestamp(now))
   mkdirSync(dir)
   linkCurrent(logsDir, dir)
-  rotateRuns(logsDir, 10)
+  rotateRuns(logsDir, keep)
   return dir
 }
 
@@ -279,7 +279,8 @@ function linkCurrent(logsDir: string, target: string): void {
   symlinkSync(join('runs', basename(target)), link, 'dir')
 }
 
-function byteOrder(a: string, b: string): number {
+/** Sorts by code unit, not by locale: a locale sort can reorder two run timestamps. */
+export function byteOrder(a: string, b: string): number {
   if (a < b) return -1
   return a > b ? 1 : 0
 }
