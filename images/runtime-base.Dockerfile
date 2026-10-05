@@ -22,6 +22,7 @@ RUN apt-get update \
         libnss3 \
         libpulse0 \
         libsdl2-2.0-0 \
+        libvulkan-dev \
         libx11-6 \
         libxcursor1 \
         libxext6 \
