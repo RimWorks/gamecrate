@@ -109,6 +109,24 @@ describe('positionals', () => {
     expect(args.help).toBe(true)
   })
 
+  test('--ci reaches run as a flag, and no other verb takes it', () => {
+    expect(parseArgs(['run', '--ci'], NO_ENV).ci).toBe(true)
+    expect(parseArgs(['run'], NO_ENV).ci).toBe(false)
+    expect(fails(['clean', '--ci']).code).toBe(Exit.Usage)
+  })
+
+  test('--ci names the game, the way a typed profile does', () => {
+    const two = { games: ['rimworld', 'westmyth'], profiles: { rimworld: ['dev'], westmyth: ['ci'] } }
+    expect(parseArgs(['run', '--ci'], { env: {}, ...two }).game).toBe('westmyth')
+
+    const both = { games: ['rimworld', 'westmyth'], profiles: { rimworld: ['ci'], westmyth: ['ci'] } }
+    expect(parseArgs(['run', '--ci'], { env: {}, ...both, defaults: { game: 'westmyth' } }).game).toBe('westmyth')
+    expect(fails(['run', '--ci'], both).detail).toContain('--game rimworld or --game westmyth')
+
+    const none = { games: ['rimworld', 'westmyth'], profiles: { rimworld: ['dev'], westmyth: [] } }
+    expect(parseArgs(['run', '--ci'], { env: {}, ...none }).game).toBeUndefined()
+  })
+
   test('every subcommand is reserved, and modless is a profile, not a subcommand', () => {
     for (const sub of SUBCOMMANDS) expect(RESERVED_NAMES).toContain(sub.name)
     expect(SUBCOMMANDS.map((s) => s.name)).not.toContain('modless')

@@ -121,6 +121,7 @@ in for a flag.
 | `--beta <name>` | `steam build` | Build only this Steam branch. Repeatable. |
 | `--branch <name>` | `mods add` | Follow this git branch |
 | `--build` | `run` | Compile the local C# mods before launching |
+| `--ci` | `run` | Use the `ci` profile, or `modless` when no config names one |
 | `--commit <sha>` | `mods add` | Pin to this git commit |
 | `--detach` | `run` | Run in the background and give the prompt back |
 | `--docker-arg <arg>` | `run`, `shell` | One extra argument to pass to docker run. Repeatable. |

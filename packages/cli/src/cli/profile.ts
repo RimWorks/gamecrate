@@ -1,3 +1,4 @@
+import { profileKey } from '../config/load'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, ParsedArgs, ProjectDefaults } from '../types'
 
@@ -11,9 +12,14 @@ export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
 
 /**
  * The launch path, where a silent fallback to modless drops every mod the game needs. With no
- * profile configured there is nothing to be ambiguous about, so modless still answers.
+ * profile configured there is nothing to be ambiguous about, so modless still answers. `--ci`
+ * opts into the fallback at the call site, so no config key can outrank it.
  */
 export function launchProfile(args: ParsedArgs, defaults: ProjectDefaults, game: GameConfig): string {
+  if (args.ci) {
+    if (args.profile !== undefined) throw new GamecrateError('--ci and a profile name contradict', Exit.Usage)
+    return profileKey(game, 'ci') ?? 'modless'
+  }
   const named = args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0]
   if (named !== undefined) return named
   const known = Object.keys(game.profiles)

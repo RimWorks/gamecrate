@@ -2153,4 +2153,35 @@ describe('launchProfile', () => {
   test('a game with no profiles has nothing to be ambiguous about', () => {
     expect(launchProfile(noFlag, {}, bare)).toBe('modless')
   })
+
+  const ci = { ci: true } as unknown as ParsedArgs
+
+  test('--ci takes the ci profile when the config has one', () => {
+    const withCi = { profiles: { perf: {}, ci: {} } } as unknown as GameConfig
+    expect(launchProfile(ci, {}, withCi)).toBe('ci')
+  })
+
+  test('--ci answers the canonical key for a case or alias match', () => {
+    const cased = { profiles: { CI: {} } } as unknown as GameConfig
+    const aliased = { profiles: { headless: { aliases: ['ci'] } } } as unknown as GameConfig
+    expect(launchProfile(ci, {}, cased)).toBe('CI')
+    expect(launchProfile(ci, {}, aliased)).toBe('headless')
+  })
+
+  test('--ci falls back to modless, and no project default outranks it', () => {
+    expect(launchProfile(ci, { defaultProfile: 'dev' }, withProfiles)).toBe('modless')
+    expect(launchProfile(ci, { profileOrder: ['dev'] }, withProfiles)).toBe('modless')
+    expect(launchProfile(ci, {}, bare)).toBe('modless')
+  })
+
+  test('--ci and a typed profile contradict', () => {
+    let thrown: GamecrateError | undefined
+    try {
+      launchProfile({ ci: true, profile: 'dev' } as unknown as ParsedArgs, {}, withProfiles)
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Usage)
+    expect(thrown?.message).toContain('--ci')
+  })
 })

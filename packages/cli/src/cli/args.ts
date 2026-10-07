@@ -104,6 +104,7 @@ export const RUN_FLAGS = [
   '--instance',
   '--use',
   '--image',
+  '--ci',
 ] as const
 
 /** The subcommand table. `modless` is reserved as a built-in profile, not a verb. */
@@ -435,6 +436,7 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--older-than': (cmd) => cmd.option('--older-than <days>', 'Treat anything this many days old as old enough to delete', (v) => whole('--older-than', v)),
   '--keep': (cmd) => cmd.option('--keep <count>', 'How many run log directories each profile keeps', (v) => whole('--keep', v)),
   '--print-plan': (cmd) => cmd.option('--print-plan', 'Print what the launch would do instead of launching'),
+  '--ci': (cmd) => cmd.option('--ci', 'Use the `ci` profile, or `modless` when no config names one'),
   '--game': (cmd) => cmd.option('--game <name>', 'The game to act on, when no profile says which'),
   '--json': (cmd) => cmd.option('--json', 'Print JSON instead of text'),
   '--root': (cmd) => cmd.option('--root', 'Run as root in the container instead of as you'),
@@ -689,6 +691,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     detach: values['detach'] === true,
     noDetach: seen.has('--no-detach'),
     supervised: typeof values['supervised'] === 'string',
+    ci: values['ci'] === true,
     use: (values['use'] as string[] | undefined) ?? [],
     rest: [],
   }
@@ -923,7 +926,7 @@ function routePositionals(
 
 function inferGame(out: ParsedArgs, opts: ParseOptions): void {
   if (out.game !== undefined) return
-  const named = out.profile ?? out.rest[0]
+  const named = out.profile ?? out.rest[0] ?? (out.ci ? 'ci' : undefined)
   const owners = named === undefined ? [] : gamesDeclaring(named, opts.profiles)
   if (owners.length > 0) {
     out.game = pickOwner(named!, owners, opts.defaults?.game)

@@ -538,6 +538,8 @@ export interface ParsedArgs {
   noReplace: boolean
   /** Set on the forked supervisor only. Never a config key, never in help. */
   supervised: boolean
+  /** Takes the `ci` profile, or modless when no config names one. Never a config key. */
+  ci: boolean
   /** `-q`: drop the terminal copy. `--log` still receives everything. */
   quiet: boolean
   /** Scrolling output, whatever the terminal could support. */
