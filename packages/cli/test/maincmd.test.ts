@@ -244,14 +244,19 @@ describe('main', () => {
 
   test('doctor reports instead of dying when no plugin is installed', async () => {
     bareWorkspace()
-    captured()
-    expect(await cli(['doctor', '--game', 'nosuchgame'])).not.toBe(Exit.Environment)
+    const out = captured()
+    const error = await cli(['doctor', '--game', 'nosuchgame'])
+      .then(() => undefined, (caught: unknown) => caught as GamecrateError)
+    expect(error?.message ?? '').not.toContain('no plugin for game')
+    expect(out.text()).not.toContain('no plugin for game')
   })
 
   test('steam keeps its own --plugin bootstrap, so --game loads nothing here', async () => {
     bareWorkspace()
-    captured()
-    const code = await cli(['steam', 'build', '--game', 'nosuchgame', '--plugin', './nope'])
-    expect(code).not.toBe(Exit.Environment)
+    const out = captured()
+    const error = await cli(['steam', 'build', '--game', 'nosuchgame', '--plugin', './nope'])
+      .then(() => undefined, (caught: unknown) => caught as GamecrateError)
+    expect(error?.message ?? '').not.toContain('no plugin for game')
+    expect(out.text()).not.toContain('no plugin for game')
   })
 })
