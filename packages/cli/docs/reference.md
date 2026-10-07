@@ -188,7 +188,10 @@ run by its window, so neither of those reads it. Default 420. `--render-wait` de
 - `--pull` defaults to `missing` on `run` and `always` on `build`.
 - `--no-stale-check` drops the warning, not the check. A source must beat its assembly by more
 than a second to count, because one build writes both within microseconds of each other.
-- `--docker-arg` is the one flag whose value may start with a dash.
+- `--docker-arg` is the one flag whose value may start with a dash. Each one passes exactly one
+argument to `docker run`, so a docker flag and its value take two of them:
+`--docker-arg -v --docker-arg /host/out:/out`. The same rule holds for a `dockerArgs` list in a
+config file, where every element is one argument.
 - `--worktree` is repeatable and an earlier flag outranks a later one. `--no-worktree` cancels
 worktree promotion completely: the current directory, `$GAMECRATE_WORKTREE`, a `--worktree` flag
 you also typed, and an instance's configured `worktree`.
