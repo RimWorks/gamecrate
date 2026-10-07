@@ -12,7 +12,7 @@ echo "pre-push: docs"
 bun run docs:check
 
 echo "pre-push: test"
-bun test --parallel
+bun run test
 
 if command -v vale >/dev/null 2>&1; then
   if [ -d Styles/Google ]; then
