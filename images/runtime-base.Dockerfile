@@ -22,7 +22,7 @@ RUN apt-get update \
         libnss3 \
         libpulse0 \
         libsdl2-2.0-0 \
-        libvulkan-dev \
+        libvulkan1 \
         libx11-6 \
         libxcursor1 \
         libxext6 \
@@ -31,6 +31,7 @@ RUN apt-get update \
         libxrandr2 \
         libxrender1 \
         locales \
+        mesa-vulkan-drivers \
         x11-apps \
         xdotool \
         xvfb \
