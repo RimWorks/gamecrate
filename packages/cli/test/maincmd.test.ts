@@ -17,10 +17,11 @@ afterEach(() => {
   while (temps.length > 0) rmSync(temps.pop() as string, { recursive: true, force: true })
 })
 
-const PLUGIN = `export default {
+function pluginSource(defaults: unknown = FIXTURE_DEFAULTS): string {
+  return `export default {
   apiVersion: ${PLUGIN_API_VERSION},
   game: 'atlas',
-  defaults: ${JSON.stringify(FIXTURE_DEFAULTS)},
+  defaults: ${JSON.stringify(defaults)},
   parseManifest: (text) => {
     const found = /^packageId (.+)$/m.exec(text)
     if (!found) return null
@@ -36,6 +37,7 @@ const PLUGIN = `export default {
   parseVersion: () => null,
 }
 `
+}
 
 /** Collects what the CLI writes, so a test reads output without a subprocess. */
 function captured(): { text: () => string; data: () => string } {
@@ -54,6 +56,40 @@ function captured(): { text: () => string; data: () => string } {
   }
 }
 
+function bareWorkspace(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'gc-bare-'))
+  temps.push(dir)
+
+  const mods = join(dir, 'mods', 'Core')
+  mkdirSync(join(mods, 'About'), { recursive: true })
+  writeFileSync(join(mods, 'About', 'About.txt'), 'packageId Atlasco.Atlas\nname Core\n')
+
+  const { gameFiles, ...rest } = FIXTURE_DEFAULTS
+  const defaults = {
+    ...rest,
+    gameFiles: { source: gameFiles!.source, container: gameFiles!.container },
+    scanRoots: [{ path: join(dir, 'mods'), maxDepth: 2 }],
+  }
+  const pkg = join(dir, 'node_modules', '@gamecrate', 'atlas')
+  mkdirSync(pkg, { recursive: true })
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: '@gamecrate/atlas', type: 'module', main: './plugin.js' }))
+  writeFileSync(join(pkg, 'plugin.js'), pluginSource(defaults))
+
+  mkdirSync(join(dir, 'cfg'), { recursive: true })
+  const previous = { xdg: process.env.XDG_CONFIG_HOME, home: process.env.HOME, cwd: process.cwd() }
+  process.env.XDG_CONFIG_HOME = join(dir, 'cfg')
+  process.env.HOME = dir
+  process.chdir(dir)
+  restore.push(() => {
+    process.chdir(previous.cwd)
+    if (previous.xdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = previous.xdg
+    if (previous.home === undefined) delete process.env.HOME
+    else process.env.HOME = previous.home
+  })
+  return dir
+}
+
 function workspace(): string {
   const dir = mkdtempSync(join(tmpdir(), 'gc-main-'))
   temps.push(dir)
@@ -64,7 +100,7 @@ function workspace(): string {
     join(pluginDir, 'package.json'),
     JSON.stringify({ name: 'gamecrate-atlas', type: 'module', main: './plugin.js' }),
   )
-  writeFileSync(join(pluginDir, 'plugin.js'), PLUGIN)
+  writeFileSync(join(pluginDir, 'plugin.js'), pluginSource())
 
   const mods = join(dir, 'mods', 'Core')
   mkdirSync(join(mods, 'About'), { recursive: true })
@@ -179,5 +215,43 @@ describe('main', () => {
     const out = captured()
     expect(await cli(['mods', 'dsd'])).toBe(0)
     expect(out.data()).toContain('Atlasco.Atlas')
+  })
+
+  test('run reaches the image check with no config file at all', async () => {
+    bareWorkspace()
+    const out = captured()
+    const code = await cli(['run', '--game', 'atlas', '--image', 'ghcr.io/example/atlas:1', '--mode', 'headless', '--print-plan'])
+    expect(code).toBe(Exit.Resolution)
+    expect(out.text()).toContain('ghcr.io/example/atlas:1 is not present')
+  })
+
+  test('a missing plugin names the package and how to install it', async () => {
+    bareWorkspace()
+    captured()
+    const error = await cli(['run', '--game', 'nosuchgame', '--image', 'x:1', '--mode', 'headless'])
+      .then(() => undefined, (caught: unknown) => caught as GamecrateError)
+    expect(error?.code).toBe(Exit.Environment)
+    expect(error?.message).toBe('no plugin for game "nosuchgame"')
+    expect(error?.detail).toContain('npm i -g @gamecrate/nosuchgame')
+  })
+
+  test('--help answers without hunting for a plugin', async () => {
+    bareWorkspace()
+    const out = captured()
+    expect(await cli(['run', '--game', 'nosuchgame', '--help'])).toBe(0)
+    expect(out.data()).toContain('gamecrate run')
+  })
+
+  test('doctor reports instead of dying when no plugin is installed', async () => {
+    bareWorkspace()
+    captured()
+    expect(await cli(['doctor', '--game', 'nosuchgame'])).not.toBe(Exit.Environment)
+  })
+
+  test('steam keeps its own --plugin bootstrap, so --game loads nothing here', async () => {
+    bareWorkspace()
+    captured()
+    const code = await cli(['steam', 'build', '--game', 'nosuchgame', '--plugin', './nope'])
+    expect(code).not.toBe(Exit.Environment)
   })
 })

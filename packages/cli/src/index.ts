@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-import { buildPolicy, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
+import { buildPolicy, launchFlags, parseArgs, supervisedDir, wantsDetach, wantsReplace } from './cli/args'
 import { requireGame } from './cli/game'
 import { currentRefs, extractRefs } from './image/refs'
 import { list } from './cli/list'
@@ -125,7 +125,7 @@ async function command(argv: string[], supervised: string | undefined): Promise<
   if (probe?.subcommand === 'init' && probe.help !== true) return await initCommand(probe)
 
   const defaults = await loadProjectDefaults()
-  const { config, plugins } = await loadConfig(undefined, defaults)
+  const { config, plugins } = await loadConfig(undefined, defaults, launchFlags(probe))
   const args = parseArgs(argv, { games: Object.keys(config.games), profiles: profileNames(config), defaults })
 
   if (args.help) {
@@ -598,6 +598,7 @@ function probeArgs(argv: string[]): ParsedArgs | undefined {
     return undefined
   }
 }
+
 
 function recordSettings(plan: LaunchPlan): ModSettingsFile[] {
   const enable = plan.gameConfig.records?.enable

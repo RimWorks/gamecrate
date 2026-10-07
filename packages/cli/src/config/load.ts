@@ -8,6 +8,7 @@ import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import type {
   BuildPolicy,
   GameConfig,
+  LaunchFlags,
   LibraryEntry,
   ModEntry,
   ProfileConfig,
@@ -16,7 +17,7 @@ import type {
   Settings,
   SteamBranch,
 } from '../types'
-import { loadPlugins } from '../plugin'
+import { loadPlugins, pluginInstalled } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { DEFAULT_DATA_ROOT, DEFAULT_SETTINGS, applyDefaultImage } from './builtin'
 import { CONFIG_SUFFIXES, orderedKeys, readConfigFile, readConfigText } from './read'
@@ -220,15 +221,24 @@ export interface LoadedConfig {
  * Reads the global config, loads the plugins it lists, then merges the user's blocks over each
  * plugin's defaults. A missing file means no games, which every non-launch subcommand survives.
  */
-export async function loadConfig(path?: string, project?: ProjectDefaults): Promise<LoadedConfig> {
+export async function loadConfig(
+  path?: string,
+  project?: ProjectDefaults,
+  flags?: LaunchFlags,
+): Promise<LoadedConfig> {
   const file = path ?? (await findGlobalConfig()) ?? join(globalConfigDir(), 'config.yml')
   const user = await readConfigFile(file)
 
-  const specs = isObj(user) && user['plugins'] !== undefined ? user['plugins'] : []
+  const declared = isObj(user) && user['plugins'] !== undefined
+  const specs = declared ? user['plugins'] : []
   if (!Array.isArray(specs) || specs.some((s) => typeof s !== 'string')) {
     throw new GamecrateError(`config is invalid: ${file}`, Exit.Config, '  /plugins: expected an array of strings')
   }
-  const plugins = await loadPlugins(specs as string[], file)
+  const fallback = declared || flags?.game === undefined ? undefined : flags.game
+  const plugins =
+    fallback === undefined
+      ? await loadPlugins(specs as string[], file)
+      : await loadFallbackPlugin(fallback, file)
 
   const base: RootConfig = {
     dataRoot: DEFAULT_DATA_ROOT,
@@ -238,7 +248,7 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
     ),
   }
   const merged = user === undefined || user === null ? base : mergeUserConfig(base, user)
-  const spliced = applyDefaultImage(applyProject(merged, project))
+  const spliced = applyDefaultImage(applyProject(merged, project), flags)
   const { config, problems } = validateConfig(spliced)
   if (problems.length > 0) {
     const detail = problems
@@ -251,6 +261,18 @@ export async function loadConfig(path?: string, project?: ProjectDefaults): Prom
     throw new GamecrateError(`config is invalid: ${file}${from}`, Exit.Config, detail)
   }
   return { config: expandPaths(config), plugins }
+}
+
+async function loadFallbackPlugin(game: string, file: string): Promise<Map<string, GamePlugin>> {
+  const spec = `@gamecrate/${game}`
+  if (!pluginInstalled(spec, dirname(file))) {
+    throw new GamecrateError(
+      `no plugin for game "${game}"`,
+      Exit.Environment,
+      `nothing is installed as ${spec}, and ${file} names no plugins.\ninstall it with npm i -g ${spec}, or run gamecrate init to write a config that names one`,
+    )
+  }
+  return await loadPlugins([spec], file)
 }
 
 function applyProject(config: RootConfig, project?: ProjectDefaults): RootConfig {

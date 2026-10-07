@@ -1,6 +1,7 @@
 import { Command, CommanderError, Option } from 'commander'
 import type {
   BuildPolicy,
+  LaunchFlags,
   ModeName,
   NetworkPolicy,
   ParsedArgs,
@@ -59,6 +60,18 @@ const WRITE_NOTES = [
   'It also exits 3 when that file has no top-level game:, or when its game: names another game.',
   'A write edits the file as text, so your comments and key order survive.',
 ] as const
+
+const IMAGE_LAUNCHES: readonly string[] = ['run', 'refs', 'build']
+
+/**
+ * What `loadConfig` may act on before parsing proper. Only the verbs where `--image` names the
+ * image to launch: `steam build` tags a repository with it, and a help screen loads no plugin.
+ */
+export function launchFlags(probe: ParsedArgs | undefined): LaunchFlags {
+  if (probe === undefined || probe.help === true) return {}
+  if (!IMAGE_LAUNCHES.includes(probe.subcommand)) return {}
+  return { game: probe.game, image: probe.image }
+}
 
 export const RUN_FLAGS = [
   '--mod',

@@ -1229,6 +1229,61 @@ describe('loadConfig', () => {
     await expect(loadConfig(file)).rejects.toThrow(/cannot be resolved/)
   })
 
+  test('a config naming no plugins falls back to @gamecrate/<game>', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePluginPackage(join(dir, 'node_modules', '@gamecrate', 'atlas'), { '.': './dist/plugin.js' })
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{}')
+
+    const { plugins } = await loadConfig(file, undefined, { game: 'atlas' })
+    expect([...plugins.keys()]).toEqual(['atlas'])
+  })
+
+  test('the fallback names the package it looked for when nothing is installed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{}')
+
+    const error = await loadConfig(file, undefined, { game: 'nosuchgame' }).then(
+      () => undefined,
+      (caught: unknown) => caught as GamecrateError,
+    )
+    expect(error?.code).toBe(Exit.Environment)
+    expect(error?.message).toBe('no plugin for game "nosuchgame"')
+    expect(error?.detail).toContain('npm i -g @gamecrate/nosuchgame')
+  })
+
+  test('a config that lists its own plugins is never second-guessed', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePluginPackage(join(dir, 'checkout'), { '.': './dist/plugin.js' })
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{ "plugins": ["./checkout"] }')
+
+    const { plugins } = await loadConfig(file, undefined, { game: 'nosuchgame' })
+    expect([...plugins.keys()]).toEqual(['atlas'])
+  })
+
+  test('an empty plugins list is a decision, not a gap to fill', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePluginPackage(join(dir, 'node_modules', '@gamecrate', 'atlas'), { '.': './dist/plugin.js' })
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{ "plugins": [] }')
+
+    const { plugins } = await loadConfig(file, undefined, { game: 'atlas' })
+    expect([...plugins.keys()]).toEqual([])
+  })
+
+  test('--image makes the game come from the image, with the flag as the ref', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
+    await writePluginPackage(join(dir, 'node_modules', '@gamecrate', 'atlas'), { '.': './dist/plugin.js' })
+    const file = join(dir, 'profiles.json')
+    await writeFile(file, '{}')
+
+    const { config } = await loadConfig(file, undefined, { game: 'atlas', image: 'ghcr.io/example/atlas:1' })
+    expect(config.games['atlas']?.gameFiles.source).toBe('image')
+    expect(config.games['atlas']?.image.ref).toBe('ghcr.io/example/atlas:1')
+  })
+
   test('an invalid user file exits with the config code', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'gamecrate-'))
     await writePlugin(dir)

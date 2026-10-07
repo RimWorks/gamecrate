@@ -73,4 +73,39 @@ describe('applyDefaultImage', () => {
     ) as { games: { atlas: { image: { ref: string } } } }
     expect(out.games.atlas.image.ref).toBe('mine:1')
   })
+
+  test('--image fills the ref and turns a hostless mount into an image game', () => {
+    const out = applyDefaultImage(game({ gameFiles: { source: 'mount' } }), {
+      game: 'atlas',
+      image: 'ghcr.io/example/atlas:1',
+    }) as { games: { atlas: { image: { ref: string }; gameFiles: { source: string } } } }
+    expect(out.games.atlas.gameFiles.source).toBe('image')
+    expect(out.games.atlas.image.ref).toBe('ghcr.io/example/atlas:1')
+  })
+
+  test('--image drops a configured host mount, matching withImageOverride at launch', () => {
+    const out = applyDefaultImage(game({ gameFiles: { source: 'mount', host: '/games/atlas' } }), {
+      game: 'atlas',
+      image: 'ghcr.io/example/atlas:1',
+    }) as { games: { atlas: { image: { ref: string }; gameFiles: { source: string } } } }
+    expect(out.games.atlas.gameFiles.source).toBe('image')
+    expect(out.games.atlas.image.ref).toBe('ghcr.io/example/atlas:1')
+  })
+
+  test('--image beats a ref the config names, so both layers pick the same image', () => {
+    const out = applyDefaultImage(
+      game({ gameFiles: { source: 'image' }, image: { ref: 'mine:1' } }),
+      { game: 'atlas', image: 'ghcr.io/example/atlas:1' },
+    ) as { games: { atlas: { image: { ref: string } } } }
+    expect(out.games.atlas.image.ref).toBe('ghcr.io/example/atlas:1')
+  })
+
+  test('--image touches only the game it names', () => {
+    const out = applyDefaultImage(game({ gameFiles: { source: 'mount' } }), {
+      game: 'other',
+      image: 'ghcr.io/example/other:1',
+    }) as { games: { atlas: { image: { ref: string }; gameFiles: { source: string } } } }
+    expect(out.games.atlas.gameFiles.source).toBe('mount')
+    expect(out.games.atlas.image.ref).toBe(RUNTIME_BASE.linux)
+  })
 })

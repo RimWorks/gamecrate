@@ -486,6 +486,12 @@ export interface DockerRunSpec {
   extraArgs: string[]
 }
 
+/** What the command line settled before any config was read. */
+export interface LaunchFlags {
+  game?: string
+  image?: string
+}
+
 export interface ParsedArgs {
   subcommand: string
   game?: string

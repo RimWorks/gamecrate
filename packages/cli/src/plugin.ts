@@ -108,6 +108,11 @@ function packageDir(spec: string, from: string): string | null {
   return statSync(join(candidate, 'package.json'), { throwIfNoEntry: false })?.isFile() ? candidate : null
 }
 
+/** Whether a bare package name resolves at all, so a caller can say so in its own words. */
+export function pluginInstalled(spec: string, from: string): boolean {
+  return packageDir(spec, from) !== null
+}
+
 function locate(spec: string, from: string): string {
   const expanded = expandHome(spec)
   let target: string | null
