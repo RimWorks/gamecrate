@@ -293,9 +293,16 @@ function stageSlots(input: StageInputs): { staged: Staged[]; present: Set<string
   const excluded = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
   const isExcluded = (id: string): boolean => excluded.some((pattern) => pattern.test(id))
 
+  const slots = collectSlots(game, gameName, profileName, profile, args)
+  for (const slot of slots) {
+    if (isDynamic(slot.entry)) continue
+    const ref = refFor(slot.entry, game, input.sources)
+    if (ref.startsWith('path:')) resolveModRef(index, ref, game)
+  }
+
   const staged: Staged[] = []
   const present = new Set<string>()
-  for (const slot of collectSlots(game, gameName, profileName, profile, args)) {
+  for (const slot of slots) {
     for (const { ref, optional } of slotRefs(slot, input)) {
       const record = resolveModRef(index, ref, game)
       if (!record) {

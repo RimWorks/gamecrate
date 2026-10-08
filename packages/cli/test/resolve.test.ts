@@ -252,6 +252,61 @@ describe('load-slot ordering', () => {
   })
 })
 
+describe('a profile id is satisfied by a --mod path: ref', () => {
+  test('an id the index never scanned resolves from the path ref alone', async () => {
+    const dir = await modDir('Pickle')
+    await mkdir(join(dir, 'About'), { recursive: true })
+    await writeFile(join(dir, 'About', 'About.txt'), 'packageId Rimworks.Pickle\n')
+
+    const game = beacon({ ci: { mods: ['Rimworks.Pickle'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'ci',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { mods: [`path:${dir}`] },
+    })
+
+    expect(problems).toEqual([])
+    expect(plan.mods.filter((m) => m.packageId === 'Rimworks.Pickle')).toHaveLength(1)
+    expect(plan.mods.find((m) => m.packageId === 'Rimworks.Pickle')?.hostDir).toBe(dir)
+  })
+
+  test('a scanned copy still wins the bare id when a path ref names another dir', async () => {
+    const scanned = await modDir('Scanned-Twin')
+    const handed = await modDir('Handed-Twin')
+    for (const dir of [scanned, handed]) {
+      await mkdir(join(dir, 'About'), { recursive: true })
+      await writeFile(join(dir, 'About', 'About.txt'), 'packageId Example.Twin\n')
+    }
+
+    const game = beacon({ ci: { mods: ['Example.Twin'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Twin', dir: scanned },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'ci',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { mods: [`path:${handed}`] },
+    })
+
+    expect(problems).toEqual([])
+    expect(plan.mods.find((m) => m.packageId === 'Example.Twin')?.hostDir).toBe(scanned)
+  })
+})
+
 describe('CLI setting overrides', () => {
   test('resolution overrides profile settings', async () => {
     const game = beacon({ qol: { mods: [], settings: { width: 1280, height: 720 } } })
