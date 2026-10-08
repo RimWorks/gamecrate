@@ -1980,25 +1980,48 @@ describe('repo profile splice', () => {
 describe('profileOf', () => {
   const noProfile = { } as ParsedArgs
   const typed = { profile: 'typed' } as ParsedArgs
+  const empty = { profiles: {} } as unknown as GameConfig
 
   test('a typed profile beats every default', () => {
-    expect(profileOf(typed, { defaultProfile: 'yml', profileOrder: ['first'] })).toBe('typed')
+    expect(profileOf(typed, { defaultProfile: 'yml', profileOrder: ['first'] }, empty)).toBe('typed')
   })
 
   test('defaultProfile beats the first profile key', () => {
-    expect(profileOf(noProfile, { defaultProfile: 'yml', profileOrder: ['first'] })).toBe('yml')
+    expect(profileOf(noProfile, { defaultProfile: 'yml', profileOrder: ['first'] }, empty)).toBe('yml')
   })
 
   test('the first profile key wins when defaultProfile is absent', () => {
-    expect(profileOf(noProfile, { profileOrder: ['first', 'second'] })).toBe('first')
+    expect(profileOf(noProfile, { profileOrder: ['first', 'second'] }, empty)).toBe('first')
   })
 
   test('the first key is source order, not Object.keys order', () => {
-    expect(profileOf(noProfile, { profileOrder: ['2024', 'dev'] })).toBe('2024')
+    expect(profileOf(noProfile, { profileOrder: ['2024', 'dev'] }, empty)).toBe('2024')
   })
 
   test('modless is the floor with no project config at all', () => {
-    expect(profileOf(noProfile, {})).toBe('modless')
+    expect(profileOf(noProfile, {}, empty)).toBe('modless')
+  })
+
+  test('--ci resolves the same profile a launch would, and outranks every default', () => {
+    const ci = { ci: true } as unknown as ParsedArgs
+    const withCi = { profiles: { dev: {}, ci: {} } } as unknown as GameConfig
+    const aliased = { profiles: { headless: { aliases: ['ci'] } } } as unknown as GameConfig
+    expect(profileOf(ci, { defaultProfile: 'dev' }, withCi)).toBe('ci')
+    expect(profileOf(ci, { defaultProfile: 'dev' }, aliased)).toBe('headless')
+    expect(profileOf(ci, { defaultProfile: 'dev', profileOrder: ['dev'] }, empty)).toBe('modless')
+  })
+
+  test('--ci and a typed profile contradict on a non-launch verb too', () => {
+    const withCi = { profiles: { dev: {}, ci: {} } } as unknown as GameConfig
+    const both = { ci: true, profile: 'dev' } as unknown as ParsedArgs
+    let thrown: GamecrateError | undefined
+    try {
+      profileOf(both, {}, withCi)
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Usage)
+    expect(thrown?.detail).toContain('drop --ci to use dev, or drop dev and let --ci pick')
   })
 
   test('args.profile stays undefined so verbs can tell typed from defaulted', () => {
@@ -2183,6 +2206,6 @@ describe('launchProfile', () => {
     }
     expect(thrown?.code).toBe(Exit.Usage)
     expect(thrown?.message).toContain('--ci')
-    expect(thrown?.detail).toContain('drop --ci to run dev, or drop dev and let --ci pick')
+    expect(thrown?.detail).toContain('drop --ci to use dev, or drop dev and let --ci pick')
   })
 })

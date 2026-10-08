@@ -6,8 +6,20 @@ import type { GameConfig, ParsedArgs, ProjectDefaults } from '../types'
  * Not in parseArgs: filling a default there would erase the difference between a typed
  * profile and a defaulted one, which clean and fix-perms both need.
  */
-export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
+export function profileOf(args: ParsedArgs, defaults: ProjectDefaults, game: GameConfig): string {
+  if (args.ci) return ciProfile(args, game)
   return args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0] ?? 'modless'
+}
+
+function ciProfile(args: ParsedArgs, game: GameConfig): string {
+  if (args.profile !== undefined) {
+    throw new GamecrateError(
+      '--ci and a profile name contradict',
+      Exit.Usage,
+      `drop --ci to use ${args.profile}, or drop ${args.profile} and let --ci pick`,
+    )
+  }
+  return profileKey(game, 'ci') ?? 'modless'
 }
 
 /**
@@ -16,16 +28,7 @@ export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
  * opts into the fallback at the call site, so no config key can outrank it.
  */
 export function launchProfile(args: ParsedArgs, defaults: ProjectDefaults, game: GameConfig): string {
-  if (args.ci) {
-    if (args.profile !== undefined) {
-      throw new GamecrateError(
-        '--ci and a profile name contradict',
-        Exit.Usage,
-        `drop --ci to run ${args.profile}, or drop ${args.profile} and let --ci pick`,
-      )
-    }
-    return profileKey(game, 'ci') ?? 'modless'
-  }
+  if (args.ci) return ciProfile(args, game)
   const named = args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0]
   if (named !== undefined) return named
   const known = Object.keys(game.profiles)

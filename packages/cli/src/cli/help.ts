@@ -8,6 +8,7 @@ import {
   VERB_GROUPS,
   publicOptions,
   shapeOf,
+  subverbFlags,
   suggest,
 } from './args'
 import type { SubcommandSpec, SubverbSpec } from './args'
@@ -135,7 +136,7 @@ function subverbHelp(sub: SubcommandSpec, verb: string, spec: SubverbSpec): stri
     `usage: ${NAME} ${shapeOf(sub, verb)} [flags]`,
     '',
     `  ${spec.summary}`,
-    ...flagBlock([...spec.flags, ...sub.flags, ...GLOBAL_FLAGS]),
+    ...flagBlock([...subverbFlags(spec)]),
     ...noteBlock(spec.notes),
   ]
   return lines.join('\n') + '\n'

@@ -109,10 +109,28 @@ describe('positionals', () => {
     expect(args.help).toBe(true)
   })
 
-  test('--ci reaches run as a flag, and no other verb takes it', () => {
-    expect(parseArgs(['run', '--ci'], NO_ENV).ci).toBe(true)
+  test('--ci is off unless it is passed, and shell never takes it', () => {
     expect(parseArgs(['run'], NO_ENV).ci).toBe(false)
-    expect(fails(['clean', '--ci']).code).toBe(Exit.Usage)
+    expect(fails(['shell', '--ci']).code).toBe(Exit.Usage)
+  })
+
+  test('--ci reaches every verb that resolves a profile', () => {
+    const verbs = ['run', 'mods', 'logs', 'verify', 'clean', 'stop', 'attach', 'wait', 'build', 'refs']
+    for (const verb of verbs) {
+      expect(parseArgs([verb, '--ci'], NO_ENV).ci).toBe(true)
+    }
+  })
+
+  test('a mods subverb takes none of the profile flags its parent takes', () => {
+    for (const argv of [['--ci'], ['--mod', 'some.mod'], ['--sort', 'topo']]) {
+      expect(fails(['mods', 'sync', ...argv]).message).toContain(`mods sync does not take ${argv[0]}`)
+    }
+  })
+
+  test('a flag the environment supplied never scopes a subverb out', () => {
+    const env = { GAMECRATE_SORT: 'none' }
+    expect(parseArgs(['mods', 'sync'], { env, games: ['rimworld'] }).sort).toBe('none')
+    expect(parseArgs(['run'], { env, games: ['rimworld'] }).sort).toBe('none')
   })
 
   test('--ci names the game, the way a typed profile does', () => {
@@ -568,6 +586,16 @@ describe('help', () => {
     const rm = renderHelp(['mods', 'rm'], config)
     expect(rm).toContain('usage: gamecrate mods rm <id>...')
     expect(rm).not.toContain('--workshop')
+  })
+
+  test('a subverb page lists only the flags that subverb accepts', () => {
+    for (const verb of ['add', 'rm', 'sync']) {
+      const text = renderHelp(['mods', verb], config)
+      for (const flag of ['--ci', '--mod ', '--without', '--only', '--sort']) {
+        expect(text).not.toContain(flag)
+      }
+      expect(text).toContain('--game')
+    }
   })
 
   test('an unknown subverb topic names the ones that exist', () => {

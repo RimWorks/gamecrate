@@ -164,7 +164,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
         ],
       },
     },
-    flags: ['--mod', '--without', '--only', '--sort'],
+    flags: ['--mod', '--without', '--only', '--sort', '--ci'],
   },
   {
     name: 'refs',
@@ -172,7 +172,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: "Print a path to the game's DLLs, to reference from a csproj",
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--image'],
+    flags: ['--image', '--ci'],
   },
   {
     name: 'init',
@@ -196,7 +196,11 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: "Delete a profile's staged mods, logs, saves, or downloads",
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--staging', '--logs', '--all', '--downloads', '--yes', '--instance', '--worktree', '--no-worktree'],
+    flags: ['--staging', '--logs', '--all', '--downloads', '--yes', '--instance', '--worktree', '--no-worktree', '--ci'],
+    notes: [
+      'With `--ci` and no `ci` profile in the config, this acts on the `modless` profile.',
+      'The workshop downloads `--downloads` and `--all` drop are shared by every profile.',
+    ],
   },
   {
     name: 'prune',
@@ -225,7 +229,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Print the log the last run captured',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree', '--follow'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--follow', '--ci'],
   },
   {
     name: 'attach',
@@ -233,7 +237,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Watch a background run. Ctrl-c leaves the game running',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--ci'],
   },
   {
     name: 'wait',
@@ -241,7 +245,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Wait for a background run to end, then exit with its code',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--ci'],
   },
   {
     name: 'ps',
@@ -257,7 +261,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Stop a background run and free the profile it holds',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--ci'],
   },
   {
     name: 'build',
@@ -265,7 +269,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Build or pull the runtime image without starting the game',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--pull', '--image'],
+    flags: ['--pull', '--image', '--ci'],
   },
   {
     name: 'steam',
@@ -310,7 +314,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Check which mods a live run loaded, and whether they are current',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--ci'],
   },
   {
     name: 'config',
@@ -568,16 +572,21 @@ function ownersOf(name: string): string[] {
   return [...run, ...owners]
 }
 
-function checkSubverbScope(out: ParsedArgs, seen: Set<string>): void {
+/** What one subverb accepts. `help` renders this same list, so the two cannot disagree. */
+export function subverbFlags(spec: SubverbSpec): readonly string[] {
+  return [...spec.flags, ...GLOBAL_FLAGS]
+}
+
+function checkSubverbScope(out: ParsedArgs, seen: Set<string>, fromEnv: Set<string>): void {
   const sub = SUBCOMMANDS.find((s) => s.name === out.subcommand)
   if (sub?.subverbs === undefined || out.subverb === undefined) return
   const spec = own(sub.subverbs, out.subverb)
   if (spec === undefined) return
 
-  const allowed = new Set<string>([...spec.flags, ...sub.flags, ...GLOBAL_FLAGS])
+  const allowed = new Set<string>(subverbFlags(spec))
   for (const name of seen) {
-    if (allowed.has(name)) continue
-    const owners = ownersOf(name).filter((o) => o !== sub.name)
+    if (allowed.has(name) || fromEnv.has(name)) continue
+    const owners = ownersOf(name)
     const hint = owners.length > 0 ? owners.map((o) => `gamecrate ${o}`).join(' or ') : undefined
     throw usage(`${sub.name} ${out.subverb} does not take ${name}`, hint)
   }
@@ -663,7 +672,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   checkContradictions(seen)
 
   const { cmd, positional, values } = matched(program)
-  const envBuild = applyEnv(cmd, seen, env, values)
+  const fromEnv = new Set<string>()
+  const envBuild = applyEnv(cmd, seen, env, values, fromEnv)
 
   const out: ParsedArgs = {
     subcommand: 'run',
@@ -722,7 +732,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.olderThan = values['olderThan'] as number | undefined
   out.keep = values['keep'] as number | undefined
 
-  applyPositionals(out, positional, seen, opts, out.help)
+  applyPositionals(out, positional, seen, fromEnv, opts, out.help)
   applyTargets(out, values, seen)
 
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
@@ -814,6 +824,7 @@ function applyPositionals(
   out: ParsedArgs,
   positional: string[],
   seen: Set<string>,
+  fromEnv: Set<string>,
   opts: ParseOptions,
   help = false,
 ): void {
@@ -838,7 +849,7 @@ function applyPositionals(
   // scope first: a flag that belongs to another verb means the whole line is misaddressed,
   // which is worth more than a missing argument for the verb they did not want.
   if (!help && !out.help) {
-    checkSubverbScope(out, seen)
+    checkSubverbScope(out, seen, fromEnv)
     requireSubverbArgs(out)
   }
 
@@ -972,6 +983,7 @@ function applyEnv(
   seen: Set<string>,
   env: Record<string, string | undefined>,
   values: Values,
+  fromEnv: Set<string>,
 ): BuildPolicy | undefined {
   let build: BuildPolicy | undefined
   for (const [flag, name] of Object.entries(FLAG_ENV)) {
@@ -981,6 +993,7 @@ function applyEnv(
     const raw = env[name]
     if (raw === undefined || raw === '') continue
     seen.add(flag)
+    fromEnv.add(flag)
 
     if (flag === '--build') {
       build = envBuildPolicy(name, raw)

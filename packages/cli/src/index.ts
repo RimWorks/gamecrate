@@ -757,7 +757,7 @@ async function mods(
   defaults: ProjectDefaults,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game), sources)
   for (const warning of workshop.warnings) warn(warning)
@@ -795,7 +795,8 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
 
 function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
   const base = config.games[game]!
-  const ref = args.image ?? imageFor(base, launchProfile(args, defaults, base))
+  const profile = launchProfile(args, defaults, base)
+  const ref = args.image ?? imageFor(base, profile)
   return withImageOverride(base, ref)
 }
 
@@ -897,7 +898,7 @@ function reportDoctor(game: string, all: Problem[]): boolean {
 
 async function logs(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   const dir = instanceDir(args, config, game, profile)
   if (args.follow) return await follow(dir, false, `${game} ${profile}`)
   const runs = join(dir, 'logs', 'runs')
@@ -991,7 +992,7 @@ async function verify(
   defaults: ProjectDefaults,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, sources })
   if (problems.length > 0) reportProblems(problems)
@@ -1121,7 +1122,7 @@ async function pruneCommand(args: ParsedArgs, config: RootConfig): Promise<numbe
 
 async function clean(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
 
   const dir = profileDataDir(config, game, profile)
   const tier = args.cleanTier ?? 'staging'
@@ -1231,7 +1232,7 @@ async function stop(
   defaults: ProjectDefaults,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   const file = join(instanceDir(args, config, game, profile), '.gamecrate', 'lock')
 
   const record = await readLock(file)
@@ -1255,7 +1256,7 @@ async function attach(
   defaults: ProjectDefaults,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   return await follow(instanceDir(args, config, game, profile), true, `${game} ${profile}`)
 }
 
@@ -1277,7 +1278,7 @@ async function waitFor(
   defaults: ProjectDefaults,
 ): Promise<number> {
   const game = requireGame(args, config)
-  const profile = profileOf(args, defaults)
+  const profile = profileOf(args, defaults, config.games[game]!)
   const dir = instanceDir(args, config, game, profile)
 
   const record = await awaitExit(dir)
