@@ -17,7 +17,13 @@ export function profileOf(args: ParsedArgs, defaults: ProjectDefaults): string {
  */
 export function launchProfile(args: ParsedArgs, defaults: ProjectDefaults, game: GameConfig): string {
   if (args.ci) {
-    if (args.profile !== undefined) throw new GamecrateError('--ci and a profile name contradict', Exit.Usage)
+    if (args.profile !== undefined) {
+      throw new GamecrateError(
+        '--ci and a profile name contradict',
+        Exit.Usage,
+        `drop --ci to run ${args.profile}, or drop ${args.profile} and let --ci pick`,
+      )
+    }
     return profileKey(game, 'ci') ?? 'modless'
   }
   const named = args.profile ?? defaults.defaultProfile ?? defaults.profileOrder?.[0]

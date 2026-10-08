@@ -2183,5 +2183,6 @@ describe('launchProfile', () => {
     }
     expect(thrown?.code).toBe(Exit.Usage)
     expect(thrown?.message).toContain('--ci')
+    expect(thrown?.detail).toContain('drop --ci to run dev, or drop dev and let --ci pick')
   })
 })
