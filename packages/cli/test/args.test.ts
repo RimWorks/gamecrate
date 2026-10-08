@@ -1315,6 +1315,16 @@ describe('--detach', () => {
     expect(buildPolicy(noBuild, { build: 'always' })).toBe('never')
   })
 
+  test('--ci ignores a config build policy, and only a typed --build overrides it', () => {
+    const run = (argv: string[], defaults: ProjectDefaults = {}) =>
+      parseArgs(['run', 'rimworld', ...argv], { env: {}, games: ['rimworld'], defaults })
+
+    expect(buildPolicy(run(['--ci'], { build: 'always' }), {})).toBe('never')
+    expect(buildPolicy(run(['--ci']), { build: 'always' })).toBe('never')
+    expect(buildPolicy(run(['--ci', '--build']), {})).toBe('always')
+    expect(buildPolicy(run([], { build: 'always' }), {})).toBe('always')
+  })
+
   test('--supervised is hidden from help and completion', () => {
     expect(renderHelp([], { dataRoot: '/tmp', games: {} } as RootConfig)).not.toContain('--supervised')
     expect(renderCompletion('bash')).not.toContain('--supervised')

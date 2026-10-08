@@ -440,7 +440,7 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--older-than': (cmd) => cmd.option('--older-than <days>', 'Treat anything this many days old as old enough to delete', (v) => whole('--older-than', v)),
   '--keep': (cmd) => cmd.option('--keep <count>', 'How many run log directories each profile keeps', (v) => whole('--keep', v)),
   '--print-plan': (cmd) => cmd.option('--print-plan', 'Print what the launch would do instead of launching'),
-  '--ci': (cmd) => cmd.option('--ci', 'Use the `ci` profile, or `modless` when no config names one'),
+  '--ci': (cmd) => cmd.option('--ci', 'Use the `ci` profile, or `modless` when no config names one, and leave the mod build to the workflow'),
   '--game': (cmd) => cmd.option('--game <name>', 'The game to act on, when no profile says which'),
   '--json': (cmd) => cmd.option('--json', 'Print JSON instead of text'),
   '--root': (cmd) => cmd.option('--root', 'Run as root in the container instead of as you'),
@@ -1062,7 +1062,7 @@ function applyScalarDefaults(out: ParsedArgs, defaults: ProjectDefaults): void {
   out.network ??= defaults.network
   out.log ??= defaults.log
   out.pull ??= defaults.pull
-  out.build ??= defaults.build
+  if (!out.ci) out.build ??= defaults.build
   out.sort ??= defaults.sort
   out.instance ??= defaults.instance
 }
@@ -1095,6 +1095,7 @@ export function wantsReplace(args: ParsedArgs, profile: ProfileConfig): boolean 
 
 /** Three-way, so first defined wins. --no-build already arrives as 'never'. */
 export function buildPolicy(args: ParsedArgs, profile: ProfileConfig): BuildPolicy {
+  if (args.ci) return args.build ?? 'never'
   return args.build ?? profile.build ?? 'auto'
 }
 
