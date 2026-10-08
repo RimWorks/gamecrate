@@ -645,6 +645,8 @@ function pick(index: ModIndex, key: string, ref: string): ModRecord | null {
   return best
 }
 
+const LAST_ROOT_INDEX = Number.MAX_SAFE_INTEGER
+
 function byPath(index: ModIndex, raw: string, game: GameConfig): ModRecord | null {
   const dir = resolvePath(expandHome(raw))
   for (const bucket of index.byPackageId.values()) {
@@ -657,7 +659,14 @@ function byPath(index: ModIndex, raw: string, game: GameConfig): ModRecord | nul
   try {
     const manifest = index.plugin.parseManifest(readFileSync(file, 'utf8'))
     if (manifest === null) return null
-    return toRecord({ dir, kind: 'local', rootIndex: -1, linkedWorktree: false }, manifest, game)
+    const record = toRecord(
+      { dir, kind: 'local', rootIndex: LAST_ROOT_INDEX, linkedWorktree: false },
+      manifest,
+      game,
+    )
+    insert(index, record)
+    index.byPackageId.get(record.packageId.toLowerCase())?.sort(rank)
+    return record
   } catch {
     return null
   }

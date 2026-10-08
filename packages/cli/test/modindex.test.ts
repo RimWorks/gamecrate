@@ -231,6 +231,88 @@ describe('resolveModRef addressing', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  test('a path: ref registers the mod, so its bare id resolves afterwards', async () => {
+    const outside = await fixture()
+    try {
+      const dir = await mod(outside, 'Handed', 'handed.mod')
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin)
+
+      expect(resolveModRef(index, 'handed.mod', cfg)).toBeNull()
+
+      const first = resolveModRef(index, `path:${dir}`, cfg)
+      expect(first?.dir).toBe(dir)
+      expect(resolveModRef(index, 'handed.mod', cfg)?.dir).toBe(dir)
+      expect(resolveModRef(index, 'mod', cfg)?.dir).toBe(dir)
+      expect(resolveModRef(index, `path:${dir}`, cfg)).toBe(first!)
+      expect(index.byPackageId.get('handed.mod')).toHaveLength(1)
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('a path: ref loses the bare id to a scanned copy of the same mod', async () => {
+    const root = await fixture()
+    const outside = await fixture()
+    try {
+      const scanned = await mod(root, 'Twin', 'twin.mod')
+      const handed = await mod(outside, 'Twin', 'twin.mod')
+      const cfg = withRoots(atlas, [scanRoot(root, 3)], null)
+      const index = await buildIndex('atlas', cfg, plugin)
+
+      expect(resolveModRef(index, `path:${handed}`, cfg)?.dir).toBe(handed)
+      expect(index.byPackageId.get('twin.mod')).toHaveLength(2)
+      expect(resolveModRef(index, 'twin.mod', cfg)?.dir).toBe(scanned)
+      expect(index.problems).toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('a path: ref takes the bare id from a workshop copy, the way a local scan would', async () => {
+    const ws = await fixture()
+    const outside = await fixture()
+    try {
+      await mod(ws, '112233', 'both.mod')
+      const handed = await mod(outside, 'Both', 'both.mod')
+      const cfg = withRoots(atlas, [], ws)
+      const index = await buildIndex('atlas', cfg, plugin)
+
+      expect(resolveModRef(index, 'both.mod', cfg)?.kind).toBe('workshop')
+      expect(resolveModRef(index, `path:${handed}`, cfg)?.dir).toBe(handed)
+      expect(resolveModRef(index, 'both.mod', cfg)?.dir).toBe(handed)
+    } finally {
+      await rm(ws, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
+  test('two path: refs for one packageId tie, and the tie is reported', async () => {
+    const outside = await fixture()
+    try {
+      const first = await mod(outside, 'A', 'tie.mod')
+      const second = await mod(outside, 'B', 'tie.mod')
+      const cfg = withRoots(atlas, [], null)
+      const index = await buildIndex('atlas', cfg, plugin)
+
+      expect(resolveModRef(index, `path:${first}`, cfg)?.dir).toBe(first)
+      expect(resolveModRef(index, `path:${second}`, cfg)?.dir).toBe(second)
+      expect(index.byPackageId.get('tie.mod')).toHaveLength(2)
+
+      expect(resolveModRef(index, 'tie.mod', cfg)?.dir).toBe(first)
+      expect(index.problems).toEqual([
+        {
+          where: 'tie.mod',
+          message: 'resolved by directory name: 2 candidates tie on every rule',
+          suggestion: `using ${first}`,
+        },
+      ])
+    } finally {
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('source cache scanning', () => {
