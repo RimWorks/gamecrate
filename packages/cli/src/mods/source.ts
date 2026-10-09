@@ -5,6 +5,7 @@ import { mkdir, open, readFile, rm, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { wantsSteam } from '../cli/args'
 import { globToRegExp, resolveProfile } from '../config/load'
 import { isRunning } from '../launch/prepare'
 import { Exit, GamecrateError, own } from '../types'
@@ -307,6 +308,7 @@ export function reachedEntries(
   args: Partial<ParsedArgs>,
 ): ModEntry[] {
   const out: ModEntry[] = [...(game.preCore ?? []), game.core, ...game.dlc]
+  if (game.steamlessMod !== undefined && !wantsSteam(args, profile)) out.push(game.steamlessMod)
   if (profile.includeBase !== false) out.push(...(game.base ?? []))
   const only = args.only ?? []
   out.push(...(only.length > 0 ? only : (profile.mods ?? [])), ...(args.mods ?? []))

@@ -126,7 +126,7 @@ function collectSlots(
   if (!modless) for (const [i, id] of (game.preCore ?? []).entries()) slots.push({ entry: id, where: `${at}/preCore/${i}` })
   slots.push({ entry: game.core, where: `${at}/core` })
   for (const [i, id] of game.dlc.entries()) slots.push({ entry: id, where: `${at}/dlc/${i}`, dlc: true })
-  if (game.steamlessMod !== undefined && !wantsSteam(args, profile)) {
+  if (!modless && game.steamlessMod !== undefined && !wantsSteam(args, profile)) {
     slots.push({ entry: game.steamlessMod, where: `${at}/steamlessMod` })
   }
   if (!modless && profile.includeBase !== false) {

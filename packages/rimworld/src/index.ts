@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 import type { GamePlugin } from '@gamecrate/cli'
 import { mergePrefsXml, parseAboutXml, writeModsConfigXml, renderModSettings } from './xml'
 
@@ -64,6 +66,10 @@ const plugin: GamePlugin = {
       'ludeon.rimworld.odyssey',
     ],
     steamlessMod: 'CryptikLemur.NoSteamPopup',
+    library: {
+      'CryptikLemur.NoSteamPopup': { path: join(import.meta.dirname, '..', 'mods', 'NoSteamPopup') },
+      'concordlib.concord': { workshop: 3758333473 },
+    },
     modes: ['headed', 'headless', 'screenshot'],
     settings: { network: 'host' },
     profiles: {},

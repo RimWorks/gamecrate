@@ -1555,6 +1555,31 @@ describe('steam', () => {
     expect(plan.mods.map((m) => m.packageId)).toContain('Example.NoSteam')
   })
 
+  test('modless stays the core plus dlc, with no steamless mod bolted on', async () => {
+    const game = { ...atlas({ dsd: { mods: [] } }), steamlessMod: 'Example.NoSteam' }
+    index = makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('s5-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('s5-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('s5-ideology'), kind: 'official' },
+      { id: 'Example.NoSteam', dir: await modDir('s5-nosteam') },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'modless',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      args: { sort: 'none' },
+    })
+    expect(problems).toEqual([])
+    expect(plan.steam).toBe(false)
+    expect(plan.mods.map((m) => m.packageId)).toEqual([
+      'Atlasco.Atlas',
+      'Atlasco.Atlas.Royalty',
+      'Atlasco.Atlas.Ideology',
+    ])
+  })
+
   test('a profile asking for steam needs no flag', async () => {
     const game = { ...atlas({ dsd: { mods: [], steam: true } }), steamlessMod: 'Example.NoSteam' }
     index = makeIndex([

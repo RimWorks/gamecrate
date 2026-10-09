@@ -591,6 +591,20 @@ describe('prepareSources', () => {
     }
   })
 
+  test('a steamless run fetches the steamless mod, a steam run does not', async () => {
+    const { url } = fixture()
+    const data = temp('gc-data-')
+    const game = { ...gameWith({ 'nosteam.mod': { git: url, branch: 'main' } }, { p: {} }), steamlessMod: 'NoSteam.Mod' }
+    const off = await prepareSources(game, 'p', cliArgs(), data, true)
+    try {
+      expect([...off.dirs.keys()]).toEqual(['nosteam.mod'])
+    } finally {
+      await off.release()
+    }
+    const on = await prepareSources(game, 'p', cliArgs({ steam: true }), data, true)
+    expect(on.dirs.size).toBe(0)
+  })
+
   test('an excluded id is never fetched', async () => {
     const { url } = fixture()
     const data = temp('gc-data-')
