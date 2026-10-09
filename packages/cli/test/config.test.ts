@@ -200,9 +200,9 @@ describe('resolveProfile', () => {
       lightweave: { mods: ['Kitted.LightweaveRimBridge'], extends: 'kitted' },
       trimmed: { extends: 'lightweave', exclude: ['Kitted.Roshar', 'patchlib.*'] },
       vanilla: { alias: 'modless' },
-      pinned: { mods: [], detach: true, replace: true, build: 'always' as const, gameVersion: '2.0' },
+      pinned: { mods: [], detach: true, replace: true, steam: true, build: 'always' as const, gameVersion: '2.0' },
       inherits: { extends: 'pinned' },
-      restated: { extends: 'pinned', detach: false, gameVersion: '1.6' },
+      restated: { extends: 'pinned', detach: false, steam: false, gameVersion: '1.6' },
       loop: { extends: 'knot' },
       knot: { extends: 'loop' },
     },
@@ -212,13 +212,16 @@ describe('resolveProfile', () => {
     const p = resolveProfile(game, 'pinned')
     expect(p.detach).toBe(true)
     expect(p.replace).toBe(true)
+    expect(p.steam).toBe(true)
     expect(p.build).toBe('always')
     expect(p.gameVersion).toBe('2.0')
   })
 
   test('a child inherits them, and may restate one', () => {
     expect(resolveProfile(game, 'inherits').detach).toBe(true)
+    expect(resolveProfile(game, 'inherits').steam).toBe(true)
     expect(resolveProfile(game, 'restated').detach).toBe(false)
+    expect(resolveProfile(game, 'restated').steam).toBe(false)
     expect(resolveProfile(game, 'restated').gameVersion).toBe('1.6')
     expect(resolveProfile(game, 'restated').replace).toBe(true)
   })
@@ -727,6 +730,13 @@ describe('library entry sources', () => {
   function lib(entry: unknown): Problem[] {
     return merged({ games: { atlas: { library: { 'gitlib.git': entry } } } }).problems
   }
+
+  test('a user pin replaces the plugin pin for that id, it does not merge into it', () => {
+    const user = { games: { atlas: { library: { 'patchlib.patch': { git: 'https://example.test/p.git' } } } } }
+    const { config, problems } = merged(user)
+    expect(problems).toEqual([])
+    expect(config.games.atlas?.library?.['patchlib.patch']).toEqual({ git: 'https://example.test/p.git' })
+  })
 
   test('a git entry takes a branch and a subdir', () => {
     expect(lib({ git: 'https://example.test/x.git', branch: 'dev', subdir: 'Source/Mod' })).toEqual([])

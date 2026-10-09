@@ -274,6 +274,12 @@ describe('flag rejection', () => {
     expect(fails(['run', 'beacon', '--build', '--no-build']).message).toContain('contradict')
   })
 
+  test('--steam and --no-steam contradict', () => {
+    expect(parseArgs(['run', 'beacon', '--steam'], NO_ENV).steam).toBe(true)
+    expect(parseArgs(['run', 'beacon', '--no-steam'], NO_ENV).noSteam).toBe(true)
+    expect(fails(['run', 'beacon', '--steam', '--no-steam']).message).toContain('contradict')
+  })
+
   test('--flag=value is accepted, empty is not', () => {
     expect(parseArgs(['run', 'beacon', '--mod=Bridge.Lantern'], NO_ENV).mods).toEqual(['Bridge.Lantern'])
     expect(fails(['run', 'beacon', '--mod=']).message).toContain('needs a value')

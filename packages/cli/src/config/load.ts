@@ -510,8 +510,8 @@ export function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * deepMerge, then the one array that concatenates. `branches[0]` gets the bare tag, so a
- * replacing override would move it silently and drop the plugin's other branches.
+ * deepMerge, then the two keys it gets wrong: `branches[0]` carries the bare tag, and a
+ * library entry names one source, so a user's `git` over a plugin's `workshop` must replace it.
  */
 export function mergeUserConfig(base: RootConfig, user: unknown): RootConfig {
   const out = deepMerge(base, user)
@@ -519,11 +519,16 @@ export function mergeUserConfig(base: RootConfig, user: unknown): RootConfig {
   if (!isObj(games)) return out
   for (const name of Object.keys(games)) {
     const theirs = own(games, name)
+    const target = own(out.games, name)
+    if (target === undefined) continue
+    const library = isObj(theirs) ? theirs['library'] : undefined
+    if (isObj(library)) {
+      target.library = spliceLibrary(own(base.games, name)?.library, library as Record<string, LibraryEntry>)
+    }
     const steamBuild = isObj(theirs) ? theirs['steamBuild'] : undefined
     const added = isObj(steamBuild) ? steamBuild['branches'] : undefined
     const declared = own(base.games, name)?.steamBuild?.branches
-    const target = own(out.games, name)
-    if (!Array.isArray(added) || !Array.isArray(declared) || target === undefined) continue
+    if (!Array.isArray(added) || !Array.isArray(declared)) continue
     target.steamBuild.branches = concatBranches(declared, added)
   }
   return out

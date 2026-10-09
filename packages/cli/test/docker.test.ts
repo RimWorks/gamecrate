@@ -1,6 +1,12 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
-import { tmpdir, hostname } from 'node:os'
+
+const realOs = { ...(await import('node:os')) }
+let fakeHomeDir: string | undefined
+const os = { ...realOs, homedir: (): string => fakeHomeDir ?? realOs.homedir() }
+await mock.module('node:os', () => ({ ...os, default: os }))
+
+const { tmpdir, hostname } = os
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
@@ -1014,15 +1020,22 @@ describe('steamMounts', () => {
     rmSync(home, { recursive: true, force: true })
   })
 
-  test('binds host /tmp writable so the overlay can reach its frame socket', () => {
+  test('steam on shares the ipc and pid namespaces, and preloads the overlay', () => {
     const home = fakeHome()
     const root = join(home, '.local', 'share', 'Steam')
-    mkdirSync(root, { recursive: true })
+    mkdirSync(join(root, 'ubuntu12_64'), { recursive: true })
+    writeFileSync(join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'), '')
     mkdirSync(join(home, '.steam'), { recursive: true })
     symlinkSync(root, join(home, '.steam', 'steam'))
-    const tmp = steamMounts('atlas', home, '/tmp/home').find((m) => m.target === '/tmp')
-    expect(tmp).toEqual({ type: 'bind', source: '/tmp', target: '/tmp' })
-    rmSync(home, { recursive: true, force: true })
+    fakeHomeDir = home
+    try {
+      const spec = buildRunSpec({ ...plan('atlas', atlas), steam: true }, [], identity)
+      expect(spec.extraArgs).toEqual(['--ipc=host', '--pid=host'])
+      expect(spec.env['LD_PRELOAD']).toBe(join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'))
+    } finally {
+      fakeHomeDir = undefined
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   test('binds every library the vdf names, at its own path', () => {

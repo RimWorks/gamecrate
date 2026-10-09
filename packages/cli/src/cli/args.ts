@@ -791,6 +791,7 @@ function checkRepeats(program: Command, counts: Map<string, number>): void {
 function checkContradictions(seen: Set<string>): void {
   if (seen.has('--build') && seen.has('--no-build')) throw usage('--build and --no-build contradict')
   if (seen.has('--replace') && seen.has('--no-replace')) throw usage('--replace and --no-replace contradict')
+  if (seen.has('--steam') && seen.has('--no-steam')) throw usage('--steam and --no-steam contradict')
   if (!seen.has('--detach')) return
   if (seen.has('--no-detach')) throw usage('--detach and --no-detach contradict')
   if (seen.has('--dry-run')) throw usage('--detach and --dry-run contradict')
