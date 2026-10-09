@@ -94,6 +94,8 @@ export const RUN_FLAGS = [
   '--no-replace',
   '--detach',
   '--no-detach',
+  '--steam',
+  '--no-steam',
   '--sort',
   '--docker-arg',
   '--dry-run',
@@ -433,6 +435,8 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--no-replace': (cmd) => cmd.option('--no-replace', 'Refuse to launch when this profile already runs'),
   '--detach': (cmd) => cmd.option('--detach', 'Run in the background and give the prompt back'),
   '--no-detach': (cmd) => cmd.option('--no-detach', 'Stay in the foreground, whatever the config asks for'),
+  '--steam': (cmd) => cmd.option('--steam', "Bind the host's running steam client in, and use its network"),
+  '--no-steam': (cmd) => cmd.option('--no-steam', "Run without steam, and load the game's steamless mod"),
   '--supervised': (cmd) => cmd.addOption(new Option('--supervised <instanceDir>').hideHelp()),
   '--sort': (cmd) => cmd.addOption( enumOption(`--sort <${SORTS.join('|')}>`, 'Load order: as the profile lists them, or by dependency', SORTS)),
   '--docker-arg': (cmd) => cmd.option('--docker-arg <arg>', 'One extra argument to pass to docker run', collect, []),
@@ -700,6 +704,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
     noReplace: seen.has('--no-replace'),
     detach: values['detach'] === true,
     noDetach: seen.has('--no-detach'),
+    steam: values['steam'] === true,
+    noSteam: seen.has('--no-steam'),
     supervised: typeof values['supervised'] === 'string',
     ci: values['ci'] === true,
     use: (values['use'] as string[] | undefined) ?? [],
@@ -1078,6 +1084,7 @@ function applyFlagDefaults(out: ParsedArgs, seen: Set<string>, defaults: Project
   if (!seen.has('--no-stale-check')) out.noStaleCheck = defaults.noStaleCheck ?? out.noStaleCheck
   if (!seen.has('--replace') && !seen.has('--no-replace')) out.replace = defaults.replace ?? out.replace
   if (!seen.has('--detach') && !seen.has('--no-detach')) out.detach = defaults.detach ?? out.detach
+  if (!seen.has('--steam') && !seen.has('--no-steam')) out.steam = defaults.steam ?? out.steam
 }
 
 /**
@@ -1091,6 +1098,12 @@ export function wantsDetach(args: ParsedArgs, profile: ProfileConfig): boolean {
 /** The parent already replaced the previous run, and the only lock left is the child's own. */
 export function wantsReplace(args: ParsedArgs, profile: ProfileConfig): boolean {
   return !args.supervised && !args.noReplace && (args.replace || profile.replace === true)
+}
+
+/** --no-steam is the only refusal. A profile or project `steam: true` reaches it the same way. */
+export function wantsSteam(args: Partial<ParsedArgs>, profile: ProfileConfig): boolean {
+  if (args.noSteam === true) return false
+  return args.steam === true || profile.steam === true
 }
 
 /** Three-way, so first defined wins. --no-build already arrives as 'never'. */

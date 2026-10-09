@@ -13,6 +13,7 @@ import {
   supervisedDir,
   supervisorArgv,
   wantsDetach,
+  wantsSteam,
   wantsReplace,
 } from '../src/cli/args'
 import { renderHelp } from '../src/cli/help'
@@ -960,6 +961,7 @@ const plan: LaunchPlan = {
   plugin: fixturePlugin(),
   profile: 'kitted',
   instanceDir: '/fixtures/data/beacon/kitted',
+  steam: false,
   warnOnStale: true,
   settings,
   mods: [
@@ -1302,6 +1304,32 @@ describe('--detach', () => {
     expect(wantsReplace(bare, { replace: true })).toBe(true)
     expect(wantsReplace(onFlag, {})).toBe(true)
     expect(wantsReplace(offFlag, { replace: true })).toBe(false)
+  })
+
+  test('steam is off until a flag or a config asks, and --no-steam always refuses', () => {
+    const bare = parseArgs(['run', 'rimworld'], { env: {}, games: ['rimworld'] })
+    const onFlag = parseArgs(['run', 'rimworld', '--steam'], { env: {}, games: ['rimworld'] })
+    const offFlag = parseArgs(['run', 'rimworld', '--no-steam'], { env: {}, games: ['rimworld'] })
+
+    expect(wantsSteam(bare, {})).toBe(false)
+    expect(wantsSteam(bare, { steam: true })).toBe(true)
+    expect(wantsSteam(onFlag, {})).toBe(true)
+    expect(wantsSteam(offFlag, { steam: true })).toBe(false)
+  })
+
+  test('a project steam: true fills args.steam', () => {
+    const args = parseArgs(['run', 'rimworld'], { env: {}, games: ['rimworld'], defaults: { steam: true } })
+    expect(args.steam).toBe(true)
+    expect(wantsSteam(args, {})).toBe(true)
+  })
+
+  test('--no-steam beats a project steam: true', () => {
+    const args = parseArgs(['run', 'rimworld', '--no-steam'], {
+      env: {},
+      games: ['rimworld'],
+      defaults: { steam: true },
+    })
+    expect(wantsSteam(args, {})).toBe(false)
   })
 
   test('build is first defined wins, and --no-build still means never', () => {

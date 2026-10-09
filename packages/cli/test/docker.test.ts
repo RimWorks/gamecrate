@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_SETTINGS } from '../src/config/builtin'
-import { buildRunSpec, driNodes, gpuPassthrough, refuseProtonHeaded, renderGroups, toDockerArgs, windowTitle } from '../src/docker/spec'
+import { buildRunSpec, driNodes, gpuPassthrough, refuseProtonHeaded, renderGroups, steamLibraries, steamMounts, steamOverlayEnv, toDockerArgs, windowTitle } from '../src/docker/spec'
 import { iconProperty } from '../src/docker/icon'
 import { resolveIdentity } from '../src/docker/identity'
 import { spawn } from 'node:child_process'
@@ -98,6 +98,7 @@ function plan(
     profile: 'kitted',
     settings: { ...settings, ...overrides },
     mods: [],
+    steam: false,
     warnOnStale: true,
     profileDir,
     ...(instance === undefined ? {} : { instance }),
@@ -986,5 +987,95 @@ describe('runContainer spawn failures', () => {
       process.env['PATH'] = path
       process.off('unhandledRejection', onUnhandled)
     }
+  })
+})
+
+describe('steamMounts', () => {
+  function fakeHome(): string {
+    return mkdtempSync(join(tmpdir(), 'gamecrate-steam-'))
+  }
+
+  test('steam off adds no steam mount', () => {
+    const args = toDockerArgs(buildRunSpec(plan('atlas', atlas), [], identity))
+    expect(mountFor(args, '/tmp/home/.steam')).toBeUndefined()
+  })
+
+  test('binds .steam into the container home and the real root at its own path', () => {
+    const home = fakeHome()
+    const root = join(home, '.local', 'share', 'Steam')
+    mkdirSync(join(root, 'sdk64'), { recursive: true })
+    mkdirSync(join(home, '.steam'), { recursive: true })
+    symlinkSync(root, join(home, '.steam', 'steam'))
+    expect(steamMounts('atlas', home, '/tmp/home')).toEqual([
+      { type: 'bind', source: join(home, '.steam'), target: '/tmp/home/.steam', readonly: true },
+      { type: 'bind', source: root, target: root, readonly: true },
+      { type: 'bind', source: '/tmp', target: '/tmp' },
+    ])
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  test('binds host /tmp writable so the overlay can reach its frame socket', () => {
+    const home = fakeHome()
+    const root = join(home, '.local', 'share', 'Steam')
+    mkdirSync(root, { recursive: true })
+    mkdirSync(join(home, '.steam'), { recursive: true })
+    symlinkSync(root, join(home, '.steam', 'steam'))
+    const tmp = steamMounts('atlas', home, '/tmp/home').find((m) => m.target === '/tmp')
+    expect(tmp).toEqual({ type: 'bind', source: '/tmp', target: '/tmp' })
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  test('binds every library the vdf names, at its own path', () => {
+    const home = fakeHome()
+    const root = join(home, '.local', 'share', 'Steam')
+    const other = join(home, 'games', 'SteamLibrary')
+    mkdirSync(join(root, 'steamapps'), { recursive: true })
+    mkdirSync(other, { recursive: true })
+    mkdirSync(join(home, '.steam'), { recursive: true })
+    symlinkSync(root, join(home, '.steam', 'steam'))
+    writeFileSync(
+      join(root, 'steamapps', 'libraryfolders.vdf'),
+      `"libraryfolders"\n{\n\t"0"\n\t{\n\t\t"path"\t\t"${root}"\n\t}\n\t"1"\n\t{\n\t\t"path"\t\t"${other}"\n\t}\n\t"2"\n\t{\n\t\t"path"\t\t"${join(home, 'gone')}"\n\t}\n}\n`,
+    )
+    expect(steamMounts('atlas', home, '/tmp/home')).toEqual([
+      { type: 'bind', source: join(home, '.steam'), target: '/tmp/home/.steam', readonly: true },
+      { type: 'bind', source: root, target: root, readonly: true },
+      { type: 'bind', source: '/tmp', target: '/tmp' },
+      { type: 'bind', source: other, target: other, readonly: true },
+    ])
+    expect(steamLibraries(root)).toEqual([root, other])
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  test('no libraryfolders.vdf means no extra library', () => {
+    const home = fakeHome()
+    const root = join(home, 'Steam')
+    mkdirSync(root, { recursive: true })
+    expect(steamLibraries(root)).toEqual([])
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  test('the overlay preloads only when the 64-bit renderer is there', () => {
+    const home = fakeHome()
+    const root = join(home, 'Steam')
+    mkdirSync(join(root, 'ubuntu12_64'), { recursive: true })
+    expect(steamOverlayEnv(root)).toEqual({})
+    writeFileSync(join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'), '')
+    expect(steamOverlayEnv(root)).toEqual({
+      LD_PRELOAD: join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'),
+    })
+    rmSync(home, { recursive: true, force: true })
+  })
+
+  test('no ~/.steam/steam fails with the environment code', () => {
+    const home = fakeHome()
+    try {
+      steamMounts('atlas', home, '/tmp/home')
+      throw new Error('expected a throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(GamecrateError)
+      expect((error as GamecrateError).code).toBe(Exit.Environment)
+    }
+    rmSync(home, { recursive: true, force: true })
   })
 })

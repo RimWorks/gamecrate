@@ -68,6 +68,7 @@ function plan(mode: ModeName, marker?: string): LaunchPlan {
     profile: 'modless',
     settings: { ...DEFAULT_SETTINGS, gpu: false, display: 'wayland' },
     mods: [],
+    steam: false,
     warnOnStale: true,
     profileDir,
     instanceDir: profileDir,

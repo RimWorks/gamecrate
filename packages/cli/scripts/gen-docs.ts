@@ -161,6 +161,7 @@ const PLUGIN_GAME_KEYS = [
   'dlc',
   'preCore',
   'base',
+  'steamlessMod',
   'modes',
   'ignoresWmDelete',
 ] as const

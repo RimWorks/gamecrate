@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 
+import { wantsSteam } from '../cli/args'
 import { canonicalProfile, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
 import { buildIndex, resolveModRef, applyWorktreeRequests, applySourceOverrides } from '../mods/modindex'
 import { libraryPin, sourcesRoot } from '../mods/source'
@@ -125,6 +126,9 @@ function collectSlots(
   if (!modless) for (const [i, id] of (game.preCore ?? []).entries()) slots.push({ entry: id, where: `${at}/preCore/${i}` })
   slots.push({ entry: game.core, where: `${at}/core` })
   for (const [i, id] of game.dlc.entries()) slots.push({ entry: id, where: `${at}/dlc/${i}`, dlc: true })
+  if (game.steamlessMod !== undefined && !wantsSteam(args, profile)) {
+    slots.push({ entry: game.steamlessMod, where: `${at}/steamlessMod` })
+  }
   if (!modless && profile.includeBase !== false) {
     for (const [i, id] of (game.base ?? []).entries()) slots.push({ entry: id, where: `${at}/base/${i}` })
   }
@@ -430,6 +434,13 @@ export async function resolvePlan(
 
   const settings = resolveSettings(root, game, profile, instance.settings, args.resolution)
   if (args.network !== undefined) settings.network = args.network
+  const steam = wantsSteam(args, profile)
+  if (steam && settings.network !== 'host') {
+    warnings.push(
+      `steam needs network host, not ${settings.network}: a steam client answers on a socket that only its own network namespace can see`,
+    )
+    settings.network = 'host'
+  }
   if (args.gameArgs?.length) settings.gameArgs = [...(settings.gameArgs ?? []), ...args.gameArgs]
   if (args.dockerArgs?.length) settings.dockerArgs = [...(settings.dockerArgs ?? []), ...args.dockerArgs]
 
@@ -482,6 +493,7 @@ export async function resolvePlan(
     logsDirHost: join(instance.dir, 'logs'),
     runDirHost: join(instance.dir, 'logs'),
     mode,
+    steam,
     ...(args.marker === undefined ? {} : { marker: args.marker }),
     timeoutSeconds: args.timeout ?? DEFAULT_TIMEOUT_SECONDS,
     renderWaitSeconds: args.renderWait ?? DEFAULT_RENDER_WAIT_SECONDS,

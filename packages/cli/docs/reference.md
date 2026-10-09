@@ -148,6 +148,7 @@ in for a flag.
 | `--no-load` | `steam build` | Skip the docker daemon and keep no local image. Use it on a CI runner with --push |
 | `--no-replace` | `run` | Refuse to launch when this profile already runs |
 | `--no-stale-check` | `run` | Do not warn when a mod's code is newer than its DLL |
+| `--no-steam` | `run` | Run without steam, and load the game's steamless mod |
 | `--no-worktree` | `run`, `clean`, `logs`, `attach`, `wait`, `stop`, `shell`, `verify` | Ignore the current git checkout and $GAMECRATE_WORKTREE |
 | `--older-than <days>` | `prune` | Treat anything this many days old as old enough to delete |
 | `--only <id>` | `run`, `mods`, `shell` | Load only these mods and none of the rest. Repeatable. |
@@ -168,6 +169,7 @@ in for a flag.
 | `--root` | `run`, `shell` | Run as root in the container instead of as you |
 | `--sort <topo\|none>` | `run`, `mods` | Load order: as the profile lists them, or by dependency |
 | `--staging` | `clean` | Delete the staged copies of the mods only (the default) |
+| `--steam` | `run` | Bind the host's running steam client in, and use its network |
 | `--subdir <path>` | `mods add` | The mod folder inside the repository |
 | `--tag <name>` | `mods add` | Pin to this git tag |
 | `--timeout <seconds>` | `run` | Stop a marker or headless run after this many seconds |

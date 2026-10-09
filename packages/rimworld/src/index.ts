@@ -63,6 +63,7 @@ const plugin: GamePlugin = {
       'ludeon.rimworld.anomaly',
       'ludeon.rimworld.odyssey',
     ],
+    steamlessMod: 'CryptikLemur.NoSteamPopup',
     modes: ['headed', 'headless', 'screenshot'],
     settings: { network: 'host' },
     profiles: {},

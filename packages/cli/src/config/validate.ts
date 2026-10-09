@@ -189,6 +189,7 @@ const profile = obj({
     .optional(),
   detach: bool.describe('Stands in for `--detach`. `--no-detach` overrides it.').optional(),
   replace: bool.describe('Stands in for `--replace`. `--no-replace` overrides it.').optional(),
+  steam: bool.describe('Stands in for `--steam`. `--no-steam` overrides it.').optional(),
   build: oneOf(['auto', 'always', 'never'])
     .describe('Stands in for `--build` and `--no-build`.')
     .optional(),
@@ -476,6 +477,9 @@ const game = obj({
   saveExtensions: strArray.describe('Filename suffixes that mean a save. `clean --all` counts them before it deletes.'),
   core: str.describe("The base game's `packageId`."),
   dlc: strArray.describe('The official expansions, loaded after `core`.'),
+  steamlessMod: str
+    .describe('The `packageId` loaded in place of the steam client when steam is off.')
+    .optional(),
   preCore: strArray.describe('Mods that must load before the base game.').optional(),
   base: strArray.describe('Mods every profile of this game needs, loaded after the DLC.').optional(),
   library: z

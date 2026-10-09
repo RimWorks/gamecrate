@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type {
@@ -18,6 +18,10 @@ export const CONTAINER_RUNTIME_DIR = '/tmp/xdg'
 
 /** Where the run directory is bound, so `-logfile /logs/Player.log` lands beside stdout.log. */
 export const CONTAINER_LOG_DIR = '/logs'
+
+const STEAM_NAMESPACES = ['--ipc=host', '--pid=host']
+
+const OVERLAY_SOCKET_DIR = '/tmp'
 
 const X11_SOCKET_DIR = '/tmp/.X11-unix'
 
@@ -116,6 +120,7 @@ export function buildRunSpec(
   appendGameArgs(command, mounts, env, plan, proton)
 
   addScratch(mounts, env, plan, identity)
+  addSteam(mounts, env, plan, identity)
   if (headed) addSession(mounts, env, plan)
   if (wantsLinkOpener(plan)) addLinkOpener(mounts, plan)
 
@@ -157,7 +162,7 @@ export function buildRunSpec(
     // An X client whose WM_CLIENT_MACHINE is foreign gets ` <@name>` stapled to its caption.
     ...(headed && settings.display === 'x11' ? { hostname: hostname() } : {}),
     command,
-    extraArgs: [...(settings.dockerArgs ?? [])],
+    extraArgs: [...(plan.steam ? STEAM_NAMESPACES : []), ...(settings.dockerArgs ?? [])],
   }
 }
 
@@ -171,6 +176,70 @@ function addGameFiles(mounts: Mount[], plan: LaunchPlan): void {
     )
   }
   mounts.push({ type: 'bind', source: hostPath(gameFiles.host), target: gameFiles.container, readonly: true })
+}
+
+/**
+ * libsteam_api dlopens $HOME/.steam/sdk64/steamclient.so, and every link inside .steam is an
+ * absolute host path, so the real steam root has to answer at that same path in the container.
+ */
+export function steamMounts(game: string, home: string, containerHome: string): Mount[] {
+  const dot = join(home, '.steam')
+  if (!existsSync(join(dot, 'steam'))) {
+    throw new GamecrateError(
+      `${game}: steam is on, but ${dot}/steam is not there`,
+      Exit.Environment,
+      'start the steam client once so it writes that directory, or relaunch with --no-steam',
+    )
+  }
+  const root = realpathSync(join(dot, 'steam'))
+  const mounts: Mount[] = [
+    { type: 'bind', source: realpathSync(dot), target: join(containerHome, '.steam'), readonly: true },
+    { type: 'bind', source: root, target: root, readonly: true },
+    { type: 'bind', source: OVERLAY_SOCKET_DIR, target: OVERLAY_SOCKET_DIR },
+  ]
+  for (const library of steamLibraries(root)) {
+    if (library === root) continue
+    mounts.push({ type: 'bind', source: library, target: library, readonly: true })
+  }
+  return mounts
+}
+
+/**
+ * Steam answers a workshop query with a path inside whichever library holds the download, so
+ * every library has to answer at its own path or the game finds no folder for any item.
+ */
+export function steamLibraries(root: string): string[] {
+  const file = join(root, 'steamapps', 'libraryfolders.vdf')
+  if (!existsSync(file)) return []
+  const out: string[] = []
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const hit = /^\s*"path"\s+"(.+)"\s*$/.exec(line)
+    if (hit === null) continue
+    const path = hit[1] as string
+    if (existsSync(path) && !out.includes(realpathSync(path))) out.push(realpathSync(path))
+  }
+  return out
+}
+
+/**
+ * The overlay loads through LD_PRELOAD, which the client sets when it starts a game itself.
+ * Only the 64-bit copy: preloading the 32-bit one makes ld.so complain and loads nothing.
+ */
+export function steamOverlayEnv(root: string): Record<string, string> {
+  const lib = join(root, 'ubuntu12_64', 'gameoverlayrenderer.so')
+  if (!existsSync(lib)) return {}
+  return { LD_PRELOAD: lib }
+}
+
+function addSteam(
+  mounts: Mount[],
+  env: Record<string, string>,
+  plan: LaunchPlan,
+  identity: Identity,
+): void {
+  if (!plan.steam) return
+  mounts.push(...steamMounts(plan.game, homedir(), identity.home))
+  Object.assign(env, steamOverlayEnv(realpathSync(join(homedir(), '.steam', 'steam'))))
 }
 
 function addStage(mounts: Mount[], plan: LaunchPlan, modMounts: Mount[]): void {

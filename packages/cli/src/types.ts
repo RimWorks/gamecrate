@@ -214,6 +214,7 @@ export interface ProfileConfig {
   /** Launch defaults for this profile. The matching --no-* flag overrides each one. */
   detach?: boolean
   replace?: boolean
+  steam?: boolean
   build?: BuildPolicy
 }
 
@@ -278,6 +279,8 @@ export interface GameConfig {
   saveExtensions: string[]
   core: string
   dlc: string[]
+  /** Loaded in place of the steam client when steam is off. The game names its own. */
+  steamlessMod?: string
   preCore?: string[]
   base?: string[]
   library?: Record<string, LibraryEntry>
@@ -432,6 +435,8 @@ export interface LaunchPlan {
   /** <logsDirHost>/runs/<ts>, bound into the container so Player.log lands with stdout.log. */
   runDirHost: string
   mode: ModeName
+  /** True binds the host's steam client in, so the game gets a live steam_api. */
+  steam: boolean
   marker?: string
   timeoutSeconds: number
   renderWaitSeconds: number
@@ -533,9 +538,12 @@ export interface ParsedArgs {
   replace: boolean
   /** Runs in the background: this process forks a supervisor and returns the prompt. */
   detach: boolean
+  /** Binds the host's steam client into the container, and forces network host. */
+  steam: boolean
   /** One-run overrides. Only these turn the matching boolean back off. */
   noDetach: boolean
   noReplace: boolean
+  noSteam: boolean
   /** Set on the forked supervisor only. Never a config key, never in help. */
   supervised: boolean
   /** Takes the `ci` profile, or modless when no config names one. Never a config key. */
@@ -588,7 +596,7 @@ export type ProjectDefaults = Partial<
   Omit<
     ParsedArgs,
     | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
-    | 'noDetach' | 'noReplace' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
+    | 'noDetach' | 'noReplace' | 'noSteam' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
     | 'verbTyped' | 'quiet' | 'plain'
     | 'variant' | 'branches' | 'aliases' | 'plugin' | 'image' | 'load' | 'push' | 'base'
     | 'platform' | 'print' | 'username' | 'olderThan' | 'keep'

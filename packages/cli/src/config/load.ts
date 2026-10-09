@@ -133,6 +133,7 @@ const PROJECT_OBJECT = z.strictObject(
     noWorktree: projectBool.optional(),
     noStaleCheck: projectBool.optional(),
     replace: projectBool.optional(),
+    steam: projectBool.optional(),
     mode: oneOf(['headed', 'headless', 'screenshot']).optional(),
     pull: oneOf(['always', 'missing', 'never']).optional(),
     sort: oneOf(['topo', 'none']).optional(),
@@ -416,7 +417,8 @@ function resolveNamed(game: GameConfig, name: string, seen: string[]): ProfileCo
   if (includeBase !== undefined) out.includeBase = includeBase
   const auto = self.autoDependencies ?? parent.autoDependencies
   if (auto !== undefined) out.autoDependencies = auto
-  for (const field of ['detach', 'replace', 'build', 'gameVersion', 'image', 'windowTitle', 'windowIcon'] as const) {
+  const fields = ['detach', 'replace', 'steam', 'build', 'gameVersion', 'image', 'windowTitle', 'windowIcon'] as const
+  for (const field of fields) {
     const value = self[field] ?? parent[field]
     if (value !== undefined) Object.assign(out, { [field]: value })
   }

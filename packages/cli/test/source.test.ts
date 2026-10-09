@@ -551,6 +551,8 @@ function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
     replace: false,
     detach: false,
     noDetach: false,
+    steam: false,
+    noSteam: false,
     noReplace: false,
     supervised: false,
     ci: false,

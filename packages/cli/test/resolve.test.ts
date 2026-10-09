@@ -1481,3 +1481,97 @@ describe('a null workshopRoot is not a cause of failure', () => {
   })
 })
 
+
+describe('steam', () => {
+  test('steam off loads the game steamless mod, after the dlc', async () => {
+    const game = { ...atlas({ dsd: { mods: [] } }), steamlessMod: 'Example.NoSteam' }
+    index = makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('s-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('s-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('s-ideology'), kind: 'official' },
+      { id: 'Example.NoSteam', dir: await modDir('s-nosteam') },
+      { id: 'Patchlib.Patch', dir: await modDir('s-harmony') },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      args: { sort: 'none' },
+    })
+    expect(problems).toEqual([])
+    expect(plan.steam).toBe(false)
+    expect(plan.mods.map((m) => m.packageId)).toEqual([
+      'Atlasco.Atlas',
+      'Atlasco.Atlas.Royalty',
+      'Atlasco.Atlas.Ideology',
+      'Example.NoSteam',
+      'Patchlib.Patch',
+    ])
+  })
+
+  test('steam on leaves the steamless mod out and forces network host', async () => {
+    const game = { ...atlas({ dsd: { mods: [] } }), steamlessMod: 'Example.NoSteam' }
+    index = makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('s2-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('s2-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('s2-ideology'), kind: 'official' },
+      { id: 'Example.NoSteam', dir: await modDir('s2-nosteam') },
+      { id: 'Patchlib.Patch', dir: await modDir('s2-harmony') },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      args: { steam: true, network: 'bridge' },
+    })
+    expect(plan.steam).toBe(true)
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Example.NoSteam')
+    expect(plan.settings.network).toBe('host')
+    expect(plan.warnings.some((w) => w.includes('steam needs network host'))).toBe(true)
+  })
+
+  test('a profile asking for steam is overridden by --no-steam', async () => {
+    const game = { ...atlas({ dsd: { mods: [], steam: true } }), steamlessMod: 'Example.NoSteam' }
+    index = makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('s3-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('s3-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('s3-ideology'), kind: 'official' },
+      { id: 'Example.NoSteam', dir: await modDir('s3-nosteam') },
+      { id: 'Patchlib.Patch', dir: await modDir('s3-harmony') },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+      args: { steam: true, noSteam: true },
+    })
+    expect(plan.steam).toBe(false)
+    expect(plan.mods.map((m) => m.packageId)).toContain('Example.NoSteam')
+  })
+
+  test('a profile asking for steam needs no flag', async () => {
+    const game = { ...atlas({ dsd: { mods: [], steam: true } }), steamlessMod: 'Example.NoSteam' }
+    index = makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('s4-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('s4-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('s4-ideology'), kind: 'official' },
+      { id: 'Example.NoSteam', dir: await modDir('s4-nosteam') },
+      { id: 'Patchlib.Patch', dir: await modDir('s4-harmony') },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(plan.steam).toBe(true)
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Example.NoSteam')
+  })
+})
