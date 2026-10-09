@@ -19,7 +19,7 @@ export const CONTAINER_RUNTIME_DIR = '/tmp/xdg'
 /** Where the run directory is bound, so `-logfile /logs/Player.log` lands beside stdout.log. */
 export const CONTAINER_LOG_DIR = '/logs'
 
-const STEAM_NAMESPACES = ['--ipc=host', '--pid=host']
+const OVERLAY_NAMESPACES = ['--pid=host']
 
 const OVERLAY_SOCKET_DIR = '/tmp'
 
@@ -162,7 +162,10 @@ export function buildRunSpec(
     // An X client whose WM_CLIENT_MACHINE is foreign gets ` <@name>` stapled to its caption.
     ...(headed && settings.display === 'x11' ? { hostname: hostname() } : {}),
     command,
-    extraArgs: [...(plan.steam ? STEAM_NAMESPACES : []), ...(settings.dockerArgs ?? [])],
+    extraArgs: [
+      ...(headed && env['LD_PRELOAD'] !== undefined ? OVERLAY_NAMESPACES : []),
+      ...(settings.dockerArgs ?? []),
+    ],
   }
 }
 

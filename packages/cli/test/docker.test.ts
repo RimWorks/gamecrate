@@ -19,7 +19,7 @@ import { capture, exited, runContainer, spawnArgv, waitForMarker } from '../src/
 import { isPeerClaim, newMatches, parseAtoms, parseWindowPid } from '../src/docker/window'
 import { FIXTURE_STEAM_BUILD, FIXTURE_VERSION, fixturePlugin } from './fixture-plugin'
 import { deadPid } from './pids'
-import type { GameConfig, Identity, LaunchPlan, ModeName, Settings } from '../src/types'
+import type { DockerRunSpec, GameConfig, Identity, LaunchPlan, ModeName, Settings } from '../src/types'
 import { GamecrateError, Exit } from '../src/types'
 
 const identity: Identity = { uid: 1000, gid: 1000, home: '/tmp/home', user: 'runner' }
@@ -1001,9 +1001,10 @@ describe('steamMounts', () => {
     return mkdtempSync(join(tmpdir(), 'gamecrate-steam-'))
   }
 
-  test('steam off adds no steam mount', () => {
-    const args = toDockerArgs(buildRunSpec(plan('atlas', atlas), [], identity))
-    expect(mountFor(args, '/tmp/home/.steam')).toBeUndefined()
+  test('steam off adds no steam mount, and shares no host namespace', () => {
+    const spec = buildRunSpec(plan('atlas', atlas), [], identity)
+    expect(mountFor(toDockerArgs(spec), '/tmp/home/.steam')).toBeUndefined()
+    expect(spec.extraArgs).toEqual([])
   })
 
   test('binds .steam into the container home and the real root at its own path', () => {
@@ -1020,18 +1021,22 @@ describe('steamMounts', () => {
     rmSync(home, { recursive: true, force: true })
   })
 
-  test('steam on shares the ipc and pid namespaces, and preloads the overlay', () => {
+  test('only a headed overlay run shares the pid namespace, and never the ipc one', () => {
     const home = fakeHome()
     const root = join(home, '.local', 'share', 'Steam')
     mkdirSync(join(root, 'ubuntu12_64'), { recursive: true })
-    writeFileSync(join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'), '')
     mkdirSync(join(home, '.steam'), { recursive: true })
     symlinkSync(root, join(home, '.steam', 'steam'))
+    const renderer = join(root, 'ubuntu12_64', 'gameoverlayrenderer.so')
     fakeHomeDir = home
     try {
-      const spec = buildRunSpec({ ...plan('atlas', atlas), steam: true }, [], identity)
-      expect(spec.extraArgs).toEqual(['--ipc=host', '--pid=host'])
-      expect(spec.env['LD_PRELOAD']).toBe(join(root, 'ubuntu12_64', 'gameoverlayrenderer.so'))
+      const steamed = (mode: ModeName): DockerRunSpec =>
+        buildRunSpec({ ...plan('atlas', atlas, {}, mode), steam: true }, [], identity)
+      expect(steamed('headed').extraArgs).toEqual([])
+      writeFileSync(renderer, '')
+      expect(steamed('headed').extraArgs).toEqual(['--pid=host'])
+      expect(steamed('headed').env['LD_PRELOAD']).toBe(renderer)
+      expect(steamed('headless').extraArgs).toEqual([])
     } finally {
       fakeHomeDir = undefined
       rmSync(home, { recursive: true, force: true })
