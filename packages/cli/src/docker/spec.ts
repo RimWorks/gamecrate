@@ -122,6 +122,7 @@ export function buildRunSpec(
   addScratch(mounts, env, plan, identity)
   addSteam(mounts, env, plan, identity)
   if (headed) addSession(mounts, env, plan)
+  if (!headed || settings.display === 'x11') Object.assign(env, game.x11Env ?? {})
   if (wantsLinkOpener(plan)) addLinkOpener(mounts, plan)
 
   const deviceCgroupRules: string[] = []

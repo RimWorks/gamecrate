@@ -85,6 +85,7 @@ const beacon: GameConfig = {
   core: 'beaconco.beacon',
   dlc: [],
   modes: ['headed', 'headless', 'screenshot'],
+  x11Env: { BEACON_SKIP_WAYLAND: '1' },
   profiles: { kitted: { mods: [] } },
 }
 
@@ -522,6 +523,42 @@ describe('buildRunSpec: devices and display', () => {
     } finally {
       process.env.DISPLAY = previous.display
       process.env.XAUTHORITY = previous.xauth
+    }
+  })
+
+  test('x11Env rides a headed x11 launch and an offscreen one, never a wayland launch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gamecrate-x11-'))
+    const runtime = mkdtempSync(join(tmpdir(), 'gamecrate-runtime-'))
+    writeFileSync(join(dir, 'xauth'), '')
+    writeFileSync(join(runtime, 'wayland-9'), '')
+    const previous = {
+      display: process.env.DISPLAY,
+      xauth: process.env.XAUTHORITY,
+      xdg: process.env.XDG_RUNTIME_DIR,
+      wl: process.env.WAYLAND_DISPLAY,
+    }
+    process.env.DISPLAY = ':1'
+    process.env.XAUTHORITY = join(dir, 'xauth')
+    process.env.XDG_RUNTIME_DIR = runtime
+    process.env.WAYLAND_DISPLAY = 'wayland-9'
+    try {
+      const x11 = buildRunSpec(plan('beacon', beacon, { display: 'x11' }, 'headed'), [], identity)
+      expect(x11.env.BEACON_SKIP_WAYLAND).toBe('1')
+
+      const offscreen = buildRunSpec(plan('beacon', beacon, {}), [], identity)
+      expect(offscreen.env.BEACON_SKIP_WAYLAND).toBe('1')
+
+      const wayland = buildRunSpec(plan('beacon', beacon, {}, 'headed'), [], identity)
+      expect(wayland.env.WAYLAND_DISPLAY).toBe('wayland-9')
+      expect(wayland.env.BEACON_SKIP_WAYLAND).toBeUndefined()
+
+      const quiet = buildRunSpec(plan('atlas', atlas, { display: 'x11' }, 'headed'), [], identity)
+      expect(quiet.env.BEACON_SKIP_WAYLAND).toBeUndefined()
+    } finally {
+      process.env.DISPLAY = previous.display
+      process.env.XAUTHORITY = previous.xauth
+      process.env.XDG_RUNTIME_DIR = previous.xdg
+      process.env.WAYLAND_DISPLAY = previous.wl
     }
   })
 

@@ -289,6 +289,8 @@ export interface GameConfig {
   settings?: Partial<Settings>
   /** The engine claims WM_DELETE_WINDOW and drops it, so the titlebar X does nothing. */
   ignoresWmDelete?: boolean
+  /** Set on every launch that is not wayland, for an engine that probes wayland regardless. */
+  x11Env?: Record<string, string>
   profiles: Record<string, ProfileConfig>
 }
 

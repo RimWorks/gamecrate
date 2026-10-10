@@ -164,6 +164,7 @@ const PLUGIN_GAME_KEYS = [
   'steamlessMod',
   'modes',
   'ignoresWmDelete',
+  'x11Env',
 ] as const
 
 const OWN_GAME_KEYS = ['image', 'scanRoots', 'library', 'aliases', 'settings', 'profiles'] as const

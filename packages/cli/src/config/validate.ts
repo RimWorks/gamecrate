@@ -499,6 +499,9 @@ const game = obj({
   ignoresWmDelete: bool
     .describe('The engine claims WM_DELETE_WINDOW and drops it, so the titlebar X does nothing.')
     .optional(),
+  x11Env: strMap
+    .describe('Set on every launch that is not wayland, for an engine that probes wayland regardless.')
+    .optional(),
   profiles: z
     .record(z.string(), profile, { error: 'expected an object' })
     .describe('The mod sets you can launch, keyed by profile name.'),

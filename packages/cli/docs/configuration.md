@@ -149,6 +149,7 @@ A plugin's `defaults` fill these in, so a config writes only what is its own.
 | `base` | no | array of `string` | Mods every profile of this game needs, loaded after the DLC. |
 | `modes` | yes | array of `any` | The run modes this game supports: `headed`, `headless` or `screenshot`. |
 | `ignoresWmDelete` | no | `boolean` | The engine claims WM_DELETE_WINDOW and drops it, so the titlebar X does nothing. |
+| `x11Env` | no | object of `string` | Set on every launch that is not wayland, for an engine that probes wayland regardless. |
 
 <!-- /generated:plugin-game-keys -->
 
