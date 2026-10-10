@@ -7,20 +7,17 @@
 [![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=RimWorks_gamecrate&metric=sqale_rating)](https://sonarcloud.io/summary/new_code?id=RimWorks_gamecrate)
 [![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=RimWorks_gamecrate&metric=reliability_rating)](https://sonarcloud.io/summary/new_code?id=RimWorks_gamecrate)
 
-Run a modded game in a Docker container. Describe a profile once, then launch it by name.
-
-Each profile gets its own saves, its own logs, and only the mods it lists. Nothing leaks between
-profiles, so a broken mod set never touches a working one.
-
-Once a profile is set up, that is the whole command:
+Run a modded game in a Docker container. Describe your profiles, then launch it by name. Each profile
+gets its own settings, logs, and mod lists. Once a profile is set up, that is the whole command:
 
 ```sh
-gamecrate run dev
+gamecrate run <profile>
 ```
 
 ## Before you start
 
-Right now, this only works on Linux. It may work in WSL, but it hasn't been tested. You'll also need Docker running, and a copy of the game. 
+Right now, this only works on Linux. It may work in WSL, but it hasn't been tested. You'll also need
+Docker running, and a copy of the game. 
 
 `gamecrate doctor` checks all three and reports every problem together.
 
@@ -31,13 +28,12 @@ npm install -g @gamecrate/cli
 gamecrate init
 ```
 
-`init` asks which game you want, installs that game's plugin with `npm install -g`, and writes
-`~/.config/gamecrate/config.yml`. It also offers to create a local `.gamecrate.yml` too, for a directory that
-holds a mod you are working on. Pass `--project` to write that file without being asked.
+`init` installs the plugin for the game you want to use, and writes `~/.config/gamecrate/config.yml`.
+It also offers to create a local `.gamecrate.yml` too, for a directory that holds a mod you are working
+on.
 
-The global file is the skeleton: a `plugins` line, a placeholder install path, and one empty
-profile. Fill those in before your first launch. The local `.gamecrate.yml` names the game and
-the profile to default to, so a launch from that directory needs no arguments.
+The global file holds the general configuration and defaults, and a project's `.gamecrate.yml` gives the
+specific configurations and profiles you use for a particular mod.
 
 Where the game comes from is the one choice you have to make:
 

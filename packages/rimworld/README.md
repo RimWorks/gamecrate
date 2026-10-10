@@ -5,19 +5,8 @@
 [![MIT license](https://img.shields.io/npm/l/%40gamecrate%2Frimworld)](../../LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Cryptiks_Mods-5865F2?logo=discord&logoColor=white)](https://discord.gg/tbcKN8e4mZ)
 
-gamecrate launches a modded game inside a Docker container. You describe a profile once in one
-config file, then run it by name. Each profile gets its own save directory, its own logs, and
-only the mods it lists.
-
-The tool knows nothing about any one game. A plugin supplies the file formats and the engine
-facts, so the core stays the same for every title.
-
-This package is the RimWorld plugin for [`@gamecrate/cli`](../cli). It teaches gamecrate five
-RimWorld file formats plus a handful of engine facts. gamecrate then runs the game with the
-mods a profile lists.
-
-The package default-exports one `GamePlugin` object. It claims the game name `rimworld`, which
-is the word you type on the command line.
+This is the RimWorld plugin for [`@gamecrate/cli`](../cli). It holds everything required for
+gamecrate to set up and run RimWorld inside Docker containers.
 
 ## Install
 
@@ -33,25 +22,19 @@ Pick `rimworld` when `init` asks. It installs this package and writes
 plugins: ['@gamecrate/rimworld']
 ```
 
-The global config has to be YAML. `init` refuses to run against a `config.json` or a
-`config.jsonc` and asks you to rename it first.
-
 ## What the plugin handles
 
 It reads `About/About.xml` for each mod, which gives gamecrate the package id, the display
 name, the dependencies, and the load-order hints.
 
 It writes `Config/ModsConfig.xml` with the active package ids in load order, lowercased, plus
-the known expansions and the engine's build number.
+the known DLC and the engine's build number.
 
 It merges `Config/Prefs.xml`. Your own prefs survive, and gamecrate overwrites only six keys:
 `screenWidth`, `screenHeight`, `devMode`, `runInBackground`, `fullscreen`, and
 `resetModsConfigOnCrash`. `fullscreen: False` is what puts the game in a window, and
 `resetModsConfigOnCrash: False` stops the engine wiping your mod list after a crash. gamecrate
 also writes anything you put in `settings.prefsExtra`.
-
-It parses `Version.txt`. RimWorld writes strings like `1.6.4871 rev598`, and the number after
-`rev` is the build number that `ModsConfig.xml` wants.
 
 It writes a mod's own settings file before a launch, so a profile can turn a mod on with the
 options it needs. Those land in the game's `Config` directory. See
@@ -66,9 +49,7 @@ The defaults cover facts that hold for every copy of RimWorld:
 - the core package id `ludeon.rimworld` and the five official DLC ids
 
 It also mounts the install at `/game`, puts the data directory at `/data`, and stages mods into
-`/game/Mods`.
-
-Two defaults are worth knowing about. The plugin sets `settings.network` to `host`, because a
+`/game/Mods`. The plugin sets `settings.network` to `host`, because a
 mod that runs its own web server binds loopback inside the container where a published port
 cannot reach it. It also sets `ignoresWmDelete`, because the engine claims the window close
 event and then drops it.
