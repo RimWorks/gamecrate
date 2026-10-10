@@ -20,6 +20,7 @@ const plugin: GamePlugin = {
     executable: './RimWorldLinux',
     managed: ['RimWorldLinux_Data/Managed', '.'],
     ignoresWmDelete: true,
+    x11Env: { WAYLITH_DISABLE_WAYLAND_GAME_CONTENT: '1' },
     steamAppId: 294100,
     workshopRoot: null,
     scanRoots: [],
