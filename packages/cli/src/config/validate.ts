@@ -500,7 +500,7 @@ const game = obj({
     .describe('The engine claims WM_DELETE_WINDOW and drops it, so the titlebar X does nothing.')
     .optional(),
   x11Env: strMap
-    .describe('Set on every launch that is not wayland, for an engine that probes wayland regardless.')
+    .describe('Set on every launch that is not Wayland, for an engine that probes Wayland regardless.')
     .optional(),
   profiles: z
     .record(z.string(), profile, { error: 'expected an object' })
