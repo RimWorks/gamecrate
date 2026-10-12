@@ -113,6 +113,7 @@ A plugin's `defaults` fill these in, so a config writes only what is its own.
 | `logFile.arg` | no | `string` | The argument carrying the log path. Required while `mode` is `arg`. |
 | `logFile.from` | no | `string` | The log path, relative to the data directory. Required while `mode` is `copy-out`. |
 | `executable` | yes | `string` | The game binary, relative to the game files. |
+| `executables` | no | array of `string` | Other binaries this game may ship. The first one present in the game files wins. |
 | `managed` | no | array of `string` | The directories holding the assemblies `mods refs` points a csproj at. |
 | `steamAppId` | yes | `number` | The game's steam app id, used for workshop downloads and `steam build`. |
 | `workshopRoot` | yes | `string` or `null` | Your steam client's own workshop directory, or `null` when there is none to read. |

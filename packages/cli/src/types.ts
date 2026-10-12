@@ -262,6 +262,8 @@ export interface GameConfig {
   logFile: LogFileSpec
   image: ImageSpec
   executable: string
+  /** Other binaries this game may ship. The first one present in the game files wins. */
+  executables?: string[]
   managed?: string[]
   steamAppId: number
   workshopRoot: string | null

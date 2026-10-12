@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
+import { pickExecutable } from '../executable'
 import type { ImageFacts } from '../launch/image'
 import { imageLaunch, imageProblem, markerProblem, readImageFacts } from '../launch/image'
 import type { LaunchPlan, Problem } from '../types'
@@ -214,11 +215,13 @@ function checkGameDir(plan: LaunchPlan, problems: Problem[]): void {
     return
   }
 
-  const executable = join(files.host, basename(plan.gameConfig.executable))
-  if (!existsSync(executable)) {
+  const wanted = basename(
+    pickExecutable(files.host, plan.gameConfig.executable, plan.gameConfig.executables),
+  )
+  if (!existsSync(join(files.host, wanted))) {
     problems.push({
       where,
-      message: `${files.host} does not contain ${basename(plan.gameConfig.executable)}`,
+      message: `${files.host} does not contain ${wanted}`,
       suggestion: 'point gameFiles.host at the install directory, not its parent',
     })
   }

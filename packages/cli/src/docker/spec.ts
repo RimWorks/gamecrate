@@ -10,6 +10,7 @@ import type {
   Mount,
 } from '../types'
 import { expandHome, resolveProfile } from '../config/load'
+import { pickExecutable } from '../executable'
 import { GamecrateError, Exit } from '../types'
 import { CONTAINER_OPEN_FIFO, OPEN_FIFO_FILE, OPEN_SHIM_FILE, wantsLinkOpener } from './openlinks'
 
@@ -52,6 +53,12 @@ export function refuseProtonHeaded(game: string, mode: ModeName, image?: ImageLa
     Exit.Config,
     'relaunch with --mode headless, or use a variant whose gamecrate.launcher is "direct"',
   )
+}
+
+function runExecutable(game: LaunchPlan['gameConfig']): string {
+  const { gameFiles } = game
+  const dir = gameFiles.source === 'mount' && gameFiles.host ? hostPath(gameFiles.host) : null
+  return pickExecutable(dir, game.executable, game.executables)
 }
 
 function launchCommand(plan: LaunchPlan, executable: string, proton: boolean): string[] {
@@ -103,7 +110,7 @@ export function buildRunSpec(
   addStage(mounts, plan, modMounts)
 
   const proton = image?.launcher === 'proton'
-  const executable = image?.executable ?? game.executable
+  const executable = image?.executable ?? runExecutable(game)
 
   refuseProtonHeaded(plan.game, plan.mode, image)
 

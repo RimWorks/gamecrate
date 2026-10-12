@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import { status } from '../cli/output'
 import { capture } from '../docker/run'
+import { pickExecutable } from '../executable'
 import { downloadApp, publishedBuildId, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
 import { Exit, GamecrateError } from '../types'
@@ -206,7 +207,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       if (opts.push) {
         say(`pushing ${versioned}`)
         await cranePush(tar, versioned)
-        await craneMutateLabels(versioned, labelsFor(input, ctx, baseDigest))
+        await craneMutateLabels(versioned, labelsFor(input, ctx, baseDigest, dir))
         // only now: a half-pushed build must not move latest
         for (const tag of tags.slice(1)) await craneTag(versioned, tag)
       }
@@ -214,7 +215,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       if (opts.load && base !== null) {
         say(`loading ${versioned}`)
         await dockerLoad(tar, versioned)
-        await dockerLabel(versioned, labelsFor(input, ctx, baseDigest))
+        await dockerLabel(versioned, labelsFor(input, ctx, baseDigest, dir))
         // off the labelled ref, so a moving tag never points at an unlabelled image
         for (const tag of tags.slice(1)) await dockerTag(versioned, `${input.image}:${tag}`)
       }
@@ -281,11 +282,19 @@ async function resolvedBase(base: string, platform: string): Promise<string> {
 }
 
 /** What phase 5 reads back off the image. */
-function labelsFor(input: SteamBuildInput, ctx: CellContext, base: string | null): Record<string, string> {
+function labelsFor(
+  input: SteamBuildInput,
+  ctx: CellContext,
+  base: string | null,
+  gameDir: string,
+): Record<string, string> {
   const labels: Record<string, string> = {
     'gamecrate.variant': ctx.variant.name,
     'gamecrate.branch': ctx.branch.name,
-    'gamecrate.executable': ctx.branch.executable?.[ctx.variant.name] ?? ctx.variant.executable ?? input.executable,
+    'gamecrate.executable':
+      ctx.branch.executable?.[ctx.variant.name] ??
+      ctx.variant.executable ??
+      pickExecutable(gameDir, input.executable, input.executables),
     'gamecrate.launcher': ctx.variant.base === 'windows' ? 'proton' : 'direct',
   }
   if (ctx.published !== null) labels['steam.buildid'] = ctx.published

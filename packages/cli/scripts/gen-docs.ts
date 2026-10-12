@@ -146,6 +146,7 @@ const PLUGIN_GAME_KEYS = [
   'modsDir',
   'logFile',
   'executable',
+  'executables',
   'managed',
   'steamAppId',
   'workshopRoot',

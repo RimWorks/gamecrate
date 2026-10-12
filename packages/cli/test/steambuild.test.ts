@@ -398,6 +398,30 @@ describe('steamBuild', () => {
     expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorld')
   })
 
+  test('the label names the candidate the build actually shipped, not the default', async () => {
+    await writeFile(join(state.gameDir, 'RimWorld'), '')
+    const renamed = { ...ONE, executables: ['./RimWorld', './RimWorldLinux'] }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorld')
+  })
+
+  test('no candidate present keeps the configured executable', async () => {
+    const renamed = { ...ONE, executables: ['./NotShipped'] }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorldLinux')
+  })
+
+  test('a branch override beats a detected candidate', async () => {
+    await writeFile(join(state.gameDir, 'RimWorld'), '')
+    const renamed = {
+      ...ONE,
+      executables: ['./RimWorld'],
+      branches: [{ name: 'public', executable: { linux: './Pinned' } }],
+    }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+    expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./Pinned')
+  })
+
   test('a branch override for another variant leaves this one alone', async () => {
     const renamed = {
       ...ONE,

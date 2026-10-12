@@ -18,6 +18,7 @@ const plugin: GamePlugin = {
     modsDir: { container: '/game/Mods' },
     logFile: { mode: 'arg', arg: '-logfile' },
     executable: './RimWorldLinux',
+    executables: ['./RimWorld', './RimWorldLinux'],
     managed: ['RimWorldLinux_Data/Managed', '.'],
     ignoresWmDelete: true,
     x11Env: { WAYLITH_DISABLE_WAYLAND_GAME_CONTENT: '1' },

@@ -12,6 +12,7 @@ export interface SteamBuildInput {
   versionFile: string
   gamePath: string
   executable: string
+  executables?: string[]
   branches: SteamBranch[]
   variants: SteamVariant[]
   /** Target repo, never a tag. p3-t1 supplies the tags. */
@@ -142,6 +143,7 @@ export async function resolveSteamBuildInput(
     versionFile: want(merged.version, 'version.file').file,
     gamePath: want(merged.gameFiles, 'gameFiles').container,
     executable: want(merged.executable, 'executable'),
+    executables: merged.executables ?? [],
     branches: steamBuild.branches,
     variants: steamBuild.variants,
     // OCI references are lowercase. A registry owner or repo can be mixed case on the web.

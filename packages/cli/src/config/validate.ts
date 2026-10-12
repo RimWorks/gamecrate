@@ -432,6 +432,9 @@ const game = obj({
       .describe('The staleness check a launch runs against the image registry.'),
   }).describe('The image a launch runs. A `mount` game gets a runtime holding no game.'),
   executable: str.describe('The game binary, relative to the game files.'),
+  executables: strArray
+    .describe('Other binaries this game may ship. The first one present in the game files wins.')
+    .optional(),
   managed: strArray.describe('The directories holding the assemblies `mods refs` points a csproj at.').optional(),
   steamAppId: num.describe("The game's steam app id, used for workshop downloads and `steam build`."),
   workshopRoot: z
