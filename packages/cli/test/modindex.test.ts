@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { chmod, mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import { buildIndex, globMatch, resolveModRef, workshopStamp } from '../src/mods/modindex'
 import { downloadRoot } from '../src/mods/steamcmd'
@@ -470,9 +470,11 @@ describe('the workshop stamp', () => {
       const collated = [...codeUnit].sort((a, b) => a.localeCompare(b))
       expect(collated).not.toEqual(codeUnit)
 
+      const prefix = (): ReturnType<typeof createHash> =>
+        createHash('sha256').update(resolve(data)).update('\n')
       const stamp = workshopStamp(withRoots(atlas, [], null), data)
-      expect(stamp).toBe(createHash('sha256').update(codeUnit.join('\n')).digest('hex'))
-      expect(stamp).not.toBe(createHash('sha256').update(collated.join('\n')).digest('hex'))
+      expect(stamp).toBe(prefix().update(codeUnit.join('\n')).digest('hex'))
+      expect(stamp).not.toBe(prefix().update(collated.join('\n')).digest('hex'))
     } finally {
       await rm(data, { recursive: true, force: true })
     }
@@ -491,6 +493,24 @@ describe('the workshop stamp', () => {
       expect(workshopStamp(withRoots(atlas, [], null), data)).toBe(before)
     } finally {
       await rm(data, { recursive: true, force: true })
+    }
+  })
+
+  test('two data roots holding the same items do not share it, because a record dir is absolute', async () => {
+    const one = await fixture()
+    const two = await fixture()
+    try {
+      for (const data of [one, two]) {
+        const acf = acfFile(downloadTree(data))
+        await mkdir(dirname(acf), { recursive: true })
+        await writeFile(acf, acfText({ '818773962': '1025052661578487222' }, '1789944542'))
+      }
+
+      expect(workshopStamp(withRoots(atlas, [], null), one))
+        .not.toBe(workshopStamp(withRoots(atlas, [], null), two))
+    } finally {
+      await rm(one, { recursive: true, force: true })
+      await rm(two, { recursive: true, force: true })
     }
   })
 

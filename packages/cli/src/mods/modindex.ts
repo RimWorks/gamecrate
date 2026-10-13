@@ -245,6 +245,8 @@ export function workshopStamp(game: GameConfig, dataRoot: string | undefined): s
     pairs.push(...found)
   }
   const download = createHash('sha256')
+    .update(dataRoot === undefined ? '' : resolvePath(expandHome(dataRoot)))
+    .update('\n')
     .update(pairs.toSorted((a, b) => Number(a > b) - Number(a < b)).join('\n'))
     .digest('hex')
   if (game.workshopRoot === null) return download
