@@ -741,7 +741,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   applyPositionals(out, positional, seen, fromEnv, opts, out.help)
   applyTargets(out, values, seen)
 
-  if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults, sep !== -1)
+  if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults)
   return out
 }
 
@@ -1032,23 +1032,13 @@ function applyEnvValue(program: Command, flag: string, name: string, raw: string
   values[key] = option.parseArg === undefined ? raw : option.parseArg(raw, values[key])
 }
 
-function applyDefaults(
-  out: ParsedArgs,
-  seen: Set<string>,
-  defaults: ProjectDefaults,
-  hasGameArgs: boolean,
-): void {
-  applyListDefaults(out, seen, defaults, hasGameArgs)
+function applyDefaults(out: ParsedArgs, seen: Set<string>, defaults: ProjectDefaults): void {
+  applyListDefaults(out, seen, defaults)
   applyScalarDefaults(out, defaults)
   applyFlagDefaults(out, seen, defaults)
 }
 
-function applyListDefaults(
-  out: ParsedArgs,
-  seen: Set<string>,
-  defaults: ProjectDefaults,
-  hasGameArgs: boolean,
-): void {
+function applyListDefaults(out: ParsedArgs, seen: Set<string>, defaults: ProjectDefaults): void {
   if (!seen.has('--mod') && defaults.mods !== undefined) out.mods = [...defaults.mods]
   if (!seen.has('--without') && defaults.without !== undefined) out.without = [...defaults.without]
   if (!seen.has('--only') && defaults.only !== undefined) out.only = [...defaults.only]
@@ -1057,7 +1047,7 @@ function applyListDefaults(
     out.worktree = [...defaults.worktree]
   }
   if (!seen.has('--use') && defaults.use !== undefined) out.use = [...defaults.use]
-  if (!hasGameArgs && defaults.gameArgs !== undefined) out.gameArgs = [...defaults.gameArgs]
+  if (defaults.gameArgs !== undefined) out.gameArgs = [...defaults.gameArgs, ...(out.gameArgs ?? [])]
 }
 
 function applyScalarDefaults(out: ParsedArgs, defaults: ProjectDefaults): void {

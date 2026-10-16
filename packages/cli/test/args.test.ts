@@ -489,7 +489,16 @@ describe('project defaults', () => {
     expect(args.mods).toEqual(['Cli.Mod'])
     expect(args.worktree).toEqual(['/worktrees/fix'])
     expect(args.noWorktree).toBe(false)
-    expect(args.gameArgs).toEqual(['-debug'])
+    expect(args.gameArgs).toEqual(['-quicktest', '-debug'])
+  })
+
+  test('game args after -- add to the file default instead of dropping it', () => {
+    const args = parseArgs(['run', 'kitted', '--', '-pickle-http-port=27755'], {
+      env: {},
+      games: ['atlas'],
+      defaults,
+    })
+    expect(args.gameArgs).toEqual(['-quicktest', '-pickle-http-port=27755'])
   })
 
   test('environment values replace file defaults', () => {
