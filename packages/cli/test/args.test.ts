@@ -1437,6 +1437,18 @@ describe('follow and the detached verbs', () => {
     expect(wait.profile).toBeUndefined()
   })
 
+  test('wait takes --ready, and no other subcommand does', () => {
+    const ready = parseArgs(['wait', 'dev', '--ready'], {
+      env: {},
+      games: ['rimworld'],
+      profiles: { rimworld: ['dev'] },
+    })
+    expect(ready.subcommand).toBe('wait')
+    expect(ready.ready).toBe(true)
+    expect(parseArgs(['wait', 'dev'], { env: {}, games: ['rimworld'], profiles: { rimworld: ['dev'] } }).ready).toBe(false)
+    expect(SUBCOMMANDS.filter((s) => s.flags.includes('--ready')).map((s) => s.name)).toEqual(['wait'])
+  })
+
   test('logs advertises --follow, and attach and wait do not', () => {
     const flagsOf = (name: string) => SUBCOMMANDS.find((s) => s.name === name)!.flags
     expect(flagsOf('logs')).toContain('--follow')

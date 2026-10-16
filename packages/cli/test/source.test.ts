@@ -557,6 +557,7 @@ function cliArgs(over: Partial<ParsedArgs> = {}): ParsedArgs {
     supervised: false,
     ci: false,
     follow: false,
+    ready: false,
     rest: [],
     ...over,
   }

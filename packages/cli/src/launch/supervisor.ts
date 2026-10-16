@@ -149,6 +149,36 @@ export async function awaitExit(
   }
 }
 
+export type ReadyOutcome =
+  | { ready: true; container: string }
+  | { ready: false; exit: ExitRecord }
+  | 'orphaned'
+  | 'absent'
+
+/**
+ * Blocks until this instance's container is up, the run dies, or the holder vanishes. `isUp`
+ * takes the container name off the lock, so no plugin or plan has to be resolved to ask.
+ */
+export async function awaitReady(
+  instanceDir: string,
+  isUp: (container: string) => Promise<boolean>,
+  poll = WAIT_POLL_MS,
+): Promise<ReadyOutcome> {
+  const file = join(instanceDir, '.gamecrate', 'lock')
+  let watching: LockRecord | undefined
+
+  for (;;) {
+    const lock = (await readLock(file)) ?? watching
+    const found = await lastExit(instanceDir)
+    if (found !== undefined && endedAfter(found, lock?.startedAt)) return { ready: false, exit: found }
+    if (lock === undefined) return 'absent'
+    if (await isUp(lock.container)) return { ready: true, container: lock.container }
+    if (!isRunning(lock.pid, lock.startedAt)) return 'orphaned'
+    watching = lock
+    await sleep(poll)
+  }
+}
+
 const RUN_LOG_POLL_MS = 250
 
 /**

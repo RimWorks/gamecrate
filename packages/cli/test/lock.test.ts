@@ -44,7 +44,7 @@ await mock.module('../src/docker/run', () => ({
 
 const { capture, spawnArgv, STOP_TIMEOUT_SECONDS } = await import('../src/docker/run')
 const { openRunLog, runStartedAt, runTimestamp, tailArgv, waitNotice } = await import('../src/cli/output')
-const { awaitExit, awaitRunLog, lastExit, recordExit, supervisorFailed } = await import('../src/launch/supervisor')
+const { awaitExit, awaitReady, awaitRunLog, lastExit, recordExit, supervisorFailed } = await import('../src/launch/supervisor')
 const {
   isRunning,
   lockPath,
@@ -545,6 +545,74 @@ describe('awaitExit', () => {
 
     expect(await awaitExit(plan.instanceDir, 10)).toMatchObject({ code: 4, reason: 'exited' })
     expect(existsSync(lockPath(plan))).toBe(true)
+  })
+})
+
+describe('awaitReady', () => {
+  const never = async (): Promise<boolean> => false
+  const always = async (): Promise<boolean> => true
+
+  test('a container already up answers at once with its name', async () => {
+    const plan = await planFor()
+    await holdWith(plan, process.pid)
+    expect(await awaitReady(plan.instanceDir, always, 10)).toEqual({
+      ready: true,
+      container: `gamecrate-${GAME}-${PROFILE}`,
+    })
+  })
+
+  test('a run that died before coming up reports the exit, not a wait', async () => {
+    const plan = await planFor()
+    await holdWith(plan, process.pid)
+    await recordExit(plan, { code: 127, reason: 'exited' })
+    expect(await awaitReady(plan.instanceDir, never, 10)).toMatchObject({
+      ready: false,
+      exit: { code: 127, reason: 'exited' },
+    })
+  })
+
+  test('a run that never happened is absent, not a wait', async () => {
+    const plan = await planFor()
+    expect(await awaitReady(plan.instanceDir, never, 10)).toBe('absent')
+  })
+
+  test('a dead holder with no record is orphaned rather than waited on forever', async () => {
+    const plan = await planFor()
+    await holdWith(plan, DEAD_PID)
+    expect(await awaitReady(plan.instanceDir, never, 10)).toBe('orphaned')
+  })
+
+  test('a live holder blocks until the container comes up', async () => {
+    const plan = await planFor()
+    await holdWith(plan, process.pid)
+    let up = false
+    setTimeout(() => void (up = true), 120)
+
+    expect(await awaitReady(plan.instanceDir, async () => up, 10)).toMatchObject({ ready: true })
+  })
+
+  test('a live holder blocks until the run dies instead', async () => {
+    const plan = await planFor()
+    await holdWith(plan, process.pid)
+    setTimeout(() => void recordExit(plan, { code: 5, reason: 'failed' }), 120)
+
+    expect(await awaitReady(plan.instanceDir, never, 10)).toMatchObject({
+      ready: false,
+      exit: { code: 5 },
+    })
+  })
+
+  test("a previous run's exit record does not fail a launch that is still starting", async () => {
+    const plan = await planFor()
+    await writeFile(
+      join(plan.instanceDir, '.gamecrate', 'last-exit.json'),
+      JSON.stringify({ at: new Date(Date.now() - 60_000).toISOString(), code: 1, reason: 'exited' }),
+    )
+    await holdWith(plan, process.pid)
+    let up = false
+    setTimeout(() => void (up = true), 120)
+
+    expect(await awaitReady(plan.instanceDir, async () => up, 10)).toMatchObject({ ready: true })
   })
 })
 

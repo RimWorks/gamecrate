@@ -558,6 +558,8 @@ export interface ParsedArgs {
   plain: boolean
   /** `-f`: keep printing as the run writes, instead of dumping what is there. */
   follow: boolean
+  /** `wait --ready`: return once the container is up, instead of once the run ends. */
+  ready: boolean
   /** True when the verb word was typed. `run` is implied, so help cannot infer it. */
   verbTyped: boolean
   /** The write verb under `mods`, or the verb under `steam`. Unset means the read verb. */
@@ -600,7 +602,7 @@ export type ProjectDefaults = Partial<
   Omit<
     ParsedArgs,
     | 'subcommand' | 'cleanTier' | 'yes' | 'help' | 'rest' | 'profile' | 'supervised'
-    | 'noDetach' | 'noReplace' | 'noSteam' | 'follow' | 'subverb' | 'source' | 'target' | 'force'
+    | 'noDetach' | 'noReplace' | 'noSteam' | 'follow' | 'ready' | 'subverb' | 'source' | 'target' | 'force'
     | 'verbTyped' | 'quiet' | 'plain'
     | 'variant' | 'branches' | 'aliases' | 'plugin' | 'image' | 'load' | 'push' | 'base'
     | 'platform' | 'print' | 'username' | 'olderThan' | 'keep'

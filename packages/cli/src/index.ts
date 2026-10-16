@@ -59,7 +59,7 @@ import {
   takeLock,
   writeLaunchRecord,
 } from './launch/prepare'
-import { awaitExit, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
+import { awaitExit, awaitReady, awaitRunLog, forkSupervisor, recordExit, supervisorFailed } from './launch/supervisor'
 import { resolveInstance } from './launch/instance'
 import { notFetched, resolvePlan } from './launch/resolve'
 import { listRuns } from './run/registry'
@@ -1280,6 +1280,7 @@ async function waitFor(
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults, config.games[game]!)
   const dir = instanceDir(args, config, game, profile)
+  if (args.ready) return await waitReady(game, profile, dir, args)
 
   const record = await awaitExit(dir)
   if (record === 'orphaned') {
@@ -1296,6 +1297,35 @@ async function waitFor(
   if (args.json) emit('data', `${JSON.stringify(record)}\n`)
   else status(`${game} ${profile}: ${record.reason} (${record.code})`)
   return record.code
+}
+
+async function waitReady(
+  game: string,
+  profile: string,
+  dir: string,
+  args: ParsedArgs,
+): Promise<number> {
+  const outcome = await awaitReady(dir, async (name) => (await inspectContainer(name))?.running === true)
+  if (outcome === 'orphaned') {
+    throw new GamecrateError(
+      `${game} ${profile}: the lock holder is gone and recorded no exit`,
+      Exit.Refused,
+      `run: gamecrate stop ${profile}`,
+    )
+  }
+  if (outcome === 'absent') {
+    throw new GamecrateError(`no run recorded for ${game} ${profile}`, Exit.Usage, dir)
+  }
+  if (!outcome.ready) {
+    const { code, reason } = outcome.exit
+    if (args.json) emit('data', `${JSON.stringify({ ready: false, ...outcome.exit })}\n`)
+    else warn(`${game} ${profile} died before it came up: ${reason} (${code})`)
+    return code === Exit.Ok ? Exit.GameFailed : code
+  }
+
+  if (args.json) emit('data', `${JSON.stringify({ ready: true, container: outcome.container })}\n`)
+  else status(`${game} ${profile} is up as ${outcome.container}`)
+  return Exit.Ok
 }
 
 async function build(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults): Promise<number> {

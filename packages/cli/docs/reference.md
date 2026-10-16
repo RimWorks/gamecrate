@@ -162,6 +162,7 @@ in for a flag.
 | `--pull <always\|missing\|never>` | `run`, `build` | When to pull the runtime image from its registry |
 | `--push` | `steam build` | Push the built image to a registry |
 | `-q, --quiet` | `run`, `shell` | Print nothing to the terminal. --log still gets everything |
+| `--ready` | `wait` | Return once the container is up, instead of once the run ends |
 | `--release <owner/repo>` | `mods add` | Download the mod from this GitHub repository's releases |
 | `--render-wait <seconds>` | `run` | Seconds to let the game draw before the screenshot |
 | `--replace` | `run`, `shell` | Stop whatever already holds this profile, then launch |
