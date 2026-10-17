@@ -104,11 +104,17 @@ export function markerProblem(input: {
 }
 
 /**
- * The flag wins, then the profile's own ref, then its version tag on the game's repository.
- * A profile that names neither leaves the configured ref alone.
+ * `--image` wins, then `--game-version`, then the profile's own ref, then its version tag.
+ * A profile that names none of them leaves the configured ref alone.
  */
-export function imageFor(game: GameConfig, profile: string, flag?: string): string | undefined {
+export function imageFor(
+  game: GameConfig,
+  profile: string,
+  flag?: string,
+  version?: string,
+): string | undefined {
   if (flag !== undefined) return flag
+  if (version !== undefined) return `${repoOf(game.image.ref)}:${version}`
   const spec = resolveProfile(game, profile)
   if (spec.image !== undefined) return spec.image
   if (spec.gameVersion === undefined) return undefined

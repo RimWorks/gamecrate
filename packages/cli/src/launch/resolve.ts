@@ -1,7 +1,7 @@
-import { join } from 'node:path'
+import { join, resolve as resolvePath } from 'node:path'
 
 import { wantsSteam } from '../cli/args'
-import { canonicalProfile, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
+import { canonicalProfile, expandHome, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
 import { buildIndex, resolveModRef, applyWorktreeRequests, applySourceOverrides } from '../mods/modindex'
 import { libraryPin, sourcesRoot } from '../mods/source'
 import { workshopUrlId } from '../mods/steamcmd'
@@ -335,6 +335,17 @@ function slotRefs(slot: Slot, input: StageInputs): SlotRef[] {
   ]
 }
 
+function unreadableKey(ref: string, index: ModIndex): string | undefined {
+  if (index.unreadable.size === 0) return undefined
+  if (ref.startsWith('workshop:')) {
+    const id = ref.slice(9)
+    return index.unreadable.has(id) ? id : undefined
+  }
+  if (!ref.startsWith('path:')) return undefined
+  const dir = resolvePath(expandHome(ref.slice(5)))
+  return index.unreadable.has(dir) ? dir : undefined
+}
+
 function reportMissing(slot: Slot, ref: string, optional: boolean, input: StageInputs): void {
   if (slot.dlc === true) return
   if (optional) {
@@ -343,6 +354,12 @@ function reportMissing(slot: Slot, ref: string, optional: boolean, input: StageI
   }
   if (ref.startsWith('workshop:') && input.unfetched.has(ref.slice(9))) {
     input.problems.push({ where: slot.where, message: notFetched(ref.slice(9)) })
+    return
+  }
+  if (unreadableKey(ref, input.index) !== undefined) {
+    input.warnings.push(
+      `${ref} has a ${input.game.manifest.file} the game cannot read; skipped, as the game skips it`,
+    )
     return
   }
   input.problems.push({ where: slot.where, message: `no mod matches "${ref}"` })

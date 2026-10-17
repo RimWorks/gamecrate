@@ -12,6 +12,7 @@ import type { GamePlugin } from '../src/plugin'
 import type { GameConfig, ModEntry, ModManifest, ParsedArgs, ProfileConfig, RootConfig } from '../src/types'
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-steamcmd-deps.sh', import.meta.url))
+const FAKE_PX = fileURLToPath(new URL('./fixtures/fake-pxsteamdl.sh', import.meta.url))
 
 let tmp = ''
 let asked: string[][] = []
@@ -25,11 +26,14 @@ afterAll(async () => {
 })
 
 const realFetch = globalThis.fetch
+const realPath = process.env.PATH
 
 afterEach(() => {
   globalThis.fetch = realFetch
+  process.env.PATH = realPath
   delete process.env['FAKE_FAIL_IDS']
   delete process.env['FAKE_MANIFEST_DIR']
+  delete process.env['FAKE_ARGV_FILE']
   asked = []
 })
 
@@ -91,6 +95,7 @@ async function setup(mods: ModEntry[], bodies: Record<string, string> = {}, prof
   await mkdir(manifests, { recursive: true })
   for (const [id, body] of Object.entries(bodies)) await writeFile(join(manifests, `${id}.txt`), body)
   process.env['FAKE_MANIFEST_DIR'] = manifests
+  process.env.PATH = `${join(root, 'no-tools')}:/usr/bin:/bin`
 
   const game = fixtureGame()
   game.profiles = { p: { mods, ...profile } }
@@ -371,6 +376,32 @@ describe('prepareWorkshop', () => {
     expect(out.problems).toEqual([])
     expect(existsSync(join(hostRoot(w), '111'))).toBe(false)
     expect(existsSync(join(hostRoot(w), '222', 'About', 'About.txt'))).toBe(true)
+  })
+
+  test('pxsteamdl takes the download when it is installed, and steam still says what changed', async () => {
+    stubSteam()
+    const w = await setup(['workshop:111'], { '222': about('222') })
+    w.config.pxsteamdl = { path: FAKE_PX }
+
+    const out = await prepare(w)
+
+    expect(asked).toEqual([['111']])
+    expect(existsSync(join(hostRoot(w), '111', 'About', 'About.xml'))).toBe(true)
+    expect(out.unfetched).toEqual([])
+  })
+
+  test('pxsteamdl never writes over an item the steam client owns', async () => {
+    stubSteam()
+    const w = await setup(['workshop:111'], {})
+    await seedClient(w, '111', about('111'))
+    w.config.pxsteamdl = { path: FAKE_PX }
+    process.env.FAKE_ARGV_FILE = join(w.root, 'px-argv.txt')
+
+    const out = await prepare(w)
+
+    expect(existsSync(join(hostRoot(w), '111'))).toBe(false)
+    expect(existsSync(join(w.root, 'px-argv.txt'))).toBe(false)
+    expect(out.unfetched).toEqual([])
   })
 
   test('exclude and --without drop a workshop entry before it downloads', async () => {

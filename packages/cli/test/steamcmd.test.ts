@@ -287,6 +287,21 @@ describe('downloadItems', () => {
     expect(report.warnings).toEqual(['could not download workshop item 777: Failure'])
   })
 
+  test('reports each item to the hooks as steamcmd works through the batch', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_FAIL_IDS = '777'
+    const cells: { id: string; state: string; detail?: string }[] = []
+    await downloadItems(cfg, game, root, ['818773962', '777'], {
+      onPlan: () => {},
+      onCell: (id, patch) => cells.push({ id, ...patch }),
+    })
+
+    expect(cells).toContainEqual({ id: '818773962', state: 'running' })
+    expect(cells).toContainEqual({ id: '818773962', state: 'done' })
+    expect(cells).toContainEqual({ id: '777', state: 'failed', detail: 'Failure' })
+    expect(cells.filter((c) => c.id === '818773962' && c.state === 'done')).toHaveLength(1)
+  })
+
   test('a non-zero exit with every item downloaded is a success', async () => {
     const { root, cfg } = await fake()
     process.env.FAKE_EXIT = '7'

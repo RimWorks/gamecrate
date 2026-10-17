@@ -60,13 +60,20 @@ describe('checkDrift', () => {
     expect(report).toEqual({ needed: ['818773962'], unavailable: [], warnings: [] })
   })
 
-  test('an id the .acf never heard of is queued', async () => {
+  test('an id the .acf never heard of rides on its own directory mtime', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962', '2009463077'])
     const report = await checkDrift(
       ['818773962', '2009463077'],
       [root],
       ok([detail('818773962', INSTALLED), detail('2009463077', INSTALLED)]),
     )
+    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+  })
+
+  test('an id outside the .acf is queued when steam changed it after the directory did', async () => {
+    const root = await tree({}, ['2009463077'])
+    const soon = Math.floor(Date.now() / 1000) + 600
+    const report = await checkDrift(['2009463077'], [root], ok([detail('2009463077', soon)]))
     expect(report).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
   })
 

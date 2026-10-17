@@ -303,8 +303,12 @@ export interface RootConfig {
   defaults?: { settings?: Partial<Settings> }
   /** How many `dotnet build` runs go at once. Root level, because it names a host tool. */
   buildConcurrency?: number
+  /** How many git fetches, disk scans, and steam api calls go at once. Default 8. */
+  fetchConcurrency?: number
   /** Where the steamcmd binary is. Root level, not per game, because it names a host tool. */
   steamcmd?: { path?: string }
+  /** Where the pxsteamdl binary is. Absent looks on PATH, then falls back to steamcmd. */
+  pxsteamdl?: { path?: string }
   /** What `prune` deletes, and what a launch's own run rotation keeps. */
   prune?: PruneConfig
   games: Record<string, GameConfig>
@@ -386,6 +390,8 @@ export interface ModIndex {
   byWorkshopId: Map<number, ModRecord>
   /** Lowercased last dot-segment -> packageIds. CLI matching only. */
   byShortName: Map<string, string[]>
+  /** Directories and workshop ids whose manifest would not parse. The game ignores these too. */
+  unreadable: Set<string>
   problems: Problem[]
 }
 
@@ -508,6 +514,10 @@ export interface ParsedArgs {
   mods: string[]
   without: string[]
   only: string[]
+  /** A mod list dump whose rows replace what the profile loads. */
+  modlist?: string
+  /** A tag on the game's image repository. `--image` beats it, it beats the profile's own. */
+  gameVersion?: string
   mode?: ModeName
   marker?: string
   timeout?: number

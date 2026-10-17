@@ -32,6 +32,7 @@ function emptyIndex(): ModIndex {
     byPackageId: new Map(),
     byWorkshopId: new Map(),
     byShortName: new Map(),
+    unreadable: new Set(),
     problems: [],
   }
 }
@@ -573,6 +574,42 @@ describe('unfetched workshop items are labelled, not called missing', () => {
     expect(problems).toHaveLength(1)
     expect(problems[0]!.message).toContain('a real launch would fetch it')
     expect(problems[0]!.message).not.toContain('no mod matches')
+  })
+
+  test('a workshop ref whose manifest will not parse warns and still launches', async () => {
+    const game = atlas({ dsd: { mods: ['workshop:3540871348'] } })
+    game.dlc = []
+    game.base = []
+    game.workshopRoot = join(tmp, 'workshop')
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('bad-xml-core'), kind: 'core' }])
+    index.unreadable.add('3540871348')
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toHaveLength(0)
+    expect(plan.warnings.some((w) => w.includes('3540871348') && w.includes('cannot read'))).toBe(true)
+  })
+
+  test('a workshop ref the index never saw is still a no-mod-matches', async () => {
+    const game = atlas({ dsd: { mods: ['workshop:3540871348'] } })
+    game.dlc = []
+    game.base = []
+    game.workshopRoot = join(tmp, 'workshop')
+    index = makeIndex([{ id: 'Atlasco.Atlas', dir: await modDir('good-xml-core'), kind: 'core' }])
+    index.unreadable.add('9999999999')
+    const { problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]!.message).toContain('no mod matches')
   })
 
   test('an unfetched workshop ref says a real launch would fetch it', async () => {

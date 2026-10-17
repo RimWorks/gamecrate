@@ -11,6 +11,7 @@ import { expandHome } from '../config/load'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig } from '../types'
+import type { TaskState } from '../cli/taskboard'
 import { lockDir } from './source'
 
 export const STEAMCMD_IMAGE = 'steamcmd/steamcmd'
@@ -156,8 +157,16 @@ export interface DownloadReport {
 const ANSI = new RegExp(String.raw`${String.fromCodePoint(27)}\[[0-9;?]*[ -/]*[@-~]`, 'g')
 const SUCCESS = /Success\. Downloaded item (\d+) to "([^"]+)" \((\d+) bytes\)/g
 const FAILED = /ERROR! Download item (\d+) failed \(([^)]+)\)/g
+const STARTING = /Downloading item (\d+)/g
 const ATTEMPTS = 2
 const RETRY_DELAY_MS = 1000
+const WATCH_BUFFER = 256 * 1024
+
+/** One row per workshop item, reported as steamcmd works through the batch. */
+export interface DownloadHooks {
+  onPlan(tasks: readonly { id: string; label: string }[]): void
+  onCell(id: string, patch: { state: TaskState; detail?: string }): void
+}
 
 /**
  * Downloads every id in one steamcmd invocation. Connect is 3.4s of a 3.5s single-item run, so a
@@ -174,6 +183,7 @@ export async function downloadItems(
   game: GameConfig,
   dataRoot: string,
   ids: string[],
+  hooks?: DownloadHooks,
 ): Promise<DownloadReport> {
   const items = new Map<string, DownloadOutcome>()
   const warnings: string[] = []
@@ -189,7 +199,7 @@ export async function downloadItems(
   try {
     let pending = ids
     for (let attempt = 0; attempt < ATTEMPTS && pending.length > 0; attempt++) {
-      const output = run(runner, game, dataRoot, pending)
+      const output = await run(runner, game, dataRoot, pending, hooks)
       for (const m of output.matchAll(SUCCESS)) {
         items.set(m[1] as string, { ok: true, dir: m[2] as string, bytes: Number(m[3]) })
       }
@@ -212,25 +222,58 @@ export async function downloadItems(
   return { items, warnings }
 }
 
-function run(runner: SteamcmdRunner, game: GameConfig, dataRoot: string, ids: string[]): string {
-  return spawnSteamcmd([
+async function run(
+  runner: SteamcmdRunner,
+  game: GameConfig,
+  dataRoot: string,
+  ids: string[],
+  hooks?: DownloadHooks,
+): Promise<string> {
+  const argv = [
     ...runner.argv,
     // before +login, or steamcmd applies it to nothing
     '+force_install_dir', steamHome(dataRoot),
     '+login', 'anonymous',
     ...ids.flatMap((id) => ['+workshop_download_item', String(game.steamAppId), id]),
     '+quit',
-  ], runner)
+  ]
+  if (hooks === undefined) return spawnSteamcmd(argv, runner)
+  return await spawnSteamcmdLive(argv, runner, watchItems(hooks))
+}
+
+function watchItems(hooks: DownloadHooks): (text: string) => void {
+  let unterminated = ''
+  const settled = new Set<string>()
+  return (text) => {
+    unterminated = (unterminated + text).replace(ANSI, '').slice(-WATCH_BUFFER)
+    for (const m of unterminated.matchAll(STARTING)) {
+      if (!settled.has(m[1]!)) hooks.onCell(m[1]!, { state: 'running' })
+    }
+    for (const m of unterminated.matchAll(SUCCESS)) {
+      if (settled.has(m[1]!)) continue
+      settled.add(m[1]!)
+      hooks.onCell(m[1]!, { state: 'done' })
+    }
+    for (const m of unterminated.matchAll(FAILED)) {
+      if (settled.has(m[1]!)) continue
+      settled.add(m[1]!)
+      hooks.onCell(m[1]!, { state: 'failed', detail: m[2]! })
+    }
+  }
 }
 
 /**
  * spawnSteamcmd, but the caller watches it work. A game download runs for twenty minutes and
  * steamcmd prints a percentage the whole time, which a captured spawn swallows until it exits.
  */
-async function spawnSteamcmdLive(argv: string[], runner: SteamcmdRunner): Promise<string> {
+async function spawnSteamcmdLive(
+  argv: string[],
+  runner: SteamcmdRunner,
+  onChunk?: (text: string) => void,
+): Promise<string> {
   let text: string
   try {
-    ({ text } = await captureLive(argv, { ...process.env, ...runner.env }))
+    ({ text } = await captureLive(argv, { ...process.env, ...runner.env }, onChunk))
   } catch (error) {
     throw new GamecrateError(
       `could not run steamcmd: ${argv[0]}`,

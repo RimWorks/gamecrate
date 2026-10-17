@@ -130,7 +130,7 @@ describe('run wires the checks in before staging', () => {
     }
     // the profile resolves first, so --ci plus a typed profile is refused whatever --image says
     expect(source).toContain('const profile = launchProfile(args, defaults, base)')
-    expect(source).toContain('args.image ?? imageFor(base, profile)')
+    expect(source).toContain('imageFor(base, profile, args.image, args.gameVersion)')
     expect(source).toContain('withImageOverride(base, ref)')
   })
 

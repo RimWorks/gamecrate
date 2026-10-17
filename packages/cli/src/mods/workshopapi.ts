@@ -2,6 +2,7 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 
 import { installedItems } from './acf'
+import { mapLimit } from '../concurrency'
 
 const ENDPOINT = 'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/'
 const CHUNK = 100
@@ -27,11 +28,8 @@ export async function checkDrift(
   fetchImpl: typeof fetch = fetch,
 ): Promise<DriftReport> {
   const wanted = [...new Set(ids)]
-  const { loaded, listed } = await installs(wanted, roots)
-  const missing: string[] = []
-  for (const id of wanted) {
-    if (!listed.has(id) || !(await onDisk(roots, id))) missing.push(id)
-  }
+  const { loaded, present } = await installs(wanted, roots)
+  const missing = wanted.filter((id) => !present.has(id))
 
   let details: Map<string, Detail>
   try {
@@ -62,42 +60,54 @@ export async function checkDrift(
   return { needed: [...needed], unavailable, warnings }
 }
 
-async function installs(ids: string[], roots: string[]): Promise<{ loaded: Map<string, number>; listed: Set<string> }> {
+async function installs(
+  ids: string[],
+  roots: string[],
+): Promise<{ loaded: Map<string, number>; present: Set<string> }> {
   const loaded = new Map<string, number>()
-  const listed = new Set<string>()
+  const present = new Set<string>()
   for (const root of roots) {
-    const items = installedItems(await readText(acfPath(root)))
-    for (const id of ids) {
-      const item = items.get(id)
-      if (item === undefined) continue
-      listed.add(id)
-      if (!loaded.has(id) && (await exists(join(root, id)))) loaded.set(id, item.timeupdated)
+    const fromClient = installedItems(await readText(acfPath(root)))
+    const here = await mapLimit(ids, async (id) => {
+      const ownMtime = await directoryChangedAt(join(root, id))
+      if (ownMtime === undefined) return undefined
+      return fromClient.get(id)?.timeupdated ?? ownMtime
+    })
+    for (const [i, id] of ids.entries()) {
+      const stamp = here[i]
+      if (stamp === undefined) continue
+      present.add(id)
+      if (!loaded.has(id)) loaded.set(id, stamp)
     }
   }
-  return { loaded, listed }
+  return { loaded, present }
 }
 
-async function onDisk(roots: string[], id: string): Promise<boolean> {
-  for (const root of roots) {
-    if (await exists(join(root, id))) return true
+async function directoryChangedAt(dir: string): Promise<number | undefined> {
+  try {
+    const info = await stat(dir)
+    return info.isDirectory() ? Math.floor(info.mtimeMs / 1000) : undefined
+  } catch {
+    return undefined
   }
-  return false
 }
 
 async function published(ids: string[], fetchImpl: typeof fetch): Promise<Map<string, Detail>> {
   const out = new Map<string, Detail>()
   if (ids.length === 0) return out
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK))
   const abort = new AbortController()
   const timer = setTimeout(() => abort.abort(new Error(`no answer in ${TIMEOUT_MS}ms`)), TIMEOUT_MS)
   try {
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK)
+    const pages = await mapLimit(chunks, async (chunk) => {
       const body = new URLSearchParams({ itemcount: String(chunk.length) })
       chunk.forEach((id, n) => body.set(`publishedfileids[${n}]`, id))
       const response = await fetchImpl(ENDPOINT, { method: 'POST', body, signal: abort.signal })
       if (!response.ok) throw new Error(`steam answered ${response.status}`)
-      for (const [id, detail] of readDetails(await response.json())) out.set(id, detail)
-    }
+      return readDetails(await response.json())
+    })
+    for (const page of pages) for (const [id, detail] of page) out.set(id, detail)
   } finally {
     clearTimeout(timer)
   }
@@ -123,13 +133,6 @@ function acfPath(root: string): string {
   return join(dirname(dirname(root)), `appworkshop_${basename(root)}.acf`)
 }
 
-async function exists(dir: string): Promise<boolean> {
-  try {
-    return (await stat(dir)).isDirectory()
-  } catch {
-    return false
-  }
-}
 
 async function readText(path: string): Promise<string> {
   try {

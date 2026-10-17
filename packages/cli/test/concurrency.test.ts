@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { mapLimit } from '../src/concurrency'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { DEFAULT_LANES, currentLanes, mapLimit, setLanes } from '../src/concurrency'
 
 describe('mapLimit', () => {
   test('returns results in input order, not completion order', async () => {
@@ -46,5 +46,50 @@ describe('mapLimit', () => {
       return n
     })
     await expect(boom).rejects.toThrow('boom')
+  })
+})
+
+describe('setLanes', () => {
+  afterEach(() => setLanes(undefined))
+
+  test('eight is the default width', () => {
+    expect(DEFAULT_LANES).toBe(8)
+    expect(currentLanes()).toBe(8)
+  })
+
+  test('a configured width becomes the default every call takes', async () => {
+    setLanes(2)
+    let peak = 0
+    let live = 0
+    await mapLimit(Array.from({ length: 12 }, (_, n) => n), async () => {
+      live++
+      peak = Math.max(peak, live)
+      await Bun.sleep(5)
+      live--
+    })
+    expect(peak).toBe(2)
+  })
+
+  test('an explicit width still beats the configured one', async () => {
+    setLanes(2)
+    let peak = 0
+    let live = 0
+    await mapLimit(Array.from({ length: 12 }, (_, n) => n), async () => {
+      live++
+      peak = Math.max(peak, live)
+      await Bun.sleep(5)
+      live--
+    }, 4)
+    expect(peak).toBe(4)
+  })
+
+  test('undefined restores the default, and a floor of one holds', () => {
+    setLanes(3)
+    setLanes(undefined)
+    expect(currentLanes()).toBe(DEFAULT_LANES)
+    setLanes(0)
+    expect(currentLanes()).toBe(1)
+    setLanes(-5)
+    expect(currentLanes()).toBe(1)
   })
 })

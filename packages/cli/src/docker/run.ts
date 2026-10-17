@@ -61,6 +61,7 @@ export async function capture(argv: string[]): Promise<{ code: number; stdout: s
 export async function captureLive(
   argv: string[],
   env?: NodeJS.ProcessEnv,
+  onChunk?: (text: string) => void,
 ): Promise<{ code: number; text: string }> {
   const proc = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env })
   const chunks: Buffer[] = []
@@ -68,6 +69,7 @@ export async function captureLive(
     for await (const chunk of stream) {
       emit('status', chunk as Buffer)
       chunks.push(chunk as Buffer)
+      onChunk?.((chunk as Buffer).toString('utf8'))
     }
   }
   const [, , code] = await Promise.all([keep(proc.stdout!), keep(proc.stderr!), exited(proc)])

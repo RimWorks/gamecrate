@@ -38,8 +38,11 @@ key is required only once its parent is present.
 | `defaults` | `object` |  | The bottom of the settings ladder, under the built-in values. |
 | `defaults.settings` | settings |  | Settings for every game. |
 | `buildConcurrency` | `number` |  | How many `dotnet build` runs go at once when a launch rebuilds stale mods. Default `3`. |
+| `fetchConcurrency` | `number` |  | How many git fetches, disk scans, and steam api calls go at once. Default `8`. |
 | `steamcmd` | `object` |  | Which `steamcmd` downloads workshop items. Absent looks on `PATH`, then runs the `steamcmd/steamcmd` image. |
 | `steamcmd.path` | `string` |  | A steamcmd executable. One that is not fails with exit `5`, rather than falling back. |
+| `pxsteamdl` | `object` |  | A parallel workshop downloader, preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`. |
+| `pxsteamdl.path` | `string` |  | A pxsteamdl executable. One that is not fails with exit `5`, rather than falling back. |
 | `prune` | `object` |  | What `gamecrate prune` deletes. Every key has a flag that overrides it for one run. |
 | `prune.keepRuns` | `number` |  | How many run log directories a profile keeps. Every launch trims to this, and so does `prune`. Default `10`. |
 | `prune.maxAgeDays` | `number` |  | How old something has to be before `prune` deletes it. Default `30`. |

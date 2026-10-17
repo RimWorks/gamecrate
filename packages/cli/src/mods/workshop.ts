@@ -5,7 +5,10 @@ import { join, resolve as resolvePath } from 'node:path'
 import { expandHome, resolveProfile } from '../config/load'
 import { libraryPin, reachedEntries } from './source'
 import { downloadItems, downloadRoot, workshopUrlId } from './steamcmd'
+import type { DownloadHooks } from './steamcmd'
 import { checkDrift } from './workshopapi'
+import { downloadWithPxsteamdl, resolvePxsteamdl } from './pxsteamdl'
+import { mapLimit } from '../concurrency'
 import type { GamePlugin } from '../plugin'
 import type {
   GameConfig,
@@ -40,6 +43,7 @@ export async function prepareWorkshop(
   allowFetch: boolean,
   plugin: GamePlugin,
   sources: ReadonlyMap<string, string>,
+  hooks?: DownloadHooks,
 ): Promise<PreparedWorkshop> {
   const roots = mountedRoots(config.dataRoot, game)
   const ids = new Set<string>()
@@ -51,7 +55,7 @@ export async function prepareWorkshop(
   let frontier = [...new Set([...wantedIds(game, profile, args), ...seeded])]
   for (let round = 0; round < ROUNDS && frontier.length > 0; round++) {
     for (const id of frontier) ids.add(id)
-    if (allowFetch) warnings.push(...(await fetchRound(config, game, roots, frontier)))
+    if (allowFetch) warnings.push(...(await fetchRound(config, game, roots, frontier, hooks)))
     frontier = await dependenciesOf(frontier, ids, roots, game, plugin, problems)
   }
 
@@ -70,14 +74,26 @@ async function fetchRound(
   game: GameConfig,
   roots: string[],
   frontier: string[],
+  hooks?: DownloadHooks,
 ): Promise<string[]> {
   try {
     const drift = await checkDrift(frontier, roots)
-    const downloaded = await downloadItems(config, game, config.dataRoot, drift.needed)
+    const watching = plan(hooks, drift.needed)
+    const parallel = resolvePxsteamdl(config)
+    const downloaded =
+      parallel === undefined
+        ? await downloadItems(config, game, config.dataRoot, drift.needed, watching)
+        : await downloadWithPxsteamdl(parallel, game, config.dataRoot, drift.needed, watching)
     return [...drift.warnings, ...downloaded.warnings]
   } catch (error) {
     return [`could not download workshop items: ${error instanceof Error ? error.message : String(error)}`]
   }
+}
+
+function plan(hooks: DownloadHooks | undefined, ids: string[]): DownloadHooks | undefined {
+  if (hooks === undefined || ids.length === 0) return undefined
+  hooks.onPlan(ids.map((id) => ({ id, label: id })))
+  return hooks
 }
 
 async function dependenciesOf(
@@ -89,8 +105,12 @@ async function dependenciesOf(
   problems: Problem[],
 ): Promise<string[]> {
   const next = new Set<string>()
-  for (const id of frontier) {
-    const manifest = await manifestOf(roots, id, game, plugin, problems)
+  const found = await mapLimit(frontier, async (id) => {
+    const mine: Problem[] = []
+    return { manifest: await manifestOf(roots, id, game, plugin, mine), mine }
+  })
+  for (const { manifest, mine } of found) {
+    problems.push(...mine)
     for (const dep of manifest?.modDependencies ?? []) {
       const depId = workshopUrlId(dep.steamWorkshopUrl)
       if (depId !== undefined && !seen.has(depId)) next.add(depId)

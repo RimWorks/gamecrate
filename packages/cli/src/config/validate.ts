@@ -521,6 +521,9 @@ const root = obj({
   buildConcurrency: num
     .describe('How many `dotnet build` runs go at once when a launch rebuilds stale mods. Default `3`.')
     .optional(),
+  fetchConcurrency: num
+    .describe('How many git fetches, disk scans, and steam api calls go at once. Default `8`.')
+    .optional(),
   steamcmd: obj({
     path: str
       .describe('A steamcmd executable. One that is not fails with exit `5`, rather than falling back.')
@@ -528,6 +531,13 @@ const root = obj({
   })
     .optional()
     .describe('Which `steamcmd` downloads workshop items. Absent looks on `PATH`, then runs the `steamcmd/steamcmd` image.'),
+  pxsteamdl: obj({
+    path: str
+      .describe('A pxsteamdl executable. One that is not fails with exit `5`, rather than falling back.')
+      .optional(),
+  })
+    .optional()
+    .describe('A parallel workshop downloader, preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`.'),
   prune: obj({
     keepRuns: num
       .describe('How many run log directories a profile keeps. Every launch trims to this, and so does `prune`. Default `10`.')

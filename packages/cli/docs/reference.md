@@ -130,6 +130,7 @@ in for a flag.
 | `-f, --follow` | `logs` | Keep printing as the run writes more |
 | `--force` | `mods add`, `steam build` | Overwrite an existing mod entry, or rebuild an image anyway |
 | `--game <name>` | every subcommand | The game to act on, when no profile says which |
+| `--game-version <tag>` | `run`, `shell` | Launch this tag of the game's image repository |
 | `--git <url>` | `mods add` | Clone the mod from this git repository |
 | `--global` | `mods add`, `mods rm` | Write to the global config in ~/.config/gamecrate |
 | `-h, --help` | every subcommand | Show this help |
@@ -142,6 +143,7 @@ in for a flag.
 | `--marker <str>` | `run` | Exit 0 as soon as this text appears in the game log |
 | `--mod <id>` | `run`, `mods`, `shell` | Add one more mod to what the profile loads. Repeatable. |
 | `--mode <headed\|headless\|screenshot>` | `run` | Show a game window, hide it, or take one screenshot |
+| `--modlist <file>` | `run`, `shell` | Load only the mods this list's rows name, in its order |
 | `--network <none\|bridge\|host>` | `run` | The container's network. host lets a mod serve a port |
 | `--no-build` | `run` | Never compile, even when a mod's DLL is out of date |
 | `--no-detach` | `run` | Stay in the foreground, whatever the config asks for |

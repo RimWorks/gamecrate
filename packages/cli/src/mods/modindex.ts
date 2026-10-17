@@ -349,7 +349,7 @@ export async function applyWorktreeRequests(
     )
     const fresh = found.filter((c) => !known.has(c.dir))
     if (fresh.length === 0) continue
-    for (const record of await parseAll(fresh, config, index.plugin, index.problems)) {
+    for (const record of await parseAll(fresh, config, index)) {
       markWorktree(record, request)
       insert(index, record)
     }
@@ -479,6 +479,7 @@ export async function buildIndex(
     byPackageId: new Map(),
     byWorkshopId: new Map(),
     byShortName: new Map(),
+    unreadable: new Set(),
     problems: [],
   }
 
@@ -501,12 +502,12 @@ async function indexLocal(
   for (const [i, root] of config.scanRoots.entries()) {
     await scanLocalRoot(root, i, config.manifest.file, local)
   }
-  const parsed = await parseAll(local, config, index.plugin, index.problems)
+  const parsed = await parseAll(local, config, index)
   if (sourcesDir !== undefined) {
     const cache: Candidate[] = []
     // <name-hash>/<ref>/<subdir>/<mod>
     await scanLocalRoot({ path: sourcesDir, maxDepth: 4 }, cacheIndex, config.manifest.file, cache)
-    const records = await parseAll(cache, config, index.plugin, index.problems)
+    const records = await parseAll(cache, config, index)
     parsed.push(...oneModPerClone(records, sourcesDir))
   }
   for (const record of parsed) insert(index, record)
@@ -534,7 +535,7 @@ async function indexWorkshop(
   for (const [i, root] of roots.entries()) {
     await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
   }
-  const records = await parseAll(items, config, index.plugin, index.problems)
+  const records = await parseAll(items, config, index)
   for (const record of records) insert(index, record)
   if (stamp !== null) await writeWorkshopCache(index.game, stamp, records)
 }
@@ -562,20 +563,17 @@ function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {
 async function parseAll(
   candidates: Candidate[],
   config: GameConfig,
-  plugin: GamePlugin,
-  problems: Problem[],
+  index: ModIndex,
 ): Promise<ModRecord[]> {
   const records = await Promise.all(
     candidates.map(async (candidate): Promise<ModRecord | null> => {
       const file = join(candidate.dir, config.manifest.file)
       try {
-        const manifest = plugin.parseManifest(await readFile(file, 'utf8'))
+        const manifest = index.plugin.parseManifest(await readFile(file, 'utf8'))
         return manifest === null ? null : toRecord(candidate, manifest, config)
-      } catch (error) {
-        problems.push({
-          where: file,
-          message: error instanceof Error ? error.message : String(error),
-        })
+      } catch {
+        index.unreadable.add(candidate.dir)
+        if (candidate.workshopId !== undefined) index.unreadable.add(String(candidate.workshopId))
         return null
       }
     }),

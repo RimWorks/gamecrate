@@ -10,6 +10,7 @@ import type {
   PullPolicy,
 } from '../types'
 import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
+import { readModlist } from '../mods/modlist'
 
 export type PositionalSlot = 'profile' | 'rest'
 
@@ -77,6 +78,8 @@ export const RUN_FLAGS = [
   '--mod',
   '--without',
   '--only',
+  '--modlist',
+  '--game-version',
   '--mode',
   '--marker',
   '--timeout',
@@ -306,7 +309,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     usage: '[profile]',
     positionals: ['profile'],
     flags: [
-      '--mod', '--without', '--only', '--docker-arg', '--root',
+      '--mod', '--without', '--only', '--modlist', '--game-version', '--docker-arg', '--root',
       '--worktree', '--no-worktree', '--instance', '--use', '--replace', '--log', '--quiet',
     ],
   },
@@ -414,6 +417,8 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--mod': (cmd) => cmd.option('--mod <id>', 'Add one more mod to what the profile loads', collect, []),
   '--without': (cmd) => cmd.option('--without <id>', 'Leave one mod out of what the profile loads', collect, []),
   '--only': (cmd) => cmd.option('--only <id>', 'Load only these mods and none of the rest', collect, []),
+  '--modlist': (cmd) => cmd.option('--modlist <file>', "Load only the mods this list's rows name, in its order"),
+  '--game-version': (cmd) => cmd.option('--game-version <tag>', "Launch this tag of the game's image repository"),
   '--worktree': (cmd) => cmd.option( '--worktree <path>', 'Load mods from this git checkout, in its own instance ($GAMECRATE_WORKTREE)', collect, []),
   '--use': (cmd) => cmd.option('--use <packageId>=<path>', 'Load this one mod from this directory, whatever the profile says', collect, []),
   '--no-worktree': (cmd) => cmd.option('--no-worktree', 'Ignore the current git checkout and $GAMECRATE_WORKTREE'),
@@ -723,6 +728,8 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.pull = values['pull'] as PullPolicy | undefined
   out.sort = values['sort'] as 'topo' | 'none' | undefined
   out.instance = values['instance'] as string | undefined
+  out.modlist = values['modlist'] as string | undefined
+  out.gameVersion = values['gameVersion'] as string | undefined
   out.game = values['game'] as string | undefined
   out.build = envBuild ?? policy(values['build'])
   out.cleanTier = log.cleanTier
@@ -744,6 +751,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   applyTargets(out, values, seen)
 
   if (opts.defaults !== undefined) applyDefaults(out, seen, opts.defaults)
+  if (out.modlist !== undefined && !out.help) out.only = [...readModlist(out.modlist), ...out.only]
   return out
 }
 

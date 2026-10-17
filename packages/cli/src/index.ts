@@ -15,6 +15,7 @@ import { launchProfile, profileOf } from './cli/profile'
 import { steamBuildCommand, steamLogin } from './cli/steam'
 import { renderHelp } from './cli/help'
 import { dashboardFor } from './cli/tty'
+import { setLanes } from './concurrency'
 import { startSession } from './cli/session'
 import type { Session } from './cli/session'
 import { startBoard } from './cli/taskboard'
@@ -70,6 +71,8 @@ import { cachedSources, prepareSources, sourcesRoot } from './mods/source'
 import type { PreparedSources } from './mods/source'
 import { releaseToken, unzipPresent } from './mods/release'
 import { downloadRoot, removeDownloads, resolveSteamcmd, STEAMCMD_IMAGE } from './mods/steamcmd'
+import type { DownloadHooks } from './mods/steamcmd'
+import { resolvePxsteamdl } from './mods/pxsteamdl'
 import { emit } from './channels'
 import type { SteamcmdRunner } from './mods/steamcmd'
 import { prepareWorkshop } from './mods/workshop'
@@ -126,6 +129,7 @@ async function command(argv: string[], supervised: string | undefined): Promise<
 
   const defaults = await loadProjectDefaults()
   const { config, plugins } = await loadConfig(undefined, defaults, launchFlags(probe))
+  setLanes(config.fetchConcurrency)
   const args = parseArgs(argv, { games: Object.keys(config.games), profiles: profileNames(config), defaults })
 
   if (args.help) {
@@ -283,10 +287,53 @@ async function run(
   const allowFetch = !args.dryRun && !args.printPlan
   const sources = await prepareSources(gameConfig, profile, args, config.dataRoot, allowFetch)
   try {
-    const workshop = await prepareWorkshop(gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game), sources.dirs)
+    const workshop = await fetchOnBoard(
+      gameConfig, profile, args, config, allowFetch, requirePlugin(plugins, game), sources.dirs, asShell,
+    )
     return await resolved({ argv, args, config, plugins, asShell, game, profile, sources, workshop, allowFetch })
   } finally {
     await sources.release()
+  }
+}
+
+async function fetchOnBoard(
+  game: GameConfig,
+  profile: string,
+  args: ParsedArgs,
+  config: RootConfig,
+  allowFetch: boolean,
+  plugin: GamePlugin,
+  sources: ReadonlyMap<string, string>,
+  asShell: boolean,
+): Promise<PreparedWorkshop> {
+  const drawable = dashboardFor({
+    plain: args.plain,
+    json: args.json,
+    quiet: args.quiet,
+    detach: args.detach,
+    asShell,
+    marker: args.marker !== undefined,
+    mode: args.mode ?? 'headed',
+  })
+  let board: Board | undefined
+  const hooks: DownloadHooks = {
+    onPlan: (tasks) => {
+      board?.close()
+      board = startBoard({
+        title: `fetching ${profile} workshop items`,
+        subtitle: tasks.length === 1 ? '1 item' : `${tasks.length} items`,
+        tasks,
+      })
+    },
+    onCell: (id, patch) => board?.update(id, patch),
+  }
+  try {
+    return await prepareWorkshop(
+      game, profile, args, config, allowFetch, plugin, sources,
+      drawable && allowFetch ? hooks : undefined,
+    )
+  } finally {
+    board?.close()
   }
 }
 
@@ -796,7 +843,7 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
 function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
   const base = config.games[game]!
   const profile = launchProfile(args, defaults, base)
-  const ref = args.image ?? imageFor(base, profile)
+  const ref = imageFor(base, profile, args.image, args.gameVersion)
   return withImageOverride(base, ref)
 }
 
@@ -874,6 +921,16 @@ function steamcmdProblems(game: string, gameConfig: GameConfig, config: RootConf
   } catch (error) {
     problems.push({
       where: 'steamcmd',
+      message: error instanceof Error ? error.message : String(error),
+      ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
+    })
+  }
+  try {
+    const parallel = resolvePxsteamdl(config)
+    status(`${game}: downloader ${parallel ?? 'steamcmd (pxsteamdl is not installed)'}`)
+  } catch (error) {
+    problems.push({
+      where: 'pxsteamdl',
       message: error instanceof Error ? error.message : String(error),
       ...(error instanceof GamecrateError && error.detail !== undefined ? { suggestion: error.detail } : {}),
     })
