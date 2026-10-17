@@ -57,3 +57,5 @@ systemd
 cron
 crontab
 steamless
+pxsteamdl
+[Dd]ownloader

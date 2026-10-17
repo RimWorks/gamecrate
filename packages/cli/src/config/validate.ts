@@ -522,7 +522,7 @@ const root = obj({
     .describe('How many `dotnet build` runs go at once when a launch rebuilds stale mods. Default `3`.')
     .optional(),
   fetchConcurrency: num
-    .describe('How many git fetches, disk scans, and steam api calls go at once. Default `8`.')
+    .describe('How many git fetches, disk scans, and steam API calls go at once. Default `8`.')
     .optional(),
   steamcmd: obj({
     path: str

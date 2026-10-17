@@ -303,7 +303,7 @@ export interface RootConfig {
   defaults?: { settings?: Partial<Settings> }
   /** How many `dotnet build` runs go at once. Root level, because it names a host tool. */
   buildConcurrency?: number
-  /** How many git fetches, disk scans, and steam api calls go at once. Default 8. */
+  /** How many git fetches, disk scans, and steam API calls go at once. Default 8. */
   fetchConcurrency?: number
   /** Where the steamcmd binary is. Root level, not per game, because it names a host tool. */
   steamcmd?: { path?: string }
