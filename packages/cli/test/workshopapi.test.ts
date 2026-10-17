@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { checkDrift } from '../src/mods/workshopapi'
+import { FETCH_STAMP, checkDrift } from '../src/mods/workshopapi'
 
 const INSTALLED = 1752434318
 
@@ -27,12 +27,20 @@ function acfText(items: Record<string, number>): string {
   return `"AppWorkshop"\n{\n\t"appid"\t\t"294100"\n\t"WorkshopItemsInstalled"\n\t{\n${entries}\n\t}\n}\n`
 }
 
-async function tree(items: Record<string, number>, onDisk: string[]): Promise<string> {
+async function tree(
+  items: Record<string, number>,
+  onDisk: string[],
+  stamped: Record<string, number> = {},
+): Promise<string> {
   const dir = await mkdtemp(join(tmp, 'workshop-'))
   await writeFile(join(dir, 'appworkshop_294100.acf'), acfText(items))
   const root = join(dir, 'content', '294100')
   await mkdir(root, { recursive: true })
   for (const id of onDisk) await mkdir(join(root, id))
+  for (const [id, at] of Object.entries(stamped)) {
+    await mkdir(join(root, id), { recursive: true })
+    await writeFile(join(root, id, FETCH_STAMP), `${at}\n`)
+  }
   return root
 }
 
@@ -47,34 +55,46 @@ function detail(id: string, timeUpdated: number, result = 1): Detail {
   return { publishedfileid: id, result, time_updated: timeUpdated }
 }
 
+type Reported = Omit<Awaited<ReturnType<typeof checkDrift>>, 'published'>
+
+function outcome(report: Awaited<ReturnType<typeof checkDrift>>): Reported {
+  const { published: _published, ...rest } = report
+  return rest
+}
+
 describe('checkDrift', () => {
   test('an unchanged item needs nothing', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [root], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a drifted item is queued', async () => {
     const root = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [root], ok([detail('818773962', INSTALLED + 60)]))
-    expect(report).toEqual({ needed: ['818773962'], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: ['818773962'], unavailable: [], warnings: [] })
   })
 
-  test('an id the .acf never heard of rides on its own directory mtime', async () => {
-    const root = await tree({ '818773962': INSTALLED }, ['818773962', '2009463077'])
+  test('an id the .acf never heard of rides on its fetch stamp', async () => {
+    const root = await tree({ '818773962': INSTALLED }, ['818773962'], { '2009463077': INSTALLED })
     const report = await checkDrift(
       ['818773962', '2009463077'],
       [root],
       ok([detail('818773962', INSTALLED), detail('2009463077', INSTALLED)]),
     )
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
-  test('an id outside the .acf is queued when steam changed it after the directory did', async () => {
+  test('a stamped id is queued when steam changed it after the stamp', async () => {
+    const root = await tree({}, [], { '2009463077': INSTALLED })
+    const report = await checkDrift(['2009463077'], [root], ok([detail('2009463077', INSTALLED + 60)]))
+    expect(outcome(report)).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
+  })
+
+  test('a directory with no .acf entry and no stamp is a half-finished download', async () => {
     const root = await tree({}, ['2009463077'])
-    const soon = Math.floor(Date.now() / 1000) + 600
-    const report = await checkDrift(['2009463077'], [root], ok([detail('2009463077', soon)]))
-    expect(report).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
+    const report = await checkDrift(['2009463077'], [root], ok([detail('2009463077', INSTALLED)]))
+    expect(outcome(report)).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
   })
 
   test('an id in the .acf with no directory is queued', async () => {
@@ -84,7 +104,7 @@ describe('checkDrift', () => {
       [root],
       ok([detail('818773962', INSTALLED), detail('2009463077', INSTALLED)]),
     )
-    expect(report).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: ['2009463077'], unavailable: [], warnings: [] })
   })
 
   test('a result other than 1 warns and is not queued', async () => {
@@ -117,7 +137,7 @@ describe('checkDrift', () => {
     expect(bodies[0]).toContain('publishedfileids%5B99%5D=900099')
     expect(bodies[1]).toContain('itemcount=1')
     expect(bodies[1]).toContain('publishedfileids%5B0%5D=900100')
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a request that never answers falls back to the missing items at 5s', async () => {
@@ -138,7 +158,7 @@ describe('checkDrift', () => {
     await sent
     jest.advanceTimersByTime(5000)
 
-    expect(await report).toEqual({
+    expect(outcome(await report)).toEqual({
       needed: ['2009463077'],
       unavailable: [],
       warnings: ['could not ask steam which items changed (no answer in 5000ms); only missing items will download'],
@@ -160,33 +180,33 @@ describe('checkDrift', () => {
     const host = await tree({ '111': INSTALLED }, ['111'])
     const docker = await tree({ '818773962': INSTALLED }, ['818773962'])
     const report = await checkDrift(['818773962'], [host, docker], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('an item in both roots is compared against the copy the first root holds', async () => {
     const older = await tree({ '818773962': INSTALLED }, ['818773962'])
     const newer = await tree({ '818773962': INSTALLED + 60 }, ['818773962'])
     const steam = ok([detail('818773962', INSTALLED + 60)])
-    expect(await checkDrift(['818773962'], [older, newer], steam)).toEqual({
+    expect(outcome(await checkDrift(['818773962'], [older, newer], steam))).toEqual({
       needed: ['818773962'],
       unavailable: [],
       warnings: [],
     })
-    expect(await checkDrift(['818773962'], [newer, older], steam)).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(await checkDrift(['818773962'], [newer, older], steam))).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a root with no .acf is skipped rather than failing the check', async () => {
     const real = await tree({ '818773962': INSTALLED }, ['818773962'])
     const absent = join(tmp, 'never-downloaded', 'content', '294100')
     const report = await checkDrift(['818773962'], [absent, real], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('an item on disk in the second root only is not queued', async () => {
     const host = await tree({ '818773962': INSTALLED }, [])
-    const docker = await tree({}, ['818773962'])
+    const docker = await tree({}, [], { '818773962': INSTALLED })
     const report = await checkDrift(['818773962'], [host, docker], ok([detail('818773962', INSTALLED)]))
-    expect(report).toEqual({ needed: [], unavailable: [], warnings: [] })
+    expect(outcome(report)).toEqual({ needed: [], unavailable: [], warnings: [] })
   })
 
   test('a body this does not understand falls back to the missing items', async () => {

@@ -8,12 +8,17 @@ const ENDPOINT = 'https://api.steampowered.com/ISteamRemoteStorage/GetPublishedF
 const CHUNK = 100
 const TIMEOUT_MS = 5_000
 
+/** Written inside an item directory once a download completes, holding steam's own `time_updated`. */
+export const FETCH_STAMP = '.gamecrate-fetched'
+
 export interface DriftReport {
   /** Ids that need steamcmd, because they drifted, are absent from the .acf, or are not on disk. */
   needed: string[]
   /** Ids steam will not serve: removed, private or hidden. Not the same as up to date. */
   unavailable: string[]
   warnings: string[]
+  /** Steam's `time_updated` per id, for the downloader to record on success. */
+  published: Map<string, number>
 }
 
 type Detail = { result: number; timeUpdated: number }
@@ -39,6 +44,7 @@ export async function checkDrift(
       needed: missing,
       unavailable: [],
       warnings: [`could not ask steam which items changed (${reason(error)}); only missing items will download`],
+      published: new Map(),
     }
   }
 
@@ -57,7 +63,9 @@ export async function checkDrift(
     const local = loaded.get(id)
     if (local !== undefined && detail.timeUpdated > local) needed.add(id)
   }
-  return { needed: [...needed], unavailable, warnings }
+  const stamps = new Map<string, number>()
+  for (const [id, detail] of details) if (detail.result === 1) stamps.set(id, detail.timeUpdated)
+  return { needed: [...needed], unavailable, warnings, published: stamps }
 }
 
 async function installs(
@@ -69,9 +77,11 @@ async function installs(
   for (const root of roots) {
     const fromClient = installedItems(await readText(acfPath(root)))
     const here = await mapLimit(ids, async (id) => {
-      const ownMtime = await directoryChangedAt(join(root, id))
-      if (ownMtime === undefined) return undefined
-      return fromClient.get(id)?.timeupdated ?? ownMtime
+      const dir = join(root, id)
+      const ours = await readFetchStamp(dir)
+      const theirs = (await isDirectory(dir)) ? fromClient.get(id)?.timeupdated : undefined
+      if (ours === undefined && theirs === undefined) return undefined
+      return Math.max(ours ?? 0, theirs ?? 0)
     })
     for (const [i, id] of ids.entries()) {
       const stamp = here[i]
@@ -83,10 +93,18 @@ async function installs(
   return { loaded, present }
 }
 
-async function directoryChangedAt(dir: string): Promise<number | undefined> {
+async function isDirectory(dir: string): Promise<boolean> {
   try {
-    const info = await stat(dir)
-    return info.isDirectory() ? Math.floor(info.mtimeMs / 1000) : undefined
+    return (await stat(dir)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+async function readFetchStamp(dir: string): Promise<number | undefined> {
+  try {
+    const parsed = Number((await readFile(join(dir, FETCH_STAMP), 'utf8')).trim())
+    return Number.isFinite(parsed) ? parsed : undefined
   } catch {
     return undefined
   }

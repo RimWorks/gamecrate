@@ -74,7 +74,7 @@ describe('resolvePxsteamdl', () => {
 describe('downloadWithPxsteamdl', () => {
   test('writes into the same layout steamcmd uses', async () => {
     const root = await fake()
-    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962'])
+    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962'], new Map())
 
     expect(report.items.get('818773962')?.ok).toBe(true)
     expect(existsSync(join(downloadRoot(root, game), '818773962', 'About', 'About.xml'))).toBe(true)
@@ -84,7 +84,7 @@ describe('downloadWithPxsteamdl', () => {
     const root = await fake()
     setLanes(8)
     process.env.FAKE_ARGV_FILE = join(root, 'px-argv.txt')
-    await downloadWithPxsteamdl(FAKE, game, root, ['111', '222'])
+    await downloadWithPxsteamdl(FAKE, game, root, ['111', '222'], new Map())
     const argv = (await readFile(join(root, 'px-argv.txt'), 'utf8')).trim().split(/\s+/)
 
     expect(argv[argv.indexOf('-j') + 1]).toBe('8')
@@ -95,7 +95,7 @@ describe('downloadWithPxsteamdl', () => {
   test('a failed line is a warning, and the rest still land', async () => {
     const root = await fake()
     process.env.FAKE_FAIL_IDS = '777'
-    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'])
+    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'], new Map())
 
     expect(report.items.get('818773962')?.ok).toBe(true)
     expect(report.items.get('777')?.ok).toBe(false)
@@ -107,7 +107,7 @@ describe('downloadWithPxsteamdl', () => {
   test('an id the output never mentions is a failure', async () => {
     const root = await fake()
     process.env.FAKE_SKIP_IDS = '777'
-    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'])
+    const report = await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'], new Map())
 
     expect(report.items.get('777')).toEqual({ ok: false, reason: 'pxsteamdl reported nothing for it' })
   })
@@ -117,7 +117,7 @@ describe('downloadWithPxsteamdl', () => {
     process.env.FAKE_FAIL_IDS = '777'
     const planned: string[] = []
     const cells: { id: string; state: string; detail?: string }[] = []
-    await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'], {
+    await downloadWithPxsteamdl(FAKE, game, root, ['818773962', '777'], new Map(), {
       onPlan: (tasks) => planned.push(...tasks.map((t) => t.id)),
       onCell: (id, patch) => cells.push({ id, ...patch }),
     })
@@ -135,7 +135,7 @@ describe('downloadWithPxsteamdl', () => {
     const root = await fake()
     process.env.FAKE_DELAY_MS = '900'
     const order: string[] = []
-    await downloadWithPxsteamdl(FAKE, game, root, ['818773962'], {
+    await downloadWithPxsteamdl(FAKE, game, root, ['818773962'], new Map(), {
       onPlan: () => {},
       onCell: (id, patch) => order.push(`${id}:${patch.state}`),
     })
@@ -146,7 +146,7 @@ describe('downloadWithPxsteamdl', () => {
   test('an empty list spawns nothing', async () => {
     const root = await fake()
     process.env.FAKE_ARGV_FILE = join(root, 'px-argv.txt')
-    const report = await downloadWithPxsteamdl(FAKE, game, root, [])
+    const report = await downloadWithPxsteamdl(FAKE, game, root, [], new Map())
 
     expect(report.items.size).toBe(0)
     expect(existsSync(join(root, 'px-argv.txt'))).toBe(false)
@@ -158,7 +158,7 @@ describe('downloadWithPxsteamdl', () => {
     await writeFile(broken, '#!/nonexistent/sh\n')
     await chmod(broken, 0o755)
 
-    await expect(downloadWithPxsteamdl(broken, game, root, ['777'])).rejects.toThrow(/could not run pxsteamdl/)
+    await expect(downloadWithPxsteamdl(broken, game, root, ['777'], new Map())).rejects.toThrow(/could not run pxsteamdl/)
     expect(existsSync(`${steamHome(root)}.lock`)).toBe(false)
   })
 })

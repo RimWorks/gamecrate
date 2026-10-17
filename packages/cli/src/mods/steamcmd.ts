@@ -160,7 +160,7 @@ const FAILED = /ERROR! Download item (\d+) failed \(([^)]+)\)/g
 const STARTING = /Downloading item (\d+)/g
 const ATTEMPTS = 2
 const RETRY_DELAY_MS = 1000
-const WATCH_BUFFER = 256 * 1024
+const WATCH_BUFFER = 8 * 1024
 
 /** One row per workshop item, reported as steamcmd works through the batch. */
 export interface DownloadHooks {
@@ -190,6 +190,7 @@ export async function downloadItems(
   if (ids.length === 0) return { items, warnings }
 
   const runner = resolveSteamcmd(config)
+  const streamed = new Set<string>()
   // docker creates a missing bind source as root, and then the --user process cannot write its own HOME
   mkdirSync(steamHome(dataRoot), { recursive: true })
   const reasons = new Map<string, string>()
@@ -199,7 +200,7 @@ export async function downloadItems(
   try {
     let pending = ids
     for (let attempt = 0; attempt < ATTEMPTS && pending.length > 0; attempt++) {
-      const output = await run(runner, game, dataRoot, pending, hooks)
+      const output = await run(runner, game, dataRoot, pending, hooks, streamed)
       for (const m of output.matchAll(SUCCESS)) {
         items.set(m[1] as string, { ok: true, dir: m[2] as string, bytes: Number(m[3]) })
       }
@@ -214,10 +215,14 @@ export async function downloadItems(
   // the requested set is the verdict. steamcmd's exit code cannot say that one item of a batch
   // failed, so an id it never reported a success for is a failure whatever it printed
   for (const id of ids) {
-    if (items.has(id)) continue
+    if (items.has(id)) {
+      if (!streamed.has(id)) hooks?.onCell(id, { state: 'done' })
+      continue
+    }
     const reason = reasons.get(id) ?? 'steamcmd reported nothing for it'
     items.set(id, { ok: false, reason })
     warnings.push(`could not download workshop item ${id}: ${reason}`)
+    if (!streamed.has(id)) hooks?.onCell(id, { state: 'failed', detail: reason })
   }
   return { items, warnings }
 }
@@ -227,7 +232,8 @@ async function run(
   game: GameConfig,
   dataRoot: string,
   ids: string[],
-  hooks?: DownloadHooks,
+  hooks: DownloadHooks | undefined,
+  streamed: Set<string>,
 ): Promise<string> {
   const argv = [
     ...runner.argv,
@@ -238,10 +244,10 @@ async function run(
     '+quit',
   ]
   if (hooks === undefined) return spawnSteamcmd(argv, runner)
-  return await spawnSteamcmdLive(argv, runner, watchItems(hooks))
+  return await spawnSteamcmdLive(argv, runner, watchItems(hooks, streamed))
 }
 
-function watchItems(hooks: DownloadHooks): (text: string) => void {
+function watchItems(hooks: DownloadHooks, streamed: Set<string>): (text: string) => void {
   let unterminated = ''
   const settled = new Set<string>()
   return (text) => {
@@ -252,11 +258,13 @@ function watchItems(hooks: DownloadHooks): (text: string) => void {
     for (const m of unterminated.matchAll(SUCCESS)) {
       if (settled.has(m[1]!)) continue
       settled.add(m[1]!)
+      streamed.add(m[1]!)
       hooks.onCell(m[1]!, { state: 'done' })
     }
     for (const m of unterminated.matchAll(FAILED)) {
       if (settled.has(m[1]!)) continue
       settled.add(m[1]!)
+      streamed.add(m[1]!)
       hooks.onCell(m[1]!, { state: 'failed', detail: m[2]! })
     }
   }

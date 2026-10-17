@@ -76,14 +76,14 @@ async function fetchRound(
   frontier: string[],
   hooks?: DownloadHooks,
 ): Promise<string[]> {
+  const parallel = resolvePxsteamdl(config)
   try {
     const drift = await checkDrift(frontier, roots)
     const watching = plan(hooks, drift.needed)
-    const parallel = resolvePxsteamdl(config)
     const downloaded =
       parallel === undefined
         ? await downloadItems(config, game, config.dataRoot, drift.needed, watching)
-        : await downloadWithPxsteamdl(parallel, game, config.dataRoot, drift.needed, watching)
+        : await downloadWithPxsteamdl(parallel, game, config.dataRoot, drift.needed, drift.published, watching)
     return [...drift.warnings, ...downloaded.warnings]
   } catch (error) {
     return [`could not download workshop items: ${error instanceof Error ? error.message : String(error)}`]

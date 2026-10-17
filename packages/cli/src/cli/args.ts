@@ -250,7 +250,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
     summary: 'Wait for a background run to end, then exit with its code',
     usage: '[profile]',
     positionals: ['profile'],
-    flags: ['--instance', '--worktree', '--no-worktree', '--ready', '--ci'],
+    flags: ['--instance', '--worktree', '--no-worktree', '--ready', '--timeout', '--ci'],
   },
   {
     name: 'ps',
@@ -666,6 +666,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   const program = buildProgram()
   const log = recordFlags(program)
   const { seen, counts, worktree } = log
+  if (sep !== -1) seen.add('--')
 
   checkValueTokens(program, head)
   try {
@@ -1057,7 +1058,17 @@ function applyListDefaults(out: ParsedArgs, seen: Set<string>, defaults: Project
     out.worktree = [...defaults.worktree]
   }
   if (!seen.has('--use') && defaults.use !== undefined) out.use = [...defaults.use]
-  if (defaults.gameArgs !== undefined) out.gameArgs = [...defaults.gameArgs, ...(out.gameArgs ?? [])]
+  applyGameArgDefaults(out, seen, defaults)
+}
+
+/**
+ * Typed arguments come first, because the game takes the first match for a repeated key. A bare
+ * `--` with nothing after it is how a run opts out of the project's `gameArgs` entirely.
+ */
+function applyGameArgDefaults(out: ParsedArgs, seen: Set<string>, defaults: ProjectDefaults): void {
+  if (defaults.gameArgs === undefined) return
+  if (!seen.has('--')) out.gameArgs = [...defaults.gameArgs]
+  else if (out.gameArgs.length > 0) out.gameArgs = [...out.gameArgs, ...defaults.gameArgs]
 }
 
 function applyScalarDefaults(out: ParsedArgs, defaults: ProjectDefaults): void {
@@ -1298,12 +1309,21 @@ export function supervisorArgv(
   const bin = self[1]?.startsWith('/$bunfs/') === true ? [execPath] : [execPath, self[1]!]
   const sep = userArgs.indexOf('--')
   const head = [
-    ...(sep === -1 ? userArgs : userArgs.slice(0, sep)).filter((arg) => arg !== '--detach'),
+    ...expandModlistIntoOnly(sep === -1 ? userArgs : userArgs.slice(0, sep)).filter(
+      (arg) => arg !== '--detach',
+    ),
     '--supervised',
     instanceDir,
   ]
   const tail = sep === -1 ? [] : userArgs.slice(sep)
   return [...bin, ...head, ...tail]
+}
+
+function expandModlistIntoOnly(args: string[]): string[] {
+  const at = args.indexOf('--modlist')
+  if (at === -1 || args[at + 1] === undefined) return args
+  const entries = readModlist(args[at + 1]!).flatMap((entry) => ['--only', entry])
+  return [...args.slice(0, at), ...entries, ...args.slice(at + 2)]
 }
 
 /** Read straight off argv: the recovery path runs before anything is parsed or loaded. */

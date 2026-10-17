@@ -319,11 +319,15 @@ async function fetchOnBoard(
   const hooks: DownloadHooks = {
     onPlan: (tasks) => {
       board?.close()
-      board = startBoard({
-        title: `fetching ${profile} workshop items`,
-        subtitle: tasks.length === 1 ? '1 item' : `${tasks.length} items`,
-        tasks,
-      })
+      try {
+        board = startBoard({
+          title: `fetching ${profile} workshop items`,
+          subtitle: tasks.length === 1 ? '1 item' : `${tasks.length} items`,
+          tasks,
+        })
+      } catch {
+        board = undefined
+      }
     },
     onCell: (id, patch) => board?.update(id, patch),
   }
@@ -1362,7 +1366,20 @@ async function waitReady(
   dir: string,
   args: ParsedArgs,
 ): Promise<number> {
-  const outcome = await awaitReady(dir, async (name) => (await inspectContainer(name))?.running === true)
+  const deadline = args.timeout === undefined ? undefined : Date.now() + args.timeout * 1000
+  const outcome = await awaitReady(
+    dir,
+    async (name) => (await inspectContainer(name))?.running === true,
+    undefined,
+    deadline,
+  )
+  if (outcome === 'timeout') {
+    throw new GamecrateError(
+      `${game} ${profile} did not come up within ${args.timeout}s`,
+      Exit.MarkerTimeout,
+      `it is still staging or pulling. run: gamecrate logs ${profile}`,
+    )
+  }
   if (outcome === 'orphaned') {
     throw new GamecrateError(
       `${game} ${profile}: the lock holder is gone and recorded no exit`,
@@ -1376,8 +1393,8 @@ async function waitReady(
   if (!outcome.ready) {
     const { code, reason } = outcome.exit
     if (args.json) emit('data', `${JSON.stringify({ ready: false, ...outcome.exit })}\n`)
-    else warn(`${game} ${profile} died before it came up: ${reason} (${code})`)
-    return code === Exit.Ok ? Exit.GameFailed : code
+    else warn(`${game} ${profile} ended before it came up: ${reason} (${code})`)
+    return code === Exit.Ok ? Exit.MarkerTimeout : code
   }
 
   if (args.json) emit('data', `${JSON.stringify({ ready: true, container: outcome.container })}\n`)

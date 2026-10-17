@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, mkdirSync, statSync, utimesSync } from 'node:fs'
+import { accessSync, constants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 
 import { expandHome } from '../config/load'
@@ -9,6 +9,7 @@ import type { GameConfig, RootConfig } from '../types'
 import { downloadRoot, steamHome } from './steamcmd'
 import type { DownloadHooks, DownloadOutcome, DownloadReport } from './steamcmd'
 import { lockDir } from './source'
+import { FETCH_STAMP } from './workshopapi'
 
 const OK = /^ok\s+(\d+)\s+(.*)$/
 const FAILED = /^failed\s+(\d+)\s+(.*)$/
@@ -31,14 +32,15 @@ export function resolvePxsteamdl(config: RootConfig): string | undefined {
 }
 
 /**
- * Downloads every id at once, into the layout steamcmd writes. pxsteamdl checks each file
- * against the live manifest itself, so a caller passes every id it wants rather than a diff.
+ * Downloads every id at once, into the layout steamcmd writes. `published` carries steam's own
+ * `time_updated` per id, recorded beside each item so later runs compare one clock, not two.
  */
 export async function downloadWithPxsteamdl(
   binary: string,
   game: GameConfig,
   dataRoot: string,
   ids: string[],
+  published: ReadonlyMap<string, number>,
   hooks?: DownloadHooks,
 ): Promise<DownloadReport> {
   const items = new Map<string, DownloadOutcome>()
@@ -50,8 +52,9 @@ export async function downloadWithPxsteamdl(
   const release = await lockDir(steamHome(dataRoot))
   const stop = hooks === undefined ? undefined : markRunningAsItemDirsAppear(root, ids, hooks)
   let text: string
+  let code: number
   try {
-    ;({ text } = await captureLive(
+    ;({ text, code } = await captureLive(
       [binary, '-o', root, '-j', String(currentLanes()), '--', ...ids],
       process.env,
     ))
@@ -66,25 +69,28 @@ export async function downloadWithPxsteamdl(
     await release()
   }
 
+  const wanted = new Set(ids)
   const reasons = new Map<string, string>()
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text.split(/[\r\n]+/)) {
     const done = OK.exec(line.trim())
-    if (done !== null) {
+    if (done !== null && wanted.has(done[1]!)) {
       const dir = join(root, done[1]!)
-      stampFetched(dir)
+      stampFetched(dir, published.get(done[1]!))
       items.set(done[1]!, { ok: true, dir, bytes: sizeOf(dir) })
       continue
     }
     const bad = FAILED.exec(line.trim())
-    if (bad !== null) reasons.set(bad[1]!, bad[2]!.trim())
+    if (bad !== null && wanted.has(bad[1]!)) reasons.set(bad[1]!, bad[2]!.trim())
   }
 
+  const silent = code !== 0 && reasons.size === 0 && items.size === 0
   for (const id of ids) {
     if (items.get(id)?.ok === true) {
       hooks?.onCell(id, { state: 'done' })
       continue
     }
-    const reason = reasons.get(id) ?? 'pxsteamdl reported nothing for it'
+    const reason =
+      reasons.get(id) ?? (silent ? `pxsteamdl exited ${code} without reporting anything` : 'pxsteamdl reported nothing for it')
     items.set(id, { ok: false, reason })
     warnings.push(`could not download workshop item ${id}: ${reason}`)
     hooks?.onCell(id, { state: 'failed', detail: reason })
@@ -111,11 +117,9 @@ function markRunningAsItemDirsAppear(
   return () => clearInterval(timer)
 }
 
-/** pxsteamdl rewrites files inside the tree, which leaves the item directory's own mtime behind. */
-function stampFetched(dir: string): void {
-  const now = new Date()
+function stampFetched(dir: string, publishedAt: number | undefined): void {
   try {
-    utimesSync(dir, now, now)
+    writeFileSync(join(dir, FETCH_STAMP), `${publishedAt ?? 0}\n`)
   } catch {
     return
   }

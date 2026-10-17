@@ -1,5 +1,7 @@
 import type { ImageLaunch } from '../docker/spec'
 import type { GameConfig, ModeName, Problem } from '../types'
+import { Exit, GamecrateError } from '../types'
+import { RUNTIME_BASE } from '../image/base'
 import { resolveProfile } from '../config/load'
 import { imageDigest, imageLabel } from './prepare'
 
@@ -114,11 +116,23 @@ export function imageFor(
   version?: string,
 ): string | undefined {
   if (flag !== undefined) return flag
-  if (version !== undefined) return `${repoOf(game.image.ref)}:${version}`
+  if (version !== undefined) return taggedGameImage(game, version, 'flag --game-version')
   const spec = resolveProfile(game, profile)
   if (spec.image !== undefined) return spec.image
   if (spec.gameVersion === undefined) return undefined
-  return `${repoOf(game.image.ref)}:${spec.gameVersion}`
+  return taggedGameImage(game, spec.gameVersion, `profile ${profile}'s gameVersion`)
+}
+
+function taggedGameImage(game: GameConfig, version: string, who: string): string {
+  const repo = repoOf(game.image.ref)
+  if (repo === repoOf(RUNTIME_BASE.linux) || repo === repoOf(RUNTIME_BASE.windows)) {
+    throw new GamecrateError(
+      `${who} needs an image of the game, and this game has none`,
+      Exit.Config,
+      'this game mounts its install from the host. give it an `image.ref`, or run `gamecrate steam build`',
+    )
+  }
+  return `${repo}:${version}`
 }
 
 /** The ref without its tag. A colon after the last slash is a tag; before it, a registry port. */

@@ -61,9 +61,19 @@ describe('readModlist', () => {
     expect(readModlist(path)).toEqual(['workshop:11'])
   })
 
-  test('refuses a row with no workshop id', async () => {
-    const path = await dump('broken.txt', '0 | Harmony | brrainz.harmony\n')
-    expect(() => readModlist(path)).toThrow(/names no packageId and workshop id/)
+  test('a row with no workshop id resolves by packageId, as Core and the DLC do', async () => {
+    const path = await dump('bare.txt', '0 | Core | ludeon.rimworld |\n1 | Local | me.local\n')
+    expect(readModlist(path)).toEqual(['ludeon.rimworld', 'me.local'])
+  })
+
+  test('a version suffix after the workshop id is ignored', async () => {
+    const path = await dump('suffix.txt', '0 | A | a.b | 1234 (1.6)\n')
+    expect(readModlist(path)).toEqual(['workshop:1234'])
+  })
+
+  test('refuses a row with too few fields', async () => {
+    const path = await dump('short.txt', '0 | Harmony\n')
+    expect(() => readModlist(path)).toThrow(/field\(s\)/)
   })
 
   test('refuses a file with no rows', async () => {

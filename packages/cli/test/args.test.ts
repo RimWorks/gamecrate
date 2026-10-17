@@ -489,16 +489,26 @@ describe('project defaults', () => {
     expect(args.mods).toEqual(['Cli.Mod'])
     expect(args.worktree).toEqual(['/worktrees/fix'])
     expect(args.noWorktree).toBe(false)
-    expect(args.gameArgs).toEqual(['-quicktest', '-debug'])
+    expect(args.gameArgs).toEqual(['-debug', '-quicktest'])
   })
 
-  test('game args after -- add to the file default instead of dropping it', () => {
+  test('game args after -- come first, because the game takes the first match', () => {
     const args = parseArgs(['run', 'kitted', '--', '-pickle-http-port=27755'], {
       env: {},
       games: ['atlas'],
       defaults,
     })
-    expect(args.gameArgs).toEqual(['-quicktest', '-pickle-http-port=27755'])
+    expect(args.gameArgs).toEqual(['-pickle-http-port=27755', '-quicktest'])
+  })
+
+  test('a bare -- opts out of the file default', () => {
+    const args = parseArgs(['run', 'kitted', '--'], { env: {}, games: ['atlas'], defaults })
+    expect(args.gameArgs).toEqual([])
+  })
+
+  test('no -- at all still takes the file default', () => {
+    const args = parseArgs(['run', 'kitted'], { env: {}, games: ['atlas'], defaults })
+    expect(args.gameArgs).toEqual(['-quicktest'])
   })
 
   test('environment values replace file defaults', () => {

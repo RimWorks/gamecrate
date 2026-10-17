@@ -207,12 +207,13 @@ async function scanGameData(
   }
 }
 
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 
 interface CacheFile {
   version: number
   stamp: string
   records: ModRecord[]
+  unreadable: string[]
 }
 
 function acfPath(root: string, steamAppId: number): string {
@@ -258,18 +259,23 @@ export function workshopStamp(game: GameConfig, dataRoot: string | undefined): s
   }
 }
 
-async function readWorkshopCache(game: string, stamp: string): Promise<ModRecord[] | null> {
+async function readWorkshopCache(game: string, stamp: string): Promise<CacheFile | null> {
   try {
     const raw = JSON.parse(await readFile(join(cacheDir(), `${game}.workshop.json`), 'utf8')) as CacheFile
     if (raw.version !== CACHE_VERSION || raw.stamp !== stamp) return null
-    return raw.records
+    return raw
   } catch {
     return null
   }
 }
 
-async function writeWorkshopCache(game: string, stamp: string, records: ModRecord[]): Promise<void> {
-  const payload: CacheFile = { version: CACHE_VERSION, stamp, records }
+async function writeWorkshopCache(
+  game: string,
+  stamp: string,
+  records: ModRecord[],
+  unreadable: string[],
+): Promise<void> {
+  const payload: CacheFile = { version: CACHE_VERSION, stamp, records, unreadable }
   try {
     await mkdir(cacheDir(), { recursive: true })
     await writeFile(join(cacheDir(), `${game}.workshop.json`), JSON.stringify(payload))
@@ -527,7 +533,8 @@ async function indexWorkshop(
   const stamp = workshopStamp(config, dataRoot)
   const cached = stamp === null ? null : await readWorkshopCache(index.game, stamp)
   if (cached) {
-    for (const record of cached) insert(index, record)
+    for (const record of cached.records) insert(index, record)
+    for (const key of cached.unreadable ?? []) index.unreadable.add(key)
     return
   }
 
@@ -535,9 +542,11 @@ async function indexWorkshop(
   for (const [i, root] of roots.entries()) {
     await scanWorkshopRoot(root, cacheIndex + 1 + i, config.manifest.file, items)
   }
+  const before = new Set(index.unreadable)
   const records = await parseAll(items, config, index)
   for (const record of records) insert(index, record)
-  if (stamp !== null) await writeWorkshopCache(index.game, stamp, records)
+  const found = [...index.unreadable].filter((key) => !before.has(key))
+  if (stamp !== null) await writeWorkshopCache(index.game, stamp, records, found)
 }
 
 function oneModPerClone(records: ModRecord[], sourcesDir: string): ModRecord[] {

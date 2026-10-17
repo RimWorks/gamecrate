@@ -4,11 +4,11 @@ import { expandHome } from '../config/load'
 import { Exit, GamecrateError } from '../types'
 
 const ROW = /^\s*\d+\s*\|/
-const TAIL = /\|\s*(\S+)\s*\|\s*(\d+)\s*$/
+const PUBLISHED = /^(\d+)\b/
 
 /**
- * Reads `<index> | <name> | <packageId> | <workshopId>` rows into `workshop:<id>` entries, in
- * file order. A mod name can hold a `|`, so the last two fields are read from the line's end.
+ * Reads a mod list dump in file order. A row ending in a workshop id resolves by that id, and a
+ * row without one, which is what Core, the DLC and a local mod look like, resolves by packageId.
  */
 export function readModlist(file: string): string[] {
   const path = resolvePath(expandHome(file))
@@ -23,11 +23,14 @@ export function readModlist(file: string): string[] {
   const out: string[] = []
   for (const [i, line] of text.split('\n').entries()) {
     if (!ROW.test(line)) continue
-    const found = TAIL.exec(line)
-    if (found === null) {
-      throw new GamecrateError(`${path}:${i + 1} names no packageId and workshop id`, Exit.Usage, shape)
+    const fields = line.split('|').map((field) => field.trim())
+    while (fields.length > 0 && fields.at(-1) === '') fields.pop()
+    if (fields.length < 3) {
+      throw new GamecrateError(`${path}:${i + 1} has ${fields.length} field(s)`, Exit.Usage, shape)
     }
-    out.push(`workshop:${found[2]!}`)
+    const last = fields.at(-1)!
+    const published = PUBLISHED.exec(last)
+    out.push(published === null ? last : `workshop:${published[1]!}`)
   }
 
   if (out.length === 0) throw new GamecrateError(`${path} holds no mod list rows`, Exit.Usage, shape)

@@ -175,7 +175,7 @@ in for a flag.
 | `--steam` | `run` | Bind the host's running steam client in, and use its network |
 | `--subdir <path>` | `mods add` | The mod folder inside the repository |
 | `--tag <name>` | `mods add` | Pin to this git tag |
-| `--timeout <seconds>` | `run` | Stop a marker or headless run after this many seconds |
+| `--timeout <seconds>` | `run`, `wait` | Stop a marker or headless run after this many seconds |
 | `--use <packageId>=<path>` | `run`, `shell` | Load this one mod from this directory, whatever the profile says. Repeatable. |
 | `--username <name>` | `steam login` | Use this username and skip the prompt |
 | `--variant <name>` | `steam build` | Build only this image variant. Repeatable. |
