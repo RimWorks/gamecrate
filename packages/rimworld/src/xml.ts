@@ -9,8 +9,11 @@ interface XmlNode {
   inner: string
 }
 
+const DECLARATION = /^\s*<\?xml\b[^>]*\?>/
+
 function parseDocument(text: string): XmlNode {
-  const src = text.codePointAt(0) === 0xfeff ? text.slice(1) : text
+  const stripped = text.codePointAt(0) === 0xfeff ? text.slice(1) : text
+  const src = stripped.replace(DECLARATION, (decl) => ' '.repeat(decl.length))
   const parser = new SaxesParser({ xmlns: false, position: true })
   const stack: { node: XmlNode; innerStart: number }[] = []
   let root: XmlNode | undefined

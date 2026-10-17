@@ -148,6 +148,21 @@ describe('parseAboutXml', () => {
     )
   })
 
+  test('a typo in the declared encoding parses, as the game parses it (item 3540871348)', () => {
+    const manifest = parseAboutXml(
+      '<?xml version="1.0" encoding="utf=8"?>\r\n<ModMetaData>\r\n<name>Mountain Mover</name>\r\n<packageId>bobloss.mountainmover</packageId>\r\n</ModMetaData>',
+    )
+    expect(manifest?.packageId).toBe('bobloss.mountainmover')
+    expect(manifest?.name).toBe('Mountain Mover')
+  })
+
+  test('a declaration leaves the inner text offsets alone', () => {
+    const manifest = parseAboutXml(
+      '<?xml version="1.0"?><ModMetaData><packageId>a.b</packageId><loadAfter><li>x.y</li></loadAfter></ModMetaData>',
+    )
+    expect(manifest?.loadAfter).toEqual(['x.y'])
+  })
+
   test('throws on an empty document', () => {
     expect(() => parseAboutXml('   ')).toThrow(/root element/)
   })
