@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   prose:
-    uses: RimWorks/mod-ci/.github/workflows/prose.yml@v3
+    uses: RimWorks/mod-ci/.github/workflows/prose.yml@v5
 
   check:
     name: lint, typecheck, test
@@ -74,3 +74,13 @@ jobs:
             -Dsonar.organization=rimworks
             -Dsonar.exclusions=packages/*/dist/**,packages/cli/test/fixtures/**,Styles/**
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+  gate:
+    name: ci gate
+    if: always()
+    needs: [prose, check]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: RimWorks/mod-ci/.github/actions/gate@v5
+        with:
+          results: ${{ join(needs.*.result, ' ') }}
