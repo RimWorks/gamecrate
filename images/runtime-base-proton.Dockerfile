@@ -24,7 +24,7 @@ RUN apt-get update \
         libfreetype6 \
         libgl1 \
         libglu1-mesa \
-        libgtk-3-0 \
+        libicu74 \
         libnss3 \
         libpulse0 \
         libsdl2-2.0-0 \
@@ -37,11 +37,9 @@ RUN apt-get update \
         libxinerama1 \
         libxrandr2 \
         libxrender1 \
-        locales \
         mesa-vulkan-drivers \
         python3 \
         vulkan-tools \
-        x11-apps \
         xdotool \
         xvfb \
     && rm -rf /var/lib/apt/lists/*

@@ -18,7 +18,7 @@ RUN apt-get update \
         libasound2t64 \
         libgl1 \
         libglu1-mesa \
-        libgtk-3-0 \
+        libicu74 \
         libnss3 \
         libpulse0 \
         libsdl2-2.0-0 \
@@ -30,9 +30,7 @@ RUN apt-get update \
         libxinerama1 \
         libxrandr2 \
         libxrender1 \
-        locales \
         mesa-vulkan-drivers \
-        x11-apps \
         xdotool \
         xvfb \
     && rm -rf /var/lib/apt/lists/*
