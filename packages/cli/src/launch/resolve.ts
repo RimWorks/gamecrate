@@ -140,12 +140,18 @@ function collectSlots(
   return slots
 }
 
+function leftOut(dependent: string, dropped: string): string {
+  return `${dependent} depends on ${dropped}, which was left out of this run`
+}
+
 function insertDependencies(
   list: Staged[],
   present: Set<string>,
   index: ModIndex,
   game: GameConfig,
   problems: Problem[],
+  isExcluded: (id: string) => boolean,
+  warnings: string[],
 ): void {
   let i = 0
   outer: while (i < list.length) {
@@ -154,6 +160,10 @@ function insertDependencies(
       const key = dep.packageId.toLowerCase()
       if (present.has(key)) continue
       present.add(key)
+      if (isExcluded(dep.packageId)) {
+        warnings.push(leftOut(mod.record.packageId, dep.packageId))
+        continue
+      }
       const record = resolveModRef(index, dep.packageId, game)
       if (!record) {
         problems.push({
@@ -164,6 +174,10 @@ function insertDependencies(
         continue
       }
       present.add(record.packageId.toLowerCase())
+      if (isExcluded(record.packageId)) {
+        warnings.push(leftOut(mod.record.packageId, record.packageId))
+        continue
+      }
       list.splice(i, 0, { record, explicit: false })
       continue outer
     }
@@ -292,7 +306,11 @@ interface SlotRef {
   optional: boolean
 }
 
-function stageSlots(input: StageInputs): { staged: Staged[]; present: Set<string> } {
+function stageSlots(input: StageInputs): {
+  staged: Staged[]
+  present: Set<string>
+  isExcluded: (id: string) => boolean
+} {
   const { game, gameName, profileName, profile, args, index } = input
   const excluded = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
   const isExcluded = (id: string): boolean => excluded.some((pattern) => pattern.test(id))
@@ -319,7 +337,7 @@ function stageSlots(input: StageInputs): { staged: Staged[]; present: Set<string
       staged.push({ record, explicit: true })
     }
   }
-  return { staged, present }
+  return { staged, present, isExcluded }
 }
 
 function slotRefs(slot: Slot, input: StageInputs): SlotRef[] {
@@ -466,11 +484,13 @@ export async function resolvePlan(
   await applyWorktreeRequests(index, instance.requests, game)
   problems.push(...applySourceOverrides(index, args.use ?? [], game))
 
-  const { staged, present } = stageSlots({
+  const { staged, present, isExcluded } = stageSlots({
     game, gameName, profileName, profile, args, index, sources, unfetched, problems, warnings,
   })
 
-  if (profile.autoDependencies !== false) insertDependencies(staged, present, index, game, problems)
+  if (profile.autoDependencies !== false) {
+    insertDependencies(staged, present, index, game, problems, isExcluded, warnings)
+  }
   relabelUnfetched(problems, unfetched)
 
   const ordered = args.sort === 'none' ? staged : topoSort(staged, problems, game.core)

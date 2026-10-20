@@ -509,6 +509,91 @@ describe('autoDependencies', () => {
     })
     expect(plan.mods.map((m) => m.packageId)).toContain('Kitted.Core')
   })
+
+  test('--without drops a base mod even when another mod depends on it', async () => {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Example.ModManager'] },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { without: ['Example.ModManager'] },
+    })
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Example.ModManager')
+    expect(plan.warnings.join('\n')).toContain('Example.Sundial depends on Example.ModManager')
+  })
+
+  test('--without drops a dependency matched only by glob', async () => {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Kitted.Core'] },
+      { id: 'Kitted.Core', dir: await modDir('KittedCore') },
+    ])
+    const { plan } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { without: ['Kitted.*'] },
+    })
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Kitted.Core')
+  })
+
+  test('--without drops a mod a dependency reached through an alias', async () => {
+    const game = {
+      ...beacon({ sundial: { mods: ['Example.Sundial'] } }),
+      aliases: { 'Old.Kitted': 'Kitted.Core' },
+    }
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Old.Kitted'] },
+      { id: 'Kitted.Core', dir: await modDir('KittedCore') },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { without: ['Kitted.Core'] },
+    })
+    expect(problems).toEqual([])
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Kitted.Core')
+    expect(plan.warnings.join('\n')).toContain('Example.Sundial depends on Kitted.Core')
+  })
+
+  test('--without on an uninstalled dependency warns instead of failing', async () => {
+    const game = beacon({ sundial: { mods: ['Example.Sundial'] } })
+    index = makeIndex([
+      { id: 'Lib.Bridge.Beacon', dir: await modDir('Lantern') },
+      { id: 'Atlasco.Beacon', dir: await modDir('Beacon'), kind: 'core' },
+      { id: 'Example.ModManager', dir: await modDir('ModManager') },
+      { id: 'Example.Sundial', dir: await modDir('Sundial'), dependencies: ['Nobody.Missing'] },
+    ])
+    const { plan, problems } = await resolvePlan({
+      game: 'beacon',
+      profile: 'sundial',
+      plugins: PLUGINS,
+      root: rootFor('beacon', game),
+      index,
+      args: { without: ['Nobody.Missing'] },
+    })
+    expect(problems).toEqual([])
+    expect(plan.warnings.join('\n')).toContain('Example.Sundial depends on Nobody.Missing')
+  })
 })
 
 describe('unfetched workshop items are labelled, not called missing', () => {
