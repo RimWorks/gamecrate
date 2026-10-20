@@ -402,11 +402,7 @@ export async function captureScreenshot(container: string, plan: LaunchPlan): Pr
     ' [ "$D" = ":" ] && { echo "no X socket in the container" >&2; exit 1; };' +
     ' X=$(ls -d /tmp/xvfb-run.*/Xauthority 2>/dev/null | head -1);' +
     ' [ -n "$X" ] && export XAUTHORITY="$X";' +
-    // ImageMagick 6 calls it convert, 7 calls it magick
-    ' M=$(command -v magick || command -v convert);' +
-    ' [ -z "$M" ] && { echo "no imagemagick in the container" >&2; exit 1; };' +
-    ` import -display "$D" -window root ${target} 2>/dev/null` +
-    ` || xwd -root -display "$D" | "$M" xwd:- ${target}`
+    ` import -display "$D" -window root ${target}`
 
   const code = await inherit(['docker', 'exec', container, 'sh', '-c', script])
   const host = join(plan.runDirHost, name)

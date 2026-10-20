@@ -30,21 +30,8 @@ await mock.module('../src/docker/run', () => {
 
 const { captureScreenshot } = await import('../src/launch/prepare')
 
-function imagemagick(tag: string): string {
-  return `[ "$1" = "xwd:-" ] || { echo "$0: expected xwd:- and got '$1'" >&2; exit 2; }
-case "$2" in /*) ;; *) echo "$0: expected an output path and got '$2'" >&2; exit 2 ;; esac
-dump=$(cat)
-[ "$dump" = XWDFAKE ] || { echo "$0: stdin was not an xwd dump" >&2; exit 2; }
-# CONTAINER_LOG_DIR is bind-mounted to runDirHost, so the run dir is where the file lands.
-printf '%s %s' "${tag}" "$2" > "$OUT_DIR/$(basename "$2")"
-`
-}
-
-const FAKES: Record<string, string> = {
-  ls: `[ "$1" = /tmp/.X11-unix ] && { echo X99; exit 0; }
-exec /usr/bin/ls "$@"
-`,
-  import: `d=""; w=""; out=""
+function importFake(body: string): string {
+  return `d=""; w=""; out=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -display) d="$2"; shift 2 ;;
@@ -53,22 +40,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$d" ] && [ "$w" = root ] && [ -n "$out" ] || { echo "import: bad arguments" >&2; exit 2; }
-echo "import: unable to open X server $d" >&2
-exit 1
+${body}
+`
+}
+
+const FAKES: Record<string, string> = {
+  ls: `[ "$1" = /tmp/.X11-unix ] && { echo X99; exit 0; }
+exec /usr/bin/ls "$@"
 `,
-  xwd: `d=""; root=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -root) root=1; shift ;;
-    -display) d="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-[ "$root" = 1 ] && [ -n "$d" ] || { echo "xwd: bad arguments" >&2; exit 2; }
-printf XWDFAKE
-`,
-  convert: imagemagick('im6'),
-  magick: imagemagick('im7'),
+  import: importFake(`printf 'shot %s' "$out" > "$OUT_DIR/$(basename "$out")"`),
+  'import-fails': importFake(`echo "import: unable to open X server $d" >&2
+exit 1`),
 }
 
 async function container(binaries: string[]): Promise<LaunchPlan> {
@@ -76,7 +58,7 @@ async function container(binaries: string[]): Promise<LaunchPlan> {
   const bin = join(dir, 'bin')
   await mkdir(bin)
   for (const name of binaries) {
-    const file = join(bin, name)
+    const file = join(bin, name.replace(/-fails$/, ''))
     await writeFile(file, `#!/bin/sh\n${FAKES[name]}`)
     await chmod(file, 0o755)
   }
@@ -88,9 +70,9 @@ async function container(binaries: string[]): Promise<LaunchPlan> {
   return { game: 'atlas', runDirHost: dir } as unknown as LaunchPlan
 }
 
-describe('the screenshot fallback', () => {
-  test('falls back to convert, which is the only imagemagick on ubuntu 24.04', async () => {
-    const plan = await container(['ls', 'import', 'xwd', 'convert'])
+describe('the screenshot capture', () => {
+  test('import writes the frame into the run directory', async () => {
+    const plan = await container(['ls', 'import'])
 
     const host = await captureScreenshot('gamecrate-atlas-modless', plan)
 
@@ -98,11 +80,11 @@ describe('the screenshot fallback', () => {
     expect(shell.argv.slice(3, 5)).toEqual(['sh', '-c'])
     expect(host).toMatch(/atlas-\d{8}T\d+Z\.png$/)
     expect(dirname(host!)).toBe(plan.runDirHost)
-    expect(await readFile(host!, 'utf8')).toBe(`im6 /logs/${basename(host!)}`)
+    expect(await readFile(host!, 'utf8')).toBe(`shot /logs/${basename(host!)}`)
   })
 
-  test('an image with no imagemagick says so instead of dying on an empty binary name', async () => {
-    const plan = await container(['ls', 'import', 'xwd'])
+  test('an import that cannot reach the display reports no frame', async () => {
+    const plan = await container(['ls', 'import-fails'])
     const errs: string[] = []
     const spy = spyOn(process.stderr, 'write').mockImplementation((chunk) => {
       errs.push(String(chunk))
@@ -114,7 +96,7 @@ describe('the screenshot fallback', () => {
     } finally {
       spy.mockRestore()
     }
-    expect(errs.join('')).toContain('no imagemagick in the container')
+    expect(errs.join('')).toContain('unable to open X server')
   })
 })
 
