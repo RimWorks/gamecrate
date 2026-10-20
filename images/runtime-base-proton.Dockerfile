@@ -42,6 +42,9 @@ RUN apt-get update \
         vulkan-tools \
         xdotool \
         xvfb \
+    && for d in asahi gfxstream intel_hasvk nouveau virtio; do \
+        rm -f /usr/lib/x86_64-linux-gnu/libvulkan_$d.so /usr/share/vulkan/icd.d/$d*_icd.json; \
+    done \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=C.UTF-8
