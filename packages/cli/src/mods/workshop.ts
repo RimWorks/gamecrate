@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, resolve as resolvePath } from 'node:path'
 
-import { expandHome, resolveProfile } from '../config/load'
+import { dropsId, expandHome, resolveProfile } from '../config/load'
 import { libraryPin, reachedEntries } from './source'
 import { downloadItems, downloadRoot, workshopUrlId } from './steamcmd'
 import type { DownloadHooks } from './steamcmd'
@@ -51,12 +51,13 @@ export async function prepareWorkshop(
   const problems: Problem[] = []
 
   const profile = resolveProfile(game, profileName)
-  const seeded = await localSeeds(game, profile, args, sources, plugin, problems)
+  const dropped = dropsId(profile, args)
+  const seeded = await localSeeds(game, profile, args, sources, plugin, problems, dropped)
   let frontier = [...new Set([...wantedIds(game, profile, args), ...seeded])]
   for (let round = 0; round < ROUNDS && frontier.length > 0; round++) {
     for (const id of frontier) ids.add(id)
     if (allowFetch) warnings.push(...(await fetchRound(config, game, roots, frontier, hooks)))
-    frontier = await dependenciesOf(frontier, ids, roots, game, plugin, problems)
+    frontier = await dependenciesOf(frontier, ids, roots, game, plugin, problems, dropped)
   }
 
   if (frontier.length > 0) {
@@ -103,6 +104,7 @@ async function dependenciesOf(
   game: GameConfig,
   plugin: GamePlugin,
   problems: Problem[],
+  dropped: (id: string) => boolean,
 ): Promise<string[]> {
   const next = new Set<string>()
   const found = await mapLimit(frontier, async (id) => {
@@ -112,6 +114,7 @@ async function dependenciesOf(
   for (const { manifest, mine } of found) {
     problems.push(...mine)
     for (const dep of manifest?.modDependencies ?? []) {
+      if (dropped(dep.packageId)) continue
       const depId = workshopUrlId(dep.steamWorkshopUrl)
       if (depId !== undefined && !seen.has(depId)) next.add(depId)
     }
@@ -161,11 +164,13 @@ async function localSeeds(
   sources: ReadonlyMap<string, string>,
   plugin: GamePlugin,
   problems: Problem[],
+  dropped: (id: string) => boolean,
 ): Promise<string[]> {
   const out = new Set<string>()
   for (const dir of localDirs(game, profile, args, sources)) {
     const manifest = await manifestAt(dir, game, plugin, problems)
     for (const dep of manifest?.modDependencies ?? []) {
+      if (dropped(dep.packageId)) continue
       const id = workshopUrlId(dep.steamWorkshopUrl)
       if (id !== undefined) out.add(id)
     }

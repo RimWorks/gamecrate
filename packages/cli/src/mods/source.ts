@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { wantsSteam } from '../cli/args'
-import { globToRegExp, resolveProfile } from '../config/load'
+import { dropsId, resolveProfile } from '../config/load'
 import { isRunning } from '../launch/prepare'
 import { Exit, GamecrateError, own } from '../types'
 import type { GameConfig, LibraryEntry, ModEntry, ParsedArgs, ProfileConfig } from '../types'
@@ -312,11 +312,10 @@ export function reachedEntries(
   if (profile.includeBase !== false) out.push(...(game.base ?? []))
   const only = args.only ?? []
   out.push(...(only.length > 0 ? only : (profile.mods ?? [])), ...(args.mods ?? []))
-  const dropped = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
+  const dropped = dropsId(profile, args)
   return out.filter((entry) => {
     if (typeof entry !== 'string' && 'match' in entry) return true
-    const id = typeof entry === 'string' ? entry : entry.id
-    return !dropped.some((pattern) => pattern.test(id))
+    return !dropped(typeof entry === 'string' ? entry : entry.id)
   })
 }
 

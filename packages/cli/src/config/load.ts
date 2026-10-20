@@ -11,6 +11,7 @@ import type {
   LaunchFlags,
   LibraryEntry,
   ModEntry,
+  ParsedArgs,
   ProfileConfig,
   ProjectDefaults,
   RootConfig,
@@ -502,6 +503,12 @@ function entryIds(entry: ModEntry): string[] {
   if (typeof entry === 'string') return [entry, entry.replace(/^(workshop|path):/, '')]
   if ('id' in entry) return [entry.id]
   return []
+}
+
+/** Tests a packageId against everything `exclude` and `--without` drop for this run. */
+export function dropsId(profile: ProfileConfig, args: Partial<ParsedArgs>): (id: string) => boolean {
+  const patterns = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
+  return (id) => patterns.some((pattern) => pattern.test(id))
 }
 
 export function globToRegExp(pattern: string): RegExp {

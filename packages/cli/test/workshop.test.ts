@@ -218,6 +218,35 @@ describe('prepareWorkshop', () => {
     expect(asked).toEqual([['222']])
   })
 
+  test('--without stops a chained dependency from downloading', async () => {
+    stubSteam()
+    const w = await setup(['workshop:111'], {
+      '111': about('111', ['222']),
+      '222': about('222', ['333']),
+      '333': about('333'),
+    })
+
+    const out = await prepare(w, { without: ['mod.222'] })
+
+    expect([...out.ids]).toEqual(['111'])
+    expect(asked).toEqual([['111']])
+    expect(out.problems).toEqual([])
+  })
+
+  test('--without stops a local mod from seeding the walk', async () => {
+    stubSteam()
+    const w = await setup([], { '222': about('222') })
+    const local = join(w.root, 'local-mod', 'About')
+    await mkdir(local, { recursive: true })
+    await writeFile(join(local, 'About.txt'), about('local', ['222']))
+    w.game.profiles['p']!.mods = [{ id: 'mod.local', path: join(w.root, 'local-mod') }]
+
+    const out = await prepare(w, { without: ['mod.222'] })
+
+    expect([...out.ids]).toEqual([])
+    expect(asked).toEqual([])
+  })
+
   test('a git-pinned mod seeds the walk from its clone directory', async () => {
     stubSteam()
     const w = await setup([], { '222': about('222') })

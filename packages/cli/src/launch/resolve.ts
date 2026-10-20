@@ -1,7 +1,15 @@
 import { join, resolve as resolvePath } from 'node:path'
 
 import { wantsSteam } from '../cli/args'
-import { canonicalProfile, expandHome, globToRegExp, profileDataDir, resolveProfile, resolveSettings } from '../config/load'
+import {
+  canonicalProfile,
+  dropsId,
+  expandHome,
+  globToRegExp,
+  profileDataDir,
+  resolveProfile,
+  resolveSettings,
+} from '../config/load'
 import { buildIndex, resolveModRef, applyWorktreeRequests, applySourceOverrides } from '../mods/modindex'
 import { libraryPin, sourcesRoot } from '../mods/source'
 import { workshopUrlId } from '../mods/steamcmd'
@@ -312,8 +320,7 @@ function stageSlots(input: StageInputs): {
   isExcluded: (id: string) => boolean
 } {
   const { game, gameName, profileName, profile, args, index } = input
-  const excluded = [...(profile.exclude ?? []), ...(args.without ?? [])].map(globToRegExp)
-  const isExcluded = (id: string): boolean => excluded.some((pattern) => pattern.test(id))
+  const isExcluded = dropsId(profile, args)
 
   const slots = collectSlots(game, gameName, profileName, profile, args)
   for (const slot of slots) {
