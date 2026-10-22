@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { mergeUserConfig } from '../config/load'
 import { steamBuildSchema } from '../config/validate'
 import { loadPlugins } from '../plugin'
+import type { GamePlugin } from '../plugin'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig, SteamBranch, SteamVariant } from '../types'
 
@@ -17,6 +18,10 @@ export interface SteamBuildInput {
   variants: SteamVariant[]
   /** Target repo, never a tag. p3-t1 supplies the tags. */
   image: string
+  dlc: string[]
+  dlcSince?: Record<string, string>
+  manifestFile?: string
+  parseManifest: GamePlugin['parseManifest']
 }
 
 export interface SteamBuildOverrides {
@@ -148,5 +153,10 @@ export async function resolveSteamBuildInput(
     variants: steamBuild.variants,
     // OCI references are lowercase. A registry owner or repo can be mixed case on the web.
     image: image.toLowerCase(),
+    dlc: merged.dlc ?? [],
+    ...(merged.dlcSince === undefined
+      ? {}
+      : { dlcSince: merged.dlcSince, manifestFile: want(merged.manifest, 'manifest.file').file }),
+    parseManifest: plugin.parseManifest,
   }
 }

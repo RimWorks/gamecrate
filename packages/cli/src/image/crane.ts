@@ -192,6 +192,8 @@ export async function craneAppend(opts: {
   gameDir: string
   /** Subpaths to include. Empty means the whole game. */
   include: string[]
+  /** Subpaths to leave out of a whole-game tar. An include list names its own paths instead. */
+  exclude?: string[]
   /** Where the game goes inside the image, e.g. /game. */
   gamePath: string
   /** null appends onto an empty base, which is what a reference image wants. */
@@ -225,6 +227,7 @@ export async function craneAppend(opts: {
           '/stage',
           `--exclude=${prefix}/steamapps`,
           `--exclude=${prefix}/lost+found`,
+          ...(opts.exclude ?? []).map((p) => `--exclude=${prefix}/${p}`),
           '-cf',
           layer,
           prefix,

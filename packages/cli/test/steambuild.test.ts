@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Exit, GamecrateError } from '../src/types'
-import type { RootConfig, SteamVariant } from '../src/types'
+import type { ModManifest, RootConfig, SteamVariant } from '../src/types'
 
 const state = {
   /** Every faked collaborator call, in order. */
@@ -27,6 +27,8 @@ const state = {
   /** Every out tar craneAppend was asked for, so a test can prove each one is gone. */
   tagged: [] as string[],
   tars: [] as string[],
+  /** The exclude list each append was given, so a test can prove a gated dlc never reached the tar. */
+  excluded: [] as string[][],
   /** The tag the last append wrote into the tar. docker load names the image after it. */
   appendTag: '',
   /** What docker load reports. The tar's own tag, unless a test says otherwise. */
@@ -54,9 +56,10 @@ await mock.module('../src/image/crane', () => ({
     if (!state.credsRefused) return
     throw new GamecrateError(`no registry credentials for ${ref}`, Exit.Environment, 'set the env vars')
   },
-  craneAppend: async (opts: { out: string; tag: string }) => {
+  craneAppend: async (opts: { out: string; tag: string; exclude?: string[] }) => {
     state.calls.push(`append ${opts.out}`)
     state.tars.push(opts.out)
+    state.excluded.push(opts.exclude ?? [])
     // crane refuses an append with no -t, so the fake refuses one too
     if (!opts.tag) {
       const detail = 'required flag(s) "new_tag" not set'
@@ -163,6 +166,13 @@ const ONE = {
   branches: [{ name: 'public' }],
   variants: VARIANTS,
   image: IMAGE,
+  dlc: ['Ludeon.RimWorld.Anomaly'],
+  dlcSince: { 'Ludeon.RimWorld.Anomaly': '1.7' },
+  manifestFile: 'About/About.xml',
+  parseManifest: (text: string) => {
+    const found = /<packageId>(.+?)<\/packageId>/.exec(text)
+    return found === null ? null : ({ packageId: found[1]!.trim() } as ModManifest)
+  },
 }
 const TWO = { ...ONE, branches: [{ name: 'public' }, { name: '1.5' }] }
 
@@ -186,6 +196,7 @@ beforeEach(() => {
   state.tagged.length = 0
   state.downloads.length = 0
   state.tars.length = 0
+  state.excluded.length = 0
   state.appendTag = ''
   state.loadedAs = () => state.appendTag
   state.credsRefused = false
@@ -526,6 +537,32 @@ describe('steamBuild', () => {
     expect(state.calls.indexOf('say public/linux  skipped, up-to-date')).toBeLessThan(
       state.calls.indexOf('download public/windows'),
     )
+  })
+
+  test('a dlc newer than the build never reaches the tar', async () => {
+    const about = join(state.gameDir, 'Data', 'Anomaly', 'About')
+    await mkdir(about, { recursive: true })
+    await writeFile(join(about, 'About.xml'), '<ModMetaData><packageId>Ludeon.RimWorld.Anomaly</packageId></ModMetaData>')
+    try {
+      await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+      expect(state.excluded).toEqual([['Data/Anomaly']])
+      expect(state.said).toContain('public/linux  leaving out Data/Anomaly, newer than 1.6.4871')
+    } finally {
+      await rm(join(state.gameDir, 'Data'), { recursive: true, force: true })
+    }
+  })
+
+  test('a dlc the build is new enough for stays in the tar', async () => {
+    const about = join(state.gameDir, 'Data', 'Royalty', 'About')
+    await mkdir(about, { recursive: true })
+    await writeFile(join(about, 'About.xml'), '<ModMetaData><packageId>Ludeon.RimWorld.Royalty</packageId></ModMetaData>')
+    try {
+      const input = { ...ONE, dlc: ['Ludeon.RimWorld.Royalty'], dlcSince: { 'Ludeon.RimWorld.Royalty': '1.1' } }
+      await steamBuild(input, { ...opts, onlyVariants: ['linux'] })
+      expect(state.excluded).toEqual([[]])
+    } finally {
+      await rm(join(state.gameDir, 'Data'), { recursive: true, force: true })
+    }
   })
 
   test('a reference-only skip says so with no --push', async () => {

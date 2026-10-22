@@ -121,6 +121,26 @@ describe('craneAppend', () => {
     expect(script).toContain("'-t' 'ghcr.io/me/atlas:1.6.4871'")
   })
 
+  test('a caller exclude joins the built-in ones, under the staged prefix', async () => {
+    const { argvFile } = await fakeDocker()
+    const gameDir = await mkdtemp(join(tmp, 'game-'))
+    const out = join(await mkdtemp(join(tmp, 'layers-')), 'linux-1.4.3901.tar')
+    await craneAppend({
+      gameDir,
+      include: [],
+      exclude: ['Data/Anomaly', 'Data/Odyssey'],
+      gamePath: '/game',
+      base: 'ghcr.io/rimworks/gamecrate/runtime-base@sha256:abc',
+      platform: 'linux/amd64',
+      tag: 'ghcr.io/me/atlas:1.4.3901',
+      out,
+    })
+    const script = await readFile(argvFile, 'utf8')
+    expect(script).toContain('--exclude=game/Data/Anomaly')
+    expect(script).toContain('--exclude=game/Data/Odyssey')
+    expect(script).toContain('--exclude=game/steamapps')
+  })
+
   test('a base-less append still carries the tag crane requires', async () => {
     const { argvFile } = await fakeDocker()
     const gameDir = await mkdtemp(join(tmp, 'game-'))

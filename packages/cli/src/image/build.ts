@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { status } from '../cli/output'
+import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { pickExecutable } from '../executable'
 import { downloadApp, publishedBuildId, steamHome } from '../mods/steamcmd'
@@ -188,6 +189,8 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     // docker creates a missing bind source as root, and the --user process then cannot write it
     mkdirSync(layers, { recursive: true })
     const tar = join(layers, `${branch.name}-${variant.name}-${version}.tar`)
+    const drop = await gatedDataDirs(input, dir, raw)
+    if (drop.length > 0) say(`leaving out ${drop.join(', ')}, newer than ${version}`)
     const base = resolveBase(variant.base, opts.baseOverride)
     // the tag is what we append onto, the digest is what the image records it was built on
     const baseDigest = base === null ? null : await resolvedBase(base, opts.platform)
@@ -197,6 +200,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
       await craneAppend({
         gameDir: dir,
         include: variant.include,
+        exclude: drop,
         gamePath: input.gamePath,
         base,
         platform: opts.platform,
@@ -231,6 +235,25 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     opts.onCell?.(id, { state: 'failed', detail: message(error) })
     return { ...row, status: 'failed', reason: message(error), tags: [] }
   }
+}
+
+async function gatedDataDirs(input: SteamBuildInput, gameDir: string, versionText: string): Promise<string[]> {
+  const manifestFile = input.manifestFile
+  const gated = gatedDlc(input.dlc, input.dlcSince, versionText.replace(/^﻿/, ''))
+  if (gated.size === 0 || manifestFile === undefined) return []
+  const data = join(gameDir, 'Data')
+  const out: string[] = []
+  for (const entry of await readdir(data, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory()) continue
+    let id: string | null = null
+    try {
+      id = input.parseManifest(await readFile(join(data, entry.name, manifestFile), 'utf8'))?.packageId ?? null
+    } catch {
+      continue
+    }
+    if (id !== null && gated.has(id.toLowerCase())) out.push(`Data/${entry.name}`)
+  }
+  return out
 }
 
 async function moveTags(

@@ -18,6 +18,7 @@ import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import { requirePlugin } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { mapLimit } from '../concurrency'
+import { gatedDlc, versionRank } from '../dlcgate'
 import { installVersionText } from './generate'
 import { resolveInstance } from './instance'
 import type {
@@ -316,28 +317,16 @@ interface SlotRef {
   optional: boolean
 }
 
-async function gatedDlc(game: GameConfig, warnings: string[]): Promise<Set<string>> {
-  const out = new Set<string>()
-  if (game.dlcSince === undefined) return out
-  const text = await installVersionText(game)
-  const running = text === null ? null : versionRank(text.replace(/^﻿/, ''))
-  if (running === null) {
+async function gatedForInstall(game: GameConfig, warnings: string[]): Promise<Set<string>> {
+  if (game.dlcSince === undefined) return new Set<string>()
+  const text = (await installVersionText(game))?.replace(/^﻿/, '') ?? null
+  if (text === null || versionRank(text) === null) {
     warnings.push(
       `could not read ${game.version.file}; every dlc stays, including any this build cannot load`,
     )
-    return out
+    return new Set<string>()
   }
-  const declared = new Set(game.dlc.map((id) => id.toLowerCase()))
-  for (const [id, since] of Object.entries(game.dlcSince)) {
-    const gate = versionRank(since)
-    if (gate !== null && gate > running && declared.has(id.toLowerCase())) out.add(id.toLowerCase())
-  }
-  return out
-}
-
-function versionRank(version: string): number | null {
-  const parts = /^(\d+)\.(\d+)/.exec(version.trim())
-  return parts === null ? null : Number(parts[1]) * 1000 + Number(parts[2])
+  return gatedDlc(game.dlc, game.dlcSince, text)
 }
 
 function stageSlots(input: StageInputs): {
@@ -518,7 +507,7 @@ export async function resolvePlan(
   await applyWorktreeRequests(index, instance.requests, game)
   problems.push(...applySourceOverrides(index, args.use ?? [], game))
 
-  const gated = await gatedDlc(game, warnings)
+  const gated = await gatedForInstall(game, warnings)
   const { staged, present, isExcluded } = stageSlots({
     game, gameName, profileName, profile, args, index, sources, unfetched, problems, warnings, gated,
   })
