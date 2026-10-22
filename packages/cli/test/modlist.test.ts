@@ -71,6 +71,73 @@ describe('readModlist', () => {
     expect(readModlist(path)).toEqual(['workshop:1234'])
   })
 
+  test('reads a tab separated ModList.txt, in the order the game loaded them', async () => {
+    const path = await dump('tabs.txt', [
+      'name\tpackageId\tversion\tactive',
+      'Core\tludeon.rimworld\t1.7.4321\ttrue',
+      'Harmony\tbrrainz.harmony\t2.3.6\ttrue',
+      'RimLogging\trimworks.rimlogging\t2.1.0\ttrue',
+      '',
+    ].join('\n'))
+    expect(readModlist(path)).toEqual(['ludeon.rimworld', 'brrainz.harmony', 'rimworks.rimlogging'])
+  })
+
+  test('leaves out a ModList.txt row the game did not have active', async () => {
+    const path = await dump('inactive.txt', [
+      'name\tpackageId\tversion\tactive',
+      'Core\tludeon.rimworld\t1.7.4321\ttrue',
+      'Old Thing\tsomeone.oldthing\t1.2.0\tfalse',
+      '',
+    ].join('\n'))
+    expect(readModlist(path)).toEqual(['ludeon.rimworld'])
+  })
+
+  test('a ModList.txt row may leave a name or version empty, but not a packageId', async () => {
+    const blank = await dump('blankcells.txt', 'name\tpackageId\tversion\tactive\n\tme.local\t\ttrue\n')
+    expect(readModlist(blank)).toEqual(['me.local'])
+    const noId = await dump('noid.txt', 'name\tpackageId\tversion\tactive\nThing\t\t1.0\ttrue\n')
+    expect(() => readModlist(noId)).toThrow(/names no packageId/)
+  })
+
+  test('refuses a ModList.txt row that is neither four nor five columns', async () => {
+    const path = await dump('widths.txt', 'name\tpackageId\tversion\tactive\nThing\tme.thing\ttrue\n')
+    expect(() => readModlist(path)).toThrow(/column\(s\), not 4 or 5/)
+  })
+
+  test('a ModList.txt workshopId resolves the row by id, and "local" by packageId', async () => {
+    const path = await dump('ids.txt', [
+      'name\tpackageId\tversion\tactive\tworkshopId',
+      'Core\tludeon.rimworld\t1.7.4321\ttrue\tlocal',
+      'Harmony\tbrrainz.harmony\t2.3.6\ttrue\t2009463077',
+      'RimLogging\trimworks.rimlogging\t4.0.0\ttrue\t3733484696',
+      'Old Thing\tsomeone.oldthing\t1.2.0\tfalse\tlocal',
+      '',
+    ].join('\n'))
+    expect(readModlist(path)).toEqual([
+      'ludeon.rimworld',
+      'workshop:2009463077',
+      'workshop:3733484696',
+    ])
+  })
+
+  test('a bundle written before the workshopId column reads as every row local', async () => {
+    const path = await dump('nocolumn.txt', [
+      'name\tpackageId\tversion\tactive',
+      'Harmony\tbrrainz.harmony\t2.3.6\ttrue',
+      '',
+    ].join('\n'))
+    expect(readModlist(path)).toEqual(['brrainz.harmony'])
+  })
+
+  test('refuses a workshopId that is neither digits nor "local"', async () => {
+    const path = await dump('badid.txt', [
+      'name\tpackageId\tversion\tactive\tworkshopId',
+      'Harmony\tbrrainz.harmony\t2.3.6\ttrue\tunknown',
+      '',
+    ].join('\n'))
+    expect(() => readModlist(path)).toThrow(/workshopId "unknown"/)
+  })
+
   test('refuses a row with too few fields', async () => {
     const path = await dump('short.txt', '0 | Harmony\n')
     expect(() => readModlist(path)).toThrow(/field\(s\)/)

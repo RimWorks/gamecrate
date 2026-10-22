@@ -809,6 +809,7 @@ async function mods(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults, config.games[game]!)
+  config.games[game] = gameForImage(args, config, defaults, game, profile)
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const workshop = await prepareWorkshop(config.games[game]!, profile, args, config, false, requirePlugin(plugins, game), sources)
   for (const warning of workshop.warnings) warn(warning)
@@ -844,10 +845,15 @@ function steamcmdSource(runner: SteamcmdRunner, config: RootConfig): string {
   return `${runner.argv[0]} (${where})`
 }
 
-function gameForImage(args: ParsedArgs, config: RootConfig, defaults: ProjectDefaults, game: string): GameConfig {
+function gameForImage(
+  args: ParsedArgs,
+  config: RootConfig,
+  defaults: ProjectDefaults,
+  game: string,
+  profile?: string,
+): GameConfig {
   const base = config.games[game]!
-  const profile = launchProfile(args, defaults, base)
-  const ref = imageFor(base, profile, args.image, args.gameVersion)
+  const ref = imageFor(base, profile ?? launchProfile(args, defaults, base), args.image, args.gameVersion)
   return withImageOverride(base, ref)
 }
 
@@ -1054,6 +1060,7 @@ async function verify(
 ): Promise<number> {
   const game = requireGame(args, config)
   const profile = profileOf(args, defaults, config.games[game]!)
+  config.games[game] = gameForImage(args, config, defaults, game, profile)
   const sources = cachedSources(config.games[game]!, profile, args, config.dataRoot)
   const { plan, problems } = await resolvePlan({ game, profile, root: config, plugins, args, sources })
   if (problems.length > 0) reportProblems(problems)

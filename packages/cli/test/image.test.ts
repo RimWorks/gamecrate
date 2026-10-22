@@ -129,9 +129,14 @@ describe('run wires the checks in before staging', () => {
       expect(body(name)).toContain('gameForImage(args, config, defaults, game)')
     }
     // the profile resolves first, so --ci plus a typed profile is refused whatever --image says
-    expect(source).toContain('const profile = launchProfile(args, defaults, base)')
-    expect(source).toContain('imageFor(base, profile, args.image, args.gameVersion)')
+    expect(source).toContain('imageFor(base, profile ?? launchProfile(args, defaults, base), args.image, args.gameVersion)')
     expect(source).toContain('withImageOverride(base, ref)')
+  })
+
+  test('mods and verify read the image the profile picked, not the configured ref', () => {
+    for (const name of ['mods', 'verify']) {
+      expect(body(name)).toContain('config.games[game] = gameForImage(args, config, defaults, game, profile)')
+    }
   })
 
   test('refs keeps stdout to the path alone, so an MSBuild Exec captures nothing else', () => {
