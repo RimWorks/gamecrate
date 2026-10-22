@@ -16,7 +16,8 @@ async function readInstallVersion(
   return plugin.parseVersion(raw.replace(/^﻿/, '').trim())
 }
 
-async function installVersionText(game: GameConfig): Promise<string | null> {
+/** The raw `Version.txt` of the install this launch will run, image or host. null when unreadable. */
+export async function installVersionText(game: GameConfig): Promise<string | null> {
   if (game.gameFiles.source !== 'mount') {
     const ref = game.image?.ref
     return ref === undefined || ref === ''

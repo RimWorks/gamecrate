@@ -34,6 +34,13 @@ describe('defaults', () => {
     expect(needed.filter((dep) => !pinned.includes(dep as string))).toEqual([])
   })
 
+  test('every dlc declares the version it shipped with, so none of them fails open', () => {
+    const since = plugin.defaults.dlcSince ?? {}
+    const keys = Object.keys(since).map((id) => id.toLowerCase()).sort()
+    expect(keys).toEqual((plugin.defaults.dlc ?? []).map((id) => id.toLowerCase()).sort())
+    expect(Object.values(since).filter((v) => !/^\d+\.\d+/.test(v))).toEqual([])
+  })
+
   test('no default carries a path from outside this package', () => {
     const root = `${join(fileURLToPath(new URL('.', import.meta.url)), '..')}/`
     const absolute = JSON.stringify(plugin.defaults).match(/\/[^"]+/g) ?? []

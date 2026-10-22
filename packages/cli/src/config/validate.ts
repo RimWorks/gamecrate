@@ -480,6 +480,11 @@ const game = obj({
   saveExtensions: strArray.describe('Filename suffixes that mean a save. `clean --all` counts them before it deletes.'),
   core: str.describe("The base game's `packageId`."),
   dlc: strArray.describe('The official expansions, loaded after `core`.'),
+  dlcSince: strMap
+    .optional()
+    .describe(
+      'The game version each expansion first shipped with, keyed by `packageId`. An install older than that leaves the expansion out.',
+    ),
   steamlessMod: str
     .describe('The `packageId` loaded in place of the steam client when steam is off.')
     .optional(),
@@ -508,6 +513,19 @@ const game = obj({
   profiles: z
     .record(z.string(), profile, { error: 'expected an object' })
     .describe('The mod sets you can launch, keyed by profile name.'),
+}).check((ctx) => {
+  const v = ctx.value as Bag
+  const since = v['dlcSince'] as Record<string, string> | undefined
+  if (since === undefined) return
+  for (const [id, version] of Object.entries(since)) {
+    if (/^\d+\.\d+/.test(version)) continue
+    ctx.issues.push({
+      code: 'custom',
+      message: `"${version}" must start with a major.minor version, like "1.6"`,
+      input: v,
+      path: ['dlcSince', id],
+    })
+  }
 })
 
 const root = obj({

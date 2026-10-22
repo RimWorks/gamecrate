@@ -281,6 +281,8 @@ export interface GameConfig {
   saveExtensions: string[]
   core: string
   dlc: string[]
+  /** The game version each dlc first shipped with, keyed by `packageId`. A run below it drops it. */
+  dlcSince?: Record<string, string>
   /** Loaded in place of the steam client when steam is off. The game names its own. */
   steamlessMod?: string
   preCore?: string[]

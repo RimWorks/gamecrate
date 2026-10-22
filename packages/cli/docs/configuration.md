@@ -148,6 +148,7 @@ A plugin's `defaults` fill these in, so a config writes only what is its own.
 | `saveExtensions` | yes | array of `string` | Filename suffixes that mean a save. `clean --all` counts them before it deletes. |
 | `core` | yes | `string` | The base game's `packageId`. |
 | `dlc` | yes | array of `string` | The official expansions, loaded after `core`. |
+| `dlcSince` | no | object of `string` | The game version each expansion first shipped with, keyed by `packageId`. An install older than that leaves the expansion out. |
 | `steamlessMod` | no | `string` | The `packageId` loaded in place of the steam client when steam is off. |
 | `preCore` | no | array of `string` | Mods that must load before the base game. |
 | `base` | no | array of `string` | Mods every profile of this game needs, loaded after the DLC. |

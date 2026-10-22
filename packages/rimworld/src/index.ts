@@ -67,6 +67,13 @@ const plugin: GamePlugin = {
       'ludeon.rimworld.anomaly',
       'ludeon.rimworld.odyssey',
     ],
+    dlcSince: {
+      'ludeon.rimworld.royalty': '1.1',
+      'ludeon.rimworld.ideology': '1.3',
+      'ludeon.rimworld.biotech': '1.4',
+      'ludeon.rimworld.anomaly': '1.5',
+      'ludeon.rimworld.odyssey': '1.6',
+    },
     steamlessMod: 'CryptikLemur.NoSteamPopup',
     library: {
       'CryptikLemur.NoSteamPopup': { path: join(import.meta.dirname, '..', 'mods', 'NoSteamPopup') },

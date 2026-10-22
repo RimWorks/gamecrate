@@ -923,6 +923,79 @@ describe('sorting, exclusion and warnings', () => {
     expect(plan.warnings.filter((w) => w.includes('Ideology'))).toEqual([])
   })
 
+  async function dlcIndex(): Promise<ModIndex> {
+    return makeIndex([
+      { id: 'Atlasco.Atlas', dir: await modDir('rw-core'), kind: 'core' },
+      { id: 'Atlasco.Atlas.Royalty', dir: await modDir('rw-royalty'), kind: 'official' },
+      { id: 'Atlasco.Atlas.Ideology', dir: await modDir('rw-ideology'), kind: 'official' },
+      { id: 'Patchlib.Patch', dir: await modDir('harmony'), kind: 'workshop' },
+    ])
+  }
+
+  test('a dlc newer than the installed version is left out', async () => {
+    const game = atlas({ dsd: { mods: [] } })
+    game.dlcSince = { 'Atlasco.Atlas.Ideology': '1.7' }
+    index = await dlcIndex()
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.mods.map((m) => m.packageId)).toEqual([
+      'Atlasco.Atlas',
+      'Atlasco.Atlas.Royalty',
+      'Patchlib.Patch',
+    ])
+  })
+
+  test('a dlc stays when the install is exactly the version it shipped with', async () => {
+    const game = atlas({ dsd: { mods: [] } })
+    game.dlcSince = { 'Atlasco.Atlas.Ideology': '1.6' }
+    index = await dlcIndex()
+    const { plan, problems } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(problems).toEqual([])
+    expect(plan.mods.map((m) => m.packageId)).toContain('Atlasco.Atlas.Ideology')
+  })
+
+  test('a lowercase dlcSince key gates a mixed-case packageId', async () => {
+    const game = atlas({ dsd: { mods: [] } })
+    game.dlcSince = { 'atlasco.atlas.ideology': '1.7' }
+    index = await dlcIndex()
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(plan.mods.map((m) => m.packageId)).not.toContain('Atlasco.Atlas.Ideology')
+  })
+
+  test('an unreadable version file warns and gates no dlc', async () => {
+    const game = atlas({ dsd: { mods: [] } })
+    game.gameFiles = { source: 'mount', host: join(tmp, 'NoSuchGame'), container: '/game' }
+    game.dlcSince = { 'Atlasco.Atlas.Ideology': '1.7' }
+    index = await dlcIndex()
+    const { plan } = await resolvePlan({
+      game: 'atlas',
+      profile: 'dsd',
+      plugins: PLUGINS,
+      root: rootFor('atlas', game),
+      index,
+    })
+    expect(plan.mods.map((m) => m.packageId)).toContain('Atlasco.Atlas.Ideology')
+    expect(plan.warnings.some((w) => w.includes('Version.txt'))).toBe(true)
+  })
+
   test('a missing core is still fatal', async () => {
     const game = atlas({ dsd: { mods: [] } })
     index = makeIndex([{ id: 'Patchlib.Patch', dir: await modDir('harmony'), kind: 'workshop' }])

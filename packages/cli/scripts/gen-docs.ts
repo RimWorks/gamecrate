@@ -160,6 +160,7 @@ const PLUGIN_GAME_KEYS = [
   'saveExtensions',
   'core',
   'dlc',
+  'dlcSince',
   'preCore',
   'base',
   'steamlessMod',

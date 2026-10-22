@@ -34,6 +34,7 @@ const ATLAS_DEFAULTS: GameConfig = {
   image: { ref: 'atlas-build:latest', context: '~/fixtures/docker' },
   scanRoots: [{ path: '~/fixtures/trees/atlas', maxDepth: 3 }],
   dlc: ['atlasco.atlas.one', 'atlasco.atlas.two'],
+  dlcSince: { 'atlasco.atlas.two': '1.6' },
   library: { 'patchlib.patch': { workshop: 2009463077 } },
   settings: { network: 'host' },
 }
