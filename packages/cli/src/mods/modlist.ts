@@ -22,9 +22,12 @@ export function readModlist(file: string): string[] {
     throw new GamecrateError(`cannot read mod list ${path}`, Exit.Usage)
   }
 
-  const lines = text.replace(/^﻿/, '').split('\n').map((line) => line.replace(/\r$/, ''))
-  const out = TAB_HEADERS.has(lines[0]?.trim() ?? '') ? tabRows(path, lines) : pipeRows(path, lines)
-  if (out.length === 0) throw new GamecrateError(`${path} holds no mod list rows`, Exit.Usage, PIPE_SHAPE)
+  const lines = text.split('\n').map((line) => line.replace(/\r$/, ''))
+  const tab = TAB_HEADERS.has(lines[0]?.trim() ?? '')
+  const out = tab ? tabRows(path, lines) : pipeRows(path, lines)
+  if (out.length === 0) {
+    throw new GamecrateError(`${path} holds no mod list rows`, Exit.Usage, tab ? TAB_SHAPE : PIPE_SHAPE)
+  }
   return [...new Set(out)]
 }
 
@@ -60,7 +63,7 @@ function tabRows(path: string, lines: string[]): string[] {
     if (id === '') {
       throw new GamecrateError(`${path}:${i + 1} names no packageId`, Exit.Usage, TAB_SHAPE)
     }
-    const published = fields[4]?.trim() ?? 'local'
+    const published = fields[4]?.trim() || 'local'
     if (published !== 'local' && !WORKSHOP_ID.test(published)) {
       throw new GamecrateError(
         `${path}:${i + 1} has workshopId "${published}"`,

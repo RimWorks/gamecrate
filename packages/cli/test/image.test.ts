@@ -133,9 +133,12 @@ describe('run wires the checks in before staging', () => {
     expect(source).toContain('withImageOverride(base, ref)')
   })
 
-  test('mods and verify read the image the profile picked, not the configured ref', () => {
+  test('mods and verify override the image before anything reads it', () => {
     for (const name of ['mods', 'verify']) {
-      expect(body(name)).toContain('config.games[game] = gameForImage(args, config, defaults, game, profile)')
+      const handler = body(name)
+      const override = handler.indexOf('config.games[game] = gameForImage(args, config, defaults, game, profile)')
+      expect(override).toBeGreaterThan(-1)
+      expect(override).toBeLessThan(handler.indexOf('cachedSources(config.games[game]!'))
     }
   })
 

@@ -18,7 +18,7 @@ import { GamecrateError, Exit, NAME_PATTERN, own } from '../types'
 import { requirePlugin } from '../plugin'
 import type { GamePlugin } from '../plugin'
 import { mapLimit } from '../concurrency'
-import { gatedDlc, versionRank } from '../dlcgate'
+import { gatedDlc } from '../dlcgate'
 import { installVersionText } from './generate'
 import { resolveInstance } from './instance'
 import type {
@@ -319,14 +319,15 @@ interface SlotRef {
 
 async function gatedForInstall(game: GameConfig, warnings: string[]): Promise<Set<string>> {
   if (game.dlcSince === undefined) return new Set<string>()
-  const text = (await installVersionText(game))?.replace(/^﻿/, '') ?? null
-  if (text === null || versionRank(text) === null) {
+  const text = await installVersionText(game)
+  const gated = text === null ? null : gatedDlc(game.dlc, game.dlcSince, text)
+  if (gated === null) {
     warnings.push(
       `could not read ${game.version.file}; every dlc stays, including any this build cannot load`,
     )
     return new Set<string>()
   }
-  return gatedDlc(game.dlc, game.dlcSince, text)
+  return gated
 }
 
 function stageSlots(input: StageInputs): {

@@ -189,7 +189,7 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     // docker creates a missing bind source as root, and the --user process then cannot write it
     mkdirSync(layers, { recursive: true })
     const tar = join(layers, `${branch.name}-${variant.name}-${version}.tar`)
-    const drop = await gatedDataDirs(input, dir, raw)
+    const drop = variant.include.length > 0 ? [] : await gatedDataDirs(input, dir, raw, say)
     if (drop.length > 0) say(`leaving out ${drop.join(', ')}, newer than ${version}`)
     const base = resolveBase(variant.base, opts.baseOverride)
     // the tag is what we append onto, the digest is what the image records it was built on
@@ -237,10 +237,20 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
   }
 }
 
-async function gatedDataDirs(input: SteamBuildInput, gameDir: string, versionText: string): Promise<string[]> {
+async function gatedDataDirs(
+  input: SteamBuildInput,
+  gameDir: string,
+  versionText: string,
+  say: (text: string) => void,
+): Promise<string[]> {
   const manifestFile = input.manifestFile
-  const gated = gatedDlc(input.dlc, input.dlcSince, versionText.replace(/^﻿/, ''))
-  if (gated.size === 0 || manifestFile === undefined) return []
+  if (input.dlcSince === undefined || manifestFile === undefined) return []
+  const gated = gatedDlc(input.dlc, input.dlcSince, versionText)
+  if (gated === null) {
+    say(`could not read ${input.versionFile}; every dlc stays, including any this build cannot read`)
+    return []
+  }
+  if (gated.size === 0) return []
   const data = join(gameDir, 'Data')
   const out: string[] = []
   for (const entry of await readdir(data, { withFileTypes: true }).catch(() => [])) {

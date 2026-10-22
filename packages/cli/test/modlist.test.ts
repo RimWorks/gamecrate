@@ -7,7 +7,7 @@ import { readModlist } from '../src/mods/modlist'
 import { parseArgs } from '../src/cli/args'
 import { imageFor } from '../src/launch/image'
 import { reachedEntries } from '../src/mods/source'
-import { Exit, type GameConfig } from '../src/types'
+import { Exit, type GameConfig, type GamecrateError } from '../src/types'
 
 let tmp = ''
 
@@ -127,6 +127,23 @@ describe('readModlist', () => {
       '',
     ].join('\n'))
     expect(readModlist(path)).toEqual(['brrainz.harmony'])
+  })
+
+  test('an empty workshopId cell reads as local, the same as no column at all', async () => {
+    const path = await dump('emptyid.txt', 'name\tpackageId\tversion\tactive\tworkshopId\nCore\tludeon.rimworld\t1.7\ttrue\t\n')
+    expect(readModlist(path)).toEqual(['ludeon.rimworld'])
+    const trailing = await dump('trailtab.txt', 'name\tpackageId\tversion\tactive\nCore\tludeon.rimworld\t1.7\ttrue\t\n')
+    expect(readModlist(trailing)).toEqual(['ludeon.rimworld'])
+  })
+
+  test('a tab file with no usable rows is told about tabs, not pipes', async () => {
+    const path = await dump('headeronly.txt', 'name\tpackageId\tversion\tactive\n')
+    expect(() => readModlist(path)).toThrow(/holds no mod list rows/)
+    try {
+      readModlist(path)
+    } catch (error) {
+      expect((error as GamecrateError).detail).toContain('separated by tabs')
+    }
   })
 
   test('refuses a workshopId that is neither digits nor "local"', async () => {

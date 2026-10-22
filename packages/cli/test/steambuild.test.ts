@@ -539,30 +539,55 @@ describe('steamBuild', () => {
     )
   })
 
-  test('a dlc newer than the build never reaches the tar', async () => {
-    const about = join(state.gameDir, 'Data', 'Anomaly', 'About')
-    await mkdir(about, { recursive: true })
-    await writeFile(join(about, 'About.xml'), '<ModMetaData><packageId>Ludeon.RimWorld.Anomaly</packageId></ModMetaData>')
+  async function withData(dirs: Record<string, string>, run: () => Promise<void>): Promise<void> {
+    for (const [dir, packageId] of Object.entries(dirs)) {
+      const about = join(state.gameDir, 'Data', dir, 'About')
+      await mkdir(about, { recursive: true })
+      await writeFile(join(about, 'About.xml'), `<ModMetaData><packageId>${packageId}</packageId></ModMetaData>`)
+    }
     try {
-      await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
-      expect(state.excluded).toEqual([['Data/Anomaly']])
-      expect(state.said).toContain('public/linux  leaving out Data/Anomaly, newer than 1.6.4871')
+      await run()
     } finally {
       await rm(join(state.gameDir, 'Data'), { recursive: true, force: true })
+    }
+  }
+
+  const BOTH_DLC = {
+    ...ONE,
+    dlc: ['Ludeon.RimWorld.Royalty', 'Ludeon.RimWorld.Anomaly'],
+    dlcSince: { 'Ludeon.RimWorld.Royalty': '1.1', 'Ludeon.RimWorld.Anomaly': '1.7' },
+  }
+
+  test('the tar loses a dlc newer than the build and keeps the rest', async () => {
+    await withData(
+      { Anomaly: 'Ludeon.RimWorld.Anomaly', Royalty: 'Ludeon.RimWorld.Royalty', Core: 'Ludeon.RimWorld' },
+      async () => {
+        await steamBuild(BOTH_DLC, { ...opts, onlyVariants: ['linux'] })
+        expect(state.excluded).toEqual([['Data/Anomaly']])
+        expect(state.said).toContain('public/linux  leaving out Data/Anomaly, newer than 1.6.4871')
+      },
+    )
+  })
+
+  test('a version the gate cannot rank says so instead of quietly shipping every dlc', async () => {
+    await writeFile(join(state.gameDir, 'Version.txt'), 'unreleased\n')
+    try {
+      await withData({ Anomaly: 'Ludeon.RimWorld.Anomaly' }, async () => {
+        await steamBuild(BOTH_DLC, { ...opts, onlyVariants: ['linux'] })
+        expect(state.excluded).toEqual([[]])
+        expect(state.said.some((s) => s.includes('every dlc stays'))).toBe(true)
+      })
+    } finally {
+      await writeFile(join(state.gameDir, 'Version.txt'), '1.6.4871 rev598\n')
     }
   })
 
-  test('a dlc the build is new enough for stays in the tar', async () => {
-    const about = join(state.gameDir, 'Data', 'Royalty', 'About')
-    await mkdir(about, { recursive: true })
-    await writeFile(join(about, 'About.xml'), '<ModMetaData><packageId>Ludeon.RimWorld.Royalty</packageId></ModMetaData>')
-    try {
-      const input = { ...ONE, dlc: ['Ludeon.RimWorld.Royalty'], dlcSince: { 'Ludeon.RimWorld.Royalty': '1.1' } }
-      await steamBuild(input, { ...opts, onlyVariants: ['linux'] })
+  test('a variant with an include list skips the scan, because the tar would ignore it', async () => {
+    await withData({ Anomaly: 'Ludeon.RimWorld.Anomaly' }, async () => {
+      await steamBuild(BOTH_DLC, { ...opts, onlyVariants: ['linux-ref'] })
       expect(state.excluded).toEqual([[]])
-    } finally {
-      await rm(join(state.gameDir, 'Data'), { recursive: true, force: true })
-    }
+      expect(state.said.some((s) => s.includes('leaving out'))).toBe(false)
+    })
   })
 
   test('a reference-only skip says so with no --push', async () => {
