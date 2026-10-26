@@ -6,7 +6,7 @@ import { status, warn } from '../cli/output'
 import { decideGate } from '../image/gate'
 import { steamBuild } from '../image/build'
 import { resolveSteamBuildInput } from '../image/input'
-import { publishedBuildId } from '../mods/steamcmd'
+import { isSteamUnavailable, publishedBuildId } from '../mods/steamcmd'
 import { imageDigest } from './prepare'
 import type { ImageFacts } from './image'
 import type { ParsedArgs, RootConfig, UpdateCheckSpec } from '../types'
@@ -89,6 +89,10 @@ export async function offerRebuild(input: {
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const built = await resolveSteamBuildInput(game, config, { plugins }, input.cwd, input.configFile)
   const published = await publishedBuildId(config, built.steamAppId, facts.branch!)
+    .catch((error: unknown) => {
+      if (isSteamUnavailable(error)) return null
+      throw error
+    })
   recordCheck(id, now)
   const decision = decideGate({ published, imagePresent: true, labelled: facts.buildid, force: false })
   if (!decision.build || decision.reason !== 'buildid-changed') return

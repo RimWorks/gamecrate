@@ -331,10 +331,24 @@ const appState = (id: number) => new RegExp(`Error! App '${id}' state is (0x[0-9
 // steam's own strings. a stale session is the likeliest first-run failure, and it looks nothing
 // like a bad branch, so it is checked before the branch message
 const LOGIN_FAILED = /Login Failure|FAILED \(Invalid Password\)|Account Logon Denied|Two-factor/i
+const STEAM_UNREACHABLE = /Info request for AppId \d+ returned error Timeout|Failed to load platform info/i
+
+function steamUnreachable(appId: number): GamecrateError {
+  return new GamecrateError(
+    `steam did not answer for app ${appId}`,
+    Exit.Unavailable,
+    'steam was slow or down, so nothing local is wrong. retry in a few minutes',
+  )
+}
+
+/** True when steam never answered, which is nobody's local problem and worth retrying. */
+export function isSteamUnavailable(error: unknown): boolean {
+  return error instanceof GamecrateError && error.code === Exit.Unavailable
+}
 
 /**
- * A wrong -betapassword and a branch that does not exist look identical from outside: steam
- * reports both as the branch being unavailable, so the error names both.
+ * A wrong -betapassword, a missing branch and a steam that never answers all read the same from
+ * outside, so the error separates them: only the last one is worth retrying.
  */
 export async function downloadApp(config: RootConfig, opts: {
   steamAppId: number
@@ -388,6 +402,7 @@ export async function downloadApp(config: RootConfig, opts: {
       'run `gamecrate steam login` to sign in again, including any steam guard code',
     )
   }
+  if (STEAM_UNREACHABLE.test(output)) throw steamUnreachable(opts.steamAppId)
   const state = appState(opts.steamAppId).exec(output)
   throw new GamecrateError(
     `steamcmd did not install app ${opts.steamAppId} on branch "${opts.branch}"`,
@@ -418,7 +433,7 @@ function quoteIfSpaced(arg: string): string {
   return /\s/.test(arg) ? `"${arg}"` : arg
 }
 
-/** null when steam reports no buildid for that branch. A missing account throws, it is not a null. */
+/** null when steam reports no buildid for that branch. A missing account or a silent steam throws. */
 export async function publishedBuildId(
   config: RootConfig,
   appId: number,
@@ -443,6 +458,7 @@ export async function publishedBuildId(
   } finally {
     await release()
   }
+  if (STEAM_UNREACHABLE.test(output)) throw steamUnreachable(appId)
   return buildIdFor(output, branch)
 }
 

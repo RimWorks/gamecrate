@@ -33,6 +33,7 @@ afterEach(() => {
   delete process.env.FAKE_LOGIN_FAIL
   delete process.env.FAKE_EXIT
   delete process.env.FAKE_REDIST
+  delete process.env.FAKE_STEAM_TIMEOUT
 })
 
 async function fake(): Promise<{ root: string; cfg: RootConfig }> {
@@ -178,6 +179,22 @@ describe('downloadApp', () => {
     expect(thrown?.detail).toContain('password')
   })
 
+  test('a steam that never answers blames steam, not the branch or the password', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_STEAM_TIMEOUT = '1'
+    let thrown: GamecrateError | undefined
+    try {
+      await downloadApp(cfg, { steamAppId: 294100, branch: 'unstable', password: 'x', dataRoot: root })
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Unavailable)
+    expect(thrown?.message).toContain('steam did not answer')
+    expect(thrown?.message).not.toContain('unstable')
+    expect(thrown?.detail).toContain('retry')
+    expect(thrown?.detail).not.toContain('password')
+  })
+
   test('releases the lock when steamcmd fails', async () => {
     const { root, cfg } = await fake()
     process.env.FAKE_APP_STATE = '0x606'
@@ -269,6 +286,19 @@ describe('publishedBuildId', () => {
   test('a branch steam never mentions is null', async () => {
     const { cfg } = await fake()
     expect(await publishedBuildId(cfg, 294100, 'nosuch')).toBeNull()
+  })
+
+  test('a steam that never answers throws, so the gate never reads it as a moved buildid', async () => {
+    const { cfg } = await fake()
+    process.env.FAKE_STEAM_TIMEOUT = '1'
+    let thrown: GamecrateError | undefined
+    try {
+      await publishedBuildId(cfg, 294100, 'public')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Unavailable)
+    expect(thrown?.message).toContain('steam did not answer')
   })
 
   test('no account anywhere throws what the download throws, never a null', async () => {

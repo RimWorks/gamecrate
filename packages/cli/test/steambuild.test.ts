@@ -15,6 +15,7 @@ const state = {
   /** The local daemon: `docker build --label` writes here, `docker image inspect` reads it. */
   local: new Map<string, Record<string, string>>(),
   published: null as string | null,
+  publishedThrows: null as Error | null,
   pushFails: (_ref: string): boolean => false,
   /** What the registry said. undefined is the no-detail case: crane printed nothing. */
   tagFails: (_tag: string): boolean => false,
@@ -100,7 +101,9 @@ await mock.module('../src/mods/steamcmd', () => {
   const real = realSteamcmd
   return {
     ...real,
-    publishedBuildId: () => Promise.resolve(state.published),
+    publishedBuildId: () => state.publishedThrows === null
+      ? Promise.resolve(state.published)
+      : Promise.reject(state.publishedThrows),
     downloadApp: (_config: unknown, opts: { branch: string; depot?: string }) => {
       state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
       state.calls.push(`download ${opts.branch}/${opts.depot ?? 'default'}`)
@@ -204,6 +207,7 @@ beforeEach(() => {
   state.mutated.clear()
   state.local.clear()
   state.published = '9999'
+  state.publishedThrows = null
   state.pushFails = () => false
   state.tagFails = () => false
   state.pushDetail = undefined
@@ -232,6 +236,12 @@ describe('steamBuild', () => {
     expect(results.map((r) => r.status)).toEqual(['built', 'failed', 'built'])
     expect(results.find((r) => r.status === 'failed')?.variant).toBe('windows')
     expect(byVariant(results, 'windows').reason).toContain('refused')
+  })
+
+  test('a steam that never answers stops the build instead of downloading blind', async () => {
+    state.publishedThrows = new GamecrateError('steam did not answer for app 294100', Exit.Unavailable)
+    await expect(steamBuild(ONE, opts)).rejects.toThrow(/steam did not answer/)
+    expect(state.downloads).toEqual([])
   })
 
   test('the gate skips an up-to-date cell and builds a missing one', async () => {

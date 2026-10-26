@@ -17,6 +17,8 @@ export const Exit = {
   Refused: 7,
   /** `verify`: a bound mod's sources are newer than its assemblies. */
   Stale: 8,
+  /** Steam itself did not answer. Nothing local is wrong, so a caller may retry or reuse. */
+  Unavailable: 9,
   Interrupted: 130,
 } as const
 

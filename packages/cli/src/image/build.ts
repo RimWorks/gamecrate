@@ -7,7 +7,7 @@ import { status } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { pickExecutable } from '../executable'
-import { downloadApp, publishedBuildId, steamHome } from '../mods/steamcmd'
+import { downloadApp, isSteamUnavailable, publishedBuildId, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
 import { Exit, GamecrateError } from '../types'
 import type { RootConfig, SteamBranch, SteamVariant } from '../types'
@@ -84,7 +84,11 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   )
 
   for (const branch of branches) {
-    const published = await publishedBuildId(opts.config, input.steamAppId, branch.name).catch(() => null)
+    const published = await publishedBuildId(opts.config, input.steamAppId, branch.name)
+      .catch((error: unknown) => {
+        if (isSteamUnavailable(error)) throw error
+        return null
+      })
     // per branch, because a branch is a different set of files
     const downloads = new Map<string, Promise<AppDownload>>()
     for (const variant of variants) {
