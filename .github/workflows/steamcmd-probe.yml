@@ -1,0 +1,44 @@
+name: steamcmd-probe
+
+on:
+  push:
+    branches: [probe/steamcmd-bootstrap]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record the environment and the exact image
+        run: |
+          id
+          docker --version
+          docker pull steamcmd/steamcmd:latest
+          docker image inspect steamcmd/steamcmd:latest --format '{{index .RepoDigests 0}}'
+
+      - name: Reach Valve's client cdn from the runner
+        continue-on-error: true
+        run: |
+          for host in media.steampowered.com client-download.steampowered.com steamcdn-a.akamaihd.net; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+              "https://$host/client/steamcmd_linux.tar.gz" || echo curl-failed)"
+            echo "$host -> $code"
+          done
+
+      - name: Cell A, gamecrate's argv today, overridden user and HOME
+        continue-on-error: true
+        run: |
+          H="$RUNNER_TEMP/gc-home"
+          mkdir -p "$H/.steam/config"
+          printf '"InstallConfigStore" {}\n' > "$H/.steam/config/config.vdf"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$H:$H" -e "HOME=$H" \
+            steamcmd/steamcmd:latest +quit
+
+      - name: Cell B, root with the image's own prewarmed home
+        continue-on-error: true
+        run: |
+          D="$RUNNER_TEMP/gc-data"
+          mkdir -p "$D"
+          docker run --rm -v "$D:$D" steamcmd/steamcmd:latest +quit
