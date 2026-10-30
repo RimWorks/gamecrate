@@ -8,6 +8,30 @@ permissions:
   contents: read
 
 jobs:
+  real:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the published cli the way the image action does
+        run: |
+          npm install -g --no-fund --no-audit @gamecrate/cli
+          npm install --no-fund --no-audit --no-save @gamecrate/rimworld
+          gamecrate version
+
+      - name: Run the real steam build with a stub session, no push
+        continue-on-error: true
+        env:
+          STEAM_USERNAME: probeuser
+        run: |
+          STEAM_CONFIG_VDF_B64="$(printf '"InstallConfigStore"\n{\n}\n' | base64 -w0)"
+          export STEAM_CONFIG_VDF_B64
+          gamecrate steam build --game rimworld --no-load \
+            --image localhost/probe-rimworld --beta public --variant linux --json
+
+      - name: What it left in the steam home
+        if: always()
+        run: |
+          find ~/.local/share/gamecrate/steam -maxdepth 4 | sort | head -60
+
   probe:
     runs-on: ubuntu-latest
     steps:
