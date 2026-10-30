@@ -43,6 +43,26 @@ jobs:
           mkdir -p "$D"
           docker run --rm -v "$D:$D" steamcmd/steamcmd:latest +quit
 
+  pair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Two sequential runs with the flags gamecrate actually passes
+        continue-on-error: true
+        run: |
+          H="$RUNNER_TEMP/gc-pair"
+          mkdir -p "$H/.steam/config"
+          printf '"InstallConfigStore" {}\n' > "$H/.steam/config/config.vdf"
+          docker pull -q steamcmd/steamcmd:latest
+          base=(docker run --rm --user "$(id -u):$(id -g)" -v "$H:$H" -e "HOME=$H"
+            steamcmd/steamcmd:latest
+            +@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +login probeuser)
+          echo "::group::run 1, the app_info_print shape"
+          "${base[@]}" +app_info_update 1 +app_info_print 294100 +quit || echo "run 1 exit=$?"
+          echo "::endgroup::"
+          echo "::group::run 2, the app_update shape"
+          "${base[@]}" +force_install_dir "$H/app" +app_update 294100 +quit || echo "run 2 exit=$?"
+          echo "::endgroup::"
+
   parallel:
     strategy:
       fail-fast: false
