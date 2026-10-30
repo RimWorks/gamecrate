@@ -34,6 +34,7 @@ afterEach(() => {
   delete process.env.FAKE_EXIT
   delete process.env.FAKE_REDIST
   delete process.env.FAKE_STEAM_TIMEOUT
+  delete process.env.FAKE_BOOTSTRAP_FAIL
 })
 
 async function fake(): Promise<{ root: string; cfg: RootConfig }> {
@@ -195,6 +196,22 @@ describe('downloadApp', () => {
     expect(thrown?.detail).not.toContain('password')
   })
 
+  test('steamcmd dying while updating itself blames the bootstrap, not the branch', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_BOOTSTRAP_FAIL = '1'
+    let thrown: GamecrateError | undefined
+    try {
+      await downloadApp(cfg, { steamAppId: 294100, branch: 'public', dataRoot: root })
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Unavailable)
+    expect(thrown?.message).toContain('install its own update')
+    expect(thrown?.message).not.toContain('public')
+    expect(thrown?.detail).toContain('retry')
+    expect(thrown?.detail).not.toContain('may not exist')
+  })
+
   test('releases the lock when steamcmd fails', async () => {
     const { root, cfg } = await fake()
     process.env.FAKE_APP_STATE = '0x606'
@@ -299,6 +316,19 @@ describe('publishedBuildId', () => {
     }
     expect(thrown?.code).toBe(Exit.Unavailable)
     expect(thrown?.message).toContain('steam did not answer')
+  })
+
+  test('a failed bootstrap throws too, so the gate never reads it as an unknown buildid', async () => {
+    const { cfg } = await fake()
+    process.env.FAKE_BOOTSTRAP_FAIL = '1'
+    let thrown: GamecrateError | undefined
+    try {
+      await publishedBuildId(cfg, 294100, 'public')
+    } catch (error) {
+      thrown = error as GamecrateError
+    }
+    expect(thrown?.code).toBe(Exit.Unavailable)
+    expect(thrown?.message).toContain('install its own update')
   })
 
   test('no account anywhere throws what the download throws, never a null', async () => {

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { useSink } from '../src/channels'
 import { Exit, GamecrateError } from '../src/types'
 import type { ModManifest, RootConfig, SteamVariant } from '../src/types'
 
@@ -242,6 +243,21 @@ describe('steamBuild', () => {
     state.publishedThrows = new GamecrateError('steam did not answer for app 294100', Exit.Unavailable)
     await expect(steamBuild(ONE, opts)).rejects.toThrow(/steam did not answer/)
     expect(state.downloads).toEqual([])
+  })
+
+  test('a buildid lookup that fails for any other reason says so instead of going quiet', async () => {
+    state.publishedThrows = new GamecrateError('steamcmd could not read the manifest', Exit.Environment)
+    const seen: string[] = []
+    const probe = useSink({ write: (_c, chunk) => void seen.push(String(chunk)), close() {} })
+    try {
+      await steamBuild(ONE, opts)
+    } finally {
+      probe.close()
+    }
+    const said = seen.join('')
+    expect(said).toContain('steam gave no buildid for public')
+    expect(said).toContain('could not read the manifest')
+    expect(state.downloads.length).toBeGreaterThan(0)
   })
 
   test('the gate skips an up-to-date cell and builds a missing one', async () => {
