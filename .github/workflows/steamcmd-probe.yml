@@ -42,3 +42,19 @@ jobs:
           D="$RUNNER_TEMP/gc-data"
           mkdir -p "$D"
           docker run --rm -v "$D:$D" steamcmd/steamcmd:latest +quit
+
+  parallel:
+    strategy:
+      fail-fast: false
+      matrix:
+        cell: ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7']
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cold bootstrap ${{ matrix.cell }}, seven at once like a real build
+        run: |
+          H="$RUNNER_TEMP/gc-home"
+          mkdir -p "$H/.steam/config"
+          printf '"InstallConfigStore" {}\n' > "$H/.steam/config/config.vdf"
+          docker pull -q steamcmd/steamcmd:latest
+          docker run --rm --user "$(id -u):$(id -g)" -v "$H:$H" -e "HOME=$H" \
+            steamcmd/steamcmd:latest +quit
