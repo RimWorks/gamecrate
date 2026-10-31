@@ -15,7 +15,9 @@ gamecrate steam login
 
 That prompts for your username, password, and any Steam Guard code, then stores it.
 `steam build` reads it and never prompts. On a runner with no session on disk, pass
-`STEAM_CONFIG_VDF_B64` instead: `steam login --print` writes it as base64 for a secret.
+`STEAM_CONFIG_VDF_B64` instead: `steam login --print` writes it as base64 for a secret. With
+DepotDownloader installed, `steam login` signs it in too, and `--print-token` writes its token
+the same way for `DEPOTDOWNLOADER_ACCOUNT_B64`.
 
 ## Build
 
@@ -128,6 +130,8 @@ process list.
 - `STEAM_CONFIG_VDF_B64` is base64 of a logged-in session, for a runner with nothing on disk.
 - `STEAM_CONFIG_VDF` is the path to a file holding that session, as base64 or as a raw
   `config.vdf`. The base64 variable outranks it.
+- `DEPOTDOWNLOADER_ACCOUNT_B64` is base64 of DepotDownloader's `account.config`, from
+  `steam login --print-token`, for a runner with nothing on disk.
 - `STEAM_BRANCH_PASSWORD_<BRANCH>` is one private beta's password. Uppercase the name, and dashes
   become underscores.
 - `GAMECRATE_REGISTRY_USER` is the registry username for `--push`.

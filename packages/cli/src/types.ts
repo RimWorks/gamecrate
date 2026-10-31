@@ -592,6 +592,7 @@ export interface ParsedArgs {
   base?: string
   platform?: string
   print?: boolean
+  printToken?: boolean
   username?: string
   /** `prune` only: one-run overrides for the `prune` config block. */
   olderThan?: number

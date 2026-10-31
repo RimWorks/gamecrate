@@ -160,6 +160,7 @@ in for a flag.
 | `--plugin <spec>` | `steam build` | Name the plugin package to use. Repeatable. |
 | `--print` | `steam login` | Also print the session as base64 |
 | `--print-plan` | `run` | Print what the launch would do instead of launching |
+| `--print-token` | `steam login` | Also print depotdownloader's token as base64 |
 | `--project` | `mods add`, `mods rm`, `init` | Write to the .gamecrate config beside your code |
 | `--pull <always\|missing\|never>` | `run`, `build` | When to pull the runtime image from its registry |
 | `--push` | `steam build` | Push the built image to a registry |

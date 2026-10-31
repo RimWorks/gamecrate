@@ -7,7 +7,9 @@ import { createInterface } from 'node:readline/promises'
 import { namedGame } from './game'
 import { steamBuild } from '../image/build'
 import { resolveSteamBuildInput } from '../image/input'
-import { depotDownloaderEnv, findDepotDownloaderToken, resolveDepotDownloader } from '../mods/depotdownloader'
+import {
+  depotDownloaderEnv, findDepotDownloaderToken, resolveDepotDownloader, seedDepotDownloaderToken,
+} from '../mods/depotdownloader'
 import { accountFile, resolveSteamcmd, steamAccount, steamHome } from '../mods/steamcmd'
 import type { GamePlugin } from '../plugin'
 import { Exit, GamecrateError } from '../types'
@@ -105,6 +107,7 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
 
   status(`steam session from ${resolveSession(ctx.config)}`)
   steamAccount(ctx.config.dataRoot)
+  if (seedDepotDownloaderToken(ctx.config) !== undefined) status('depotdownloader token from DEPOTDOWNLOADER_ACCOUNT_B64')
 
   const push = args.push === true
   const load = args.load !== false
@@ -185,6 +188,13 @@ export async function steamLogin(args: ParsedArgs, ctx: SteamContext): Promise<n
   status(`session written to ${vdf}`)
   if (depotdownloader !== undefined) loginDepotDownloader(depotdownloader, username, appId as number, ctx.config.dataRoot)
   if (args.print === true) emit('data', `${readFileSync(vdf).toString('base64')}\n`)
+  if (args.printToken === true) {
+    const token = findDepotDownloaderToken(ctx.config.dataRoot)
+    if (token === undefined) {
+      throw new GamecrateError('no depotdownloader token to print', Exit.Environment, 'install depotdownloader and run steam login again')
+    }
+    emit('data', `${readFileSync(token).toString('base64')}\n`)
+  }
   return Exit.Ok
 }
 

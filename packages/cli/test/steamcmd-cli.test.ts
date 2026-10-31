@@ -33,9 +33,11 @@ import type { SteamContext } from '../src/cli/steam'
 const { resolveImage } = await import('../src/image/input')
 const { accountFile, steamHome } = await import('../src/mods/steamcmd')
 const { findDepotDownloaderToken } = await import('../src/mods/depotdownloader')
+const { useSink } = await import('../src/channels')
 import { Exit, GamecrateError } from '../src/types'
 import type { ParsedArgs, RootConfig } from '../src/types'
 
+const FAKE_DD = fileURLToPath(new URL('./fixtures/fake-depotdownloader.sh', import.meta.url))
 const ORIGINAL_HOME = process.env.HOME
 const ORIGINAL_PATH = process.env.PATH
 afterAll(() => {
@@ -50,6 +52,7 @@ afterEach(() => {
   delete process.env.STEAM_CONFIG_VDF_B64
   delete process.env.STEAM_USERNAME
   delete process.env.FAKE_NO_TOKEN
+  delete process.env.DEPOTDOWNLOADER_ACCOUNT_B64
   process.env.PATH = ORIGINAL_PATH
 })
 
@@ -222,6 +225,20 @@ describe('steamBuildCommand', () => {
     expect(reason).toBe('resolved')
   })
 
+  test('materializes DEPOTDOWNLOADER_ACCOUNT_B64 where depotdownloader reads it before it builds', async () => {
+    const { config } = tree()
+    const cfg = { ...config, depotdownloader: { path: FAKE_DD } } as unknown as RootConfig
+    process.env.STEAM_CONFIG_VDF_B64 = Buffer.from('from-env').toString('base64')
+    process.env.STEAM_USERNAME = 'tester'
+    process.env.DEPOTDOWNLOADER_ACCOUNT_B64 = Buffer.from('ci token').toString('base64')
+
+    expect(await build(cfg)).toBe(Exit.Ok)
+    expect(built.count).toBe(1)
+    const token = findDepotDownloaderToken(cfg.dataRoot)
+    expect(token?.startsWith(steamHome(cfg.dataRoot))).toBe(true)
+    expect(readFileSync(token as string, 'utf8')).toBe('ci token')
+  })
+
   test('materializes STEAM_CONFIG_VDF_B64 onto disk before it builds anything', async () => {
     const { config } = tree()
     process.env.STEAM_CONFIG_VDF_B64 = Buffer.from('from-env').toString('base64')
@@ -310,7 +327,6 @@ describe('resolveImage', () => {
 })
 
 describe('steamLogin', () => {
-  const FAKE_DD = fileURLToPath(new URL('./fixtures/fake-depotdownloader.sh', import.meta.url))
 
   function fakeSteamcmd(): string {
     const dir = mkdtempSync(join(tmpdir(), 'gamecrate-bin-'))
@@ -347,6 +363,26 @@ describe('steamLogin', () => {
     expect(argv).toContain('-manifest-only')
     const scratch = readdirSync(steamHome(cfg.dataRoot)).filter((name) => name.startsWith('depotdownloader-login-'))
     expect(scratch).toEqual([])
+  })
+
+  test('--print-token prints the depotdownloader token as base64 for a secret', async () => {
+    const { config } = tree()
+    const cfg = {
+      ...config,
+      games: { rimworld: { steamAppId: 294100 } },
+      steamcmd: { path: fakeSteamcmd() },
+      depotdownloader: { path: FAKE_DD },
+    } as unknown as RootConfig
+    const data: string[] = []
+    const probe = useSink({ write: (channel, chunk) => void (channel === 'data' && data.push(String(chunk))), close() {} })
+    try {
+      const ctx: SteamContext = { config: cfg, plugins: new Map(), cwd: '/nowhere' }
+      const args = { subcommand: 'steam', subverb: 'login', username: 'tester', printToken: true } as ParsedArgs
+      expect(await steamLogin(args, ctx)).toBe(Exit.Ok)
+    } finally {
+      probe.close()
+    }
+    expect(data.join('').trim()).toBe(Buffer.from('fake token\n').toString('base64'))
   })
 
   test('with no depotdownloader the login is steamcmd alone', async () => {

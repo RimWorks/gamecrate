@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
 import { expandHome } from '../config/load'
@@ -15,6 +16,7 @@ const LOGIN_FAILED = /Unable to login to Steam3: (\S+)/
 const STEAM_DOWN = /^(ServiceUnavailable|TryAnotherCM|Timeout)$/
 const BRANCH_FAILED = /Password was invalid for branch|was not found, either it does not exist or it has a password/
 const NOT_OWNED = /is not available from this account/
+const TOKEN_VAR = 'DEPOTDOWNLOADER_ACCOUNT_B64'
 
 /**
  * The game downloader, when one is installed. A configured path that is not an executable file is
@@ -38,13 +40,58 @@ export function depotDownloaderEnv(dataRoot: string): Record<string, string> {
   return { HOME: home, XDG_DATA_HOME: join(home, '.local', 'share') }
 }
 
-/** The token `-remember-password` saved, wherever .NET's isolated storage put it, or undefined. */
-export function findDepotDownloaderToken(dataRoot: string): string | undefined {
+function storeDir(dataRoot: string): string | undefined {
   const root = join(depotDownloaderEnv(dataRoot).XDG_DATA_HOME as string, 'IsolatedStorage')
   if (!existsSync(root)) return undefined
   const found = readdirSync(root, { recursive: true, encoding: 'utf8' })
-    .find((entry) => basename(entry) === 'account.config')
+    .find((entry) => basename(entry) === 'AssemFiles')
   return found === undefined ? undefined : join(root, found)
+}
+
+/** The token `-remember-password` saved, wherever .NET's isolated storage put it, or undefined. */
+export function findDepotDownloaderToken(dataRoot: string): string | undefined {
+  const dir = storeDir(dataRoot)
+  if (dir === undefined) return undefined
+  const path = join(dir, 'account.config')
+  return existsSync(path) ? path : undefined
+}
+
+/**
+ * DEPOTDOWNLOADER_ACCOUNT_B64 onto disk, for a runner with no login of its own. depotdownloader
+ * creates its store on any run, so a version check says where the file goes.
+ */
+export function seedDepotDownloaderToken(
+  config: RootConfig,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const inline = env[TOKEN_VAR]
+  if (inline === undefined || inline === '') return undefined
+  const binary = resolveDepotDownloader(config)
+  if (binary === undefined) {
+    throw new GamecrateError(
+      `${TOKEN_VAR} is set but depotdownloader is not installed`,
+      Exit.Environment,
+      'put depotdownloader on PATH or set depotdownloader.path, or unset it to download with steamcmd',
+    )
+  }
+  const home = steamHome(config.dataRoot)
+  mkdirSync(home, { recursive: true })
+  const probe = spawnSync(binary, ['-V'], {
+    encoding: 'utf8',
+    env: { ...process.env, ...depotDownloaderEnv(config.dataRoot) },
+  })
+  const dir = probe.error === undefined && probe.status === 0 ? storeDir(config.dataRoot) : undefined
+  if (dir === undefined) {
+    throw new GamecrateError(
+      `depotdownloader did not create its store under ${home}`,
+      Exit.Environment,
+      probe.error?.message ?? lastLines(`${probe.stdout ?? ''}\n${probe.stderr ?? ''}`, 4),
+    )
+  }
+  const path = join(dir, 'account.config')
+  rmSync(path, { force: true })
+  writeFileSync(path, Buffer.from(inline, 'base64'), { mode: 0o600 })
+  return path
 }
 
 /**

@@ -1,12 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
   depotDownloaderEnv, downloadAppWithDepotDownloader, findDepotDownloaderToken, resolveDepotDownloader,
+  seedDepotDownloaderToken,
 } from '../src/mods/depotdownloader'
 import { appDownloadRoot, steamHome } from '../src/mods/steamcmd'
 import { Exit } from '../src/types'
@@ -243,5 +244,37 @@ describe('findDepotDownloaderToken', () => {
   test('nothing stored is undefined', async () => {
     const root = await mkdtemp(join(tmp, 'token-'))
     expect(findDepotDownloaderToken(root)).toBeUndefined()
+  })
+})
+
+describe('seedDepotDownloaderToken', () => {
+  test('writes the secret where depotdownloader will look, at mode 0600', async () => {
+    const { root, cfg } = await fake()
+    const body = 'protobuf bytes'
+    const path = seedDepotDownloaderToken(cfg, { DEPOTDOWNLOADER_ACCOUNT_B64: Buffer.from(body).toString('base64') })
+    expect(path).toBe(findDepotDownloaderToken(root))
+    expect(await readFile(path as string, 'utf8')).toBe(body)
+    expect((await stat(path as string)).mode & 0o777).toBe(0o600)
+    expect(await recordedArgv(root)).toBe('-V')
+  })
+
+  test('an unset variable seeds nothing', async () => {
+    const { root, cfg } = await fake()
+    expect(seedDepotDownloaderToken(cfg, {})).toBeUndefined()
+    expect(findDepotDownloaderToken(root)).toBeUndefined()
+  })
+
+  test('a set variable with no depotdownloader installed is an environment error', async () => {
+    const root = await mkdtemp(join(tmp, 'app-'))
+    process.env.PATH = join(tmp, 'empty-bin')
+    const cfg: RootConfig = { dataRoot: root, games: {} }
+    let error: GamecrateError | undefined
+    try {
+      seedDepotDownloaderToken(cfg, { DEPOTDOWNLOADER_ACCOUNT_B64: 'eA==' })
+    } catch (caught) {
+      error = caught as GamecrateError
+    }
+    expect(error?.code).toBe(Exit.Environment)
+    expect(error?.message).toContain('DEPOTDOWNLOADER_ACCOUNT_B64')
   })
 })

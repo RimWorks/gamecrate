@@ -15,6 +15,17 @@ if [ -n "$HOME" ]; then
   printf '%s\n' "${XDG_DATA_HOME:-}" > "$HOME/xdg.txt"
 fi
 
+# a real one opens its isolated storage before it reads a flag, so the store exists after any run
+store=""
+if [ -n "$XDG_DATA_HOME" ]; then
+  store="$XDG_DATA_HOME/IsolatedStorage/abc123.v24/def456.z3n/Url.fakehash/AssemFiles"
+  mkdir -p "$store"
+fi
+
+case " $* " in
+  *" -V "*) printf 'DepotDownloader v3.4.0\nRuntime: .NET 9.0.0 on fake\n'; exit 0 ;;
+esac
+
 dir=""; app=""; branch="public"; manifest_only=""; remember=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -46,10 +57,8 @@ fi
 
 printf "Logging 'tester' into Steam3... Done!\n"
 
-# a real one saves the refresh token the moment the login succeeds, under isolated storage
-if [ -n "$remember" ] && [ -n "$XDG_DATA_HOME" ]; then
-  store="$XDG_DATA_HOME/IsolatedStorage/abc123.v24/def456.z3n/Url.fakehash/AssemFiles"
-  mkdir -p "$store"
+# a real one saves the refresh token the moment the login succeeds
+if [ -n "$remember" ] && [ -n "$store" ]; then
   printf 'fake token\n' > "$store/account.config"
 fi
 
