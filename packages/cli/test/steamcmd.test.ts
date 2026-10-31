@@ -192,8 +192,9 @@ describe('resolveSteamcmd', () => {
     await publishedBuildId(config(), 294100, 'public')
 
     const seen = await readFile(log, 'utf8')
+    expect(seen).toContain('--entrypoint cp')
     expect(seen).toContain('/root/.local/share/Steam/.')
-    expect(seen).toContain('chown -R')
+    expect(seen).toContain('--entrypoint chown')
     expect(existsSync(join(tmp, 'data', 'steam', '.local', 'share', 'Steam'))).toBe(true)
   })
 

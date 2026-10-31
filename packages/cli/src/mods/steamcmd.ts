@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import type { SpawnSyncReturns } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
   accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync,
@@ -117,17 +118,22 @@ const IMAGE_STEAM = '/root/.local/share/Steam'
 function prewarm(runner: SteamcmdRunner): void {
   if (runner.kind !== 'docker') return
   const steam = join(runner.home, '.local', 'share', 'Steam')
-  if (existsSync(join(steam, 'steamcmd'))) return
+  const docker = onPath('docker')
+  if (docker === undefined || existsSync(join(steam, 'steamcmd'))) return
 
   mkdirSync(steam, { recursive: true })
   const owner = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`
-  const copy = `cp -a '${IMAGE_STEAM}/.' '${steam}/' && chown -R ${owner} '${runner.home}'`
-  const r = spawnSync('docker', [
+  const step = (tool: string, args: string[]): SpawnSyncReturns<string> => spawnSync(docker, [
     'run', '--rm', '-v', `${runner.home}:${runner.home}`,
-    '--entrypoint', 'sh', STEAMCMD_IMAGE, '-c', copy,
+    '--entrypoint', tool, STEAMCMD_IMAGE, ...args,
   ], { encoding: 'utf8' })
-  if (r.status !== 0) {
-    warn(`could not reuse the image's steamcmd, so it will update itself: ${r.stderr ?? r.error?.message ?? ''}`)
+
+  const failed = [
+    step('cp', ['-a', `${IMAGE_STEAM}/.`, `${steam}/`]),
+    step('chown', ['-R', owner, runner.home]),
+  ].find((r) => r.status !== 0)
+  if (failed !== undefined) {
+    warn(`could not reuse the image's steamcmd, so it will update itself: ${failed.stderr ?? ''}`)
   }
 }
 
