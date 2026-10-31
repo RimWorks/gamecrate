@@ -7,6 +7,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { warn } from '../cli/output'
 import { expandHome } from '../config/load'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
@@ -471,7 +472,15 @@ export async function publishedBuildId(
   }
   if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed()
   if (STEAM_UNREACHABLE.test(output)) throw steamUnreachable(appId)
-  return buildIdFor(output, branch)
+  const found = buildIdFor(output, branch)
+  if (found === null) warn(`steam named no buildid for "${branch}". steamcmd said: ${lastLines(output, 4)}`)
+  return found
+}
+
+/** The tail of a captured run, joined onto one line so a log keeps it together. */
+function lastLines(output: string, count: number): string {
+  const lines = output.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  return lines.slice(-count).join(' | ')
 }
 
 /**

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { useSink } from '../src/channels'
 import {
   accountFile, appDownloadRoot, buildIdFor, downloadApp, publishedBuildId, steamHome,
 } from '../src/mods/steamcmd'
@@ -316,6 +317,22 @@ describe('publishedBuildId', () => {
     }
     expect(thrown?.code).toBe(Exit.Unavailable)
     expect(thrown?.message).toContain('steam did not answer')
+  })
+
+  test('a null buildid quotes what steamcmd said, so the reason is not lost', async () => {
+    const { cfg } = await fake()
+    const seen: string[] = []
+    const probe = useSink({ write: (_c, chunk) => void seen.push(String(chunk)), close() {} })
+    let found: string | null
+    try {
+      found = await publishedBuildId(cfg, 294100, 'nosuch')
+    } finally {
+      probe.close()
+    }
+    expect(found).toBeNull()
+    const said = seen.join('')
+    expect(said).toContain('steam named no buildid for "nosuch"')
+    expect(said).toContain('steamcmd said:')
   })
 
   test('a failed bootstrap throws too, so the gate never reads it as an unknown buildid', async () => {
