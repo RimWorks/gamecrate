@@ -7,6 +7,15 @@
 
 [ -n "$HOME" ] && mkdir -p "$HOME" && printf '%s\n' "$*" > "$HOME/argv.txt"
 
+if [ -n "$FAKE_BOOTSTRAP_FAIL" ]; then
+  printf 'ILocalize::AddFile() failed to load file "public/steambootstrapper_english.txt".\n'
+  printf '[  0%%] Checking for available update...\n[----] Verifying installation...\n'
+  printf '[  0%%] Downloading Update...\n[  0%%] Checking for available update...\n'
+  printf '[----] !!! Fatal Error: Steamcmd needs to be online to update.\t'
+  printf ' Please confirm your network connection and try again.\n'
+  exit "${FAKE_EXIT:-1}"
+fi
+
 if [ -n "$FAKE_STEAM_TIMEOUT" ]; then
   printf 'Logging in user "tester" [U:1:48626632] to Steam Public...OK\n'
   printf 'Waiting for client config...ERROR! Info request for AppId 7 returned error Timeout.\n'

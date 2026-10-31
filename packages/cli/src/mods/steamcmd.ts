@@ -7,6 +7,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
+import { warn } from '../cli/output'
 import { expandHome } from '../config/load'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
@@ -332,12 +333,22 @@ const appState = (id: number) => new RegExp(`Error! App '${id}' state is (0x[0-9
 // like a bad branch, so it is checked before the branch message
 const LOGIN_FAILED = /Login Failure|FAILED \(Invalid Password\)|Account Logon Denied|Two-factor/i
 const STEAM_UNREACHABLE = /Info request for AppId \d+ returned error Timeout|Failed to load platform info/i
+const BOOTSTRAP_FAILED = /Steamcmd needs to be online to update/i
 
 function steamUnreachable(appId: number): GamecrateError {
   return new GamecrateError(
     `steam did not answer for app ${appId}`,
     Exit.Unavailable,
     'steam was slow or down, so nothing local is wrong. retry in a few minutes',
+  )
+}
+
+function bootstrapFailed(): GamecrateError {
+  return new GamecrateError(
+    'steamcmd could not install its own update',
+    Exit.Unavailable,
+    'it self-updates on first run and that download did not finish. the branch and the password '
+    + 'were never reached, so retry in a few minutes',
   )
 }
 
@@ -395,6 +406,7 @@ export async function downloadApp(config: RootConfig, opts: {
   }
 
   if (appOk(opts.steamAppId).test(output)) return { dir, warnings: [] }
+  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed()
   if (LOGIN_FAILED.test(output)) {
     throw new GamecrateError(
       `the steam login failed for ${user}`,
@@ -458,8 +470,17 @@ export async function publishedBuildId(
   } finally {
     await release()
   }
+  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed()
   if (STEAM_UNREACHABLE.test(output)) throw steamUnreachable(appId)
-  return buildIdFor(output, branch)
+  const found = buildIdFor(output, branch)
+  if (found === null) warn(`steam named no buildid for "${branch}". steamcmd said: ${lastLines(output, 4)}`)
+  return found
+}
+
+/** The tail of a captured run, joined onto one line so a log keeps it together. */
+function lastLines(output: string, count: number): string {
+  const lines = output.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  return lines.slice(-count).join(' | ')
 }
 
 /**

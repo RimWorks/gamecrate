@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { status } from '../cli/output'
+import { status, warn } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { pickExecutable } from '../executable'
@@ -87,6 +87,8 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
     const published = await publishedBuildId(opts.config, input.steamAppId, branch.name)
       .catch((error: unknown) => {
         if (isSteamUnavailable(error)) throw error
+        const said = error instanceof Error ? error.message : String(error)
+        warn(`steam gave no buildid for ${branch.name}, so this cell cannot skip: ${said}`)
         return null
       })
     // per branch, because a branch is a different set of files
