@@ -211,6 +211,7 @@ describe('downloadApp', () => {
     expect(thrown?.message).not.toContain('public')
     expect(thrown?.detail).toContain('retry')
     expect(thrown?.detail).not.toContain('may not exist')
+    expect(thrown?.detail).toContain('Manifest download: failed')
   })
 
   test('releases the lock when steamcmd fails', async () => {

@@ -8,6 +8,11 @@
 [ -n "$HOME" ] && mkdir -p "$HOME" && printf '%s\n' "$*" > "$HOME/argv.txt"
 
 if [ -n "$FAKE_BOOTSTRAP_FAIL" ]; then
+  mkdir -p "$HOME/Steam/logs"
+  {
+    printf '[2026-10-31 12:00:00] Downloading manifest: https://client-update.akamai.steamstatic.com/x\n'
+    printf '[2026-10-31 12:00:20] Manifest download: failed, 0 bytes\n'
+  } > "$HOME/Steam/logs/bootstrap_log.txt"
   printf 'ILocalize::AddFile() failed to load file "public/steambootstrapper_english.txt".\n'
   printf '[  0%%] Checking for available update...\n[----] Verifying installation...\n'
   printf '[  0%%] Downloading Update...\n[  0%%] Checking for available update...\n'

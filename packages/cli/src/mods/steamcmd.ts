@@ -343,13 +343,27 @@ function steamUnreachable(appId: number): GamecrateError {
   )
 }
 
-function bootstrapFailed(): GamecrateError {
+const BOOTSTRAP_LOGS = [
+  join('Steam', 'logs', 'bootstrap_log.txt'),
+  join('.steam', 'logs', 'bootstrap_log.txt'),
+  join('.local', 'share', 'Steam', 'logs', 'bootstrap_log.txt'),
+]
+
+function bootstrapFailed(home: string): GamecrateError {
   return new GamecrateError(
     'steamcmd could not install its own update',
     Exit.Unavailable,
-    'it self-updates on first run and that download did not finish. the branch and the password '
-    + 'were never reached, so retry in a few minutes',
+    'it self-updates on first run and that download did not finish, so the branch and the '
+    + `password were never reached. retry in a few minutes. its own log says: ${bootstrapLog(home)}`,
   )
+}
+
+function bootstrapLog(home: string): string {
+  for (const name of BOOTSTRAP_LOGS) {
+    const path = join(home, name)
+    if (existsSync(path)) return lastLines(readFileSync(path, 'utf8'), 6)
+  }
+  return `nothing, no bootstrap log under ${home}`
 }
 
 /** True when steam never answered, which is nobody's local problem and worth retrying. */
@@ -406,7 +420,7 @@ export async function downloadApp(config: RootConfig, opts: {
   }
 
   if (appOk(opts.steamAppId).test(output)) return { dir, warnings: [] }
-  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed()
+  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed(steamHome(opts.dataRoot))
   if (LOGIN_FAILED.test(output)) {
     throw new GamecrateError(
       `the steam login failed for ${user}`,
@@ -470,7 +484,7 @@ export async function publishedBuildId(
   } finally {
     await release()
   }
-  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed()
+  if (BOOTSTRAP_FAILED.test(output)) throw bootstrapFailed(steamHome(config.dataRoot))
   if (STEAM_UNREACHABLE.test(output)) throw steamUnreachable(appId)
   const found = buildIdFor(output, branch)
   if (found === null) warn(`steam named no buildid for "${branch}". steamcmd said: ${lastLines(output, 4)}`)
