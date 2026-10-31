@@ -1,7 +1,8 @@
-import { accessSync, constants, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { expandHome } from '../config/load'
+import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { currentLanes } from '../concurrency'
 import { Exit, GamecrateError } from '../types'
@@ -133,20 +134,3 @@ function sizeOf(dir: string): number {
   }
 }
 
-function executable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return statSync(path).isFile()
-  } catch {
-    return false
-  }
-}
-
-function onPath(name: string): string | undefined {
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (dir.length === 0) continue
-    const candidate = join(dir, name)
-    if (executable(candidate)) return candidate
-  }
-  return undefined
-}

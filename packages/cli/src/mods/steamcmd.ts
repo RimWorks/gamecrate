@@ -2,14 +2,15 @@ import { spawnSync } from 'node:child_process'
 import type { SpawnSyncReturns } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
-  accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
-import { delimiter, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { warn } from '../cli/output'
 import { expandHome } from '../config/load'
+import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig } from '../types'
@@ -137,23 +138,6 @@ function prewarm(runner: SteamcmdRunner): void {
   }
 }
 
-function executable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return statSync(path).isFile()
-  } catch {
-    return false
-  }
-}
-
-function onPath(name: string): string | undefined {
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (dir.length === 0) continue
-    const candidate = join(dir, name)
-    if (executable(candidate)) return candidate
-  }
-  return undefined
-}
 
 /** The published file id out of a workshop url, or undefined if it is not one. */
 export function workshopUrlId(url: string | undefined): string | undefined {
