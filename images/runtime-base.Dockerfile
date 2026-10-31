@@ -38,6 +38,8 @@ RUN apt-get update \
     done \
     && rm -rf /var/lib/apt/lists/*
 
+RUN printf 'pcm.!default {\n    type null\n}\nctl.!default {\n    type null\n}\n' > /etc/asound.conf
+
 ENV LANG=C.UTF-8
 
 # supplies a display and the native deps. a game with no headless mode still needs
