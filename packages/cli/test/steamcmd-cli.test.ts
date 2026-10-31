@@ -1,7 +1,8 @@
 import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const built: { count: number; push?: boolean; load?: boolean } = { count: 0 }
 
@@ -27,14 +28,16 @@ await mock.module('../src/image/input', () => ({
   resolveSteamBuildInput: () => Promise.resolve({}),
 }))
 
-const { resolveSession, sessionPaths, steamBuildCommand } = await import('../src/cli/steam')
+const { resolveSession, sessionPaths, steamBuildCommand, steamLogin } = await import('../src/cli/steam')
 import type { SteamContext } from '../src/cli/steam'
 const { resolveImage } = await import('../src/image/input')
 const { accountFile, steamHome } = await import('../src/mods/steamcmd')
+const { findDepotDownloaderToken } = await import('../src/mods/depotdownloader')
 import { Exit, GamecrateError } from '../src/types'
 import type { ParsedArgs, RootConfig } from '../src/types'
 
 const ORIGINAL_HOME = process.env.HOME
+const ORIGINAL_PATH = process.env.PATH
 afterAll(() => {
   process.env.HOME = ORIGINAL_HOME
 })
@@ -46,6 +49,8 @@ afterEach(() => {
   delete process.env.STEAM_CONFIG_VDF
   delete process.env.STEAM_CONFIG_VDF_B64
   delete process.env.STEAM_USERNAME
+  delete process.env.FAKE_NO_TOKEN
+  process.env.PATH = ORIGINAL_PATH
 })
 
 function fails(run: () => unknown): GamecrateError {
@@ -301,5 +306,80 @@ describe('resolveImage', () => {
     expect(resolveImage({ push: true }, 'rimworld', 'ghcr.io/aaron/rimworld')).toBe(
       'ghcr.io/aaron/rimworld',
     )
+  })
+})
+
+describe('steamLogin', () => {
+  const FAKE_DD = fileURLToPath(new URL('./fixtures/fake-depotdownloader.sh', import.meta.url))
+
+  function fakeSteamcmd(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'gamecrate-bin-'))
+    const path = join(dir, 'steamcmd')
+    writeFileSync(
+      path,
+      '#!/bin/sh\nPATH=/usr/bin:/bin\nmkdir -p "$HOME/.steam/config"\nprintf session > "$HOME/.steam/config/config.vdf"\nexit 0\n',
+      { mode: 0o755 },
+    )
+    process.env.PATH = dir
+    return path
+  }
+
+  function login(config: RootConfig, game?: string): Promise<number> {
+    const ctx: SteamContext = { config, plugins: new Map(), cwd: '/nowhere' }
+    const args = { subcommand: 'steam', subverb: 'login', username: 'tester', game } as ParsedArgs
+    return steamLogin(args, ctx)
+  }
+
+  test('signs depotdownloader in beside steamcmd and keeps its token under the steam home', async () => {
+    const { config } = tree()
+    const cfg = {
+      ...config,
+      games: { rimworld: { steamAppId: 294100 } },
+      steamcmd: { path: fakeSteamcmd() },
+      depotdownloader: { path: FAKE_DD },
+    } as unknown as RootConfig
+    expect(await login(cfg)).toBe(Exit.Ok)
+    expect(readFileSync(accountFile(cfg.dataRoot), 'utf8').trim()).toBe('tester')
+    const token = findDepotDownloaderToken(cfg.dataRoot)
+    expect(token?.startsWith(steamHome(cfg.dataRoot))).toBe(true)
+    const argv = readFileSync(join(steamHome(cfg.dataRoot), 'argv.txt'), 'utf8')
+    expect(argv).toContain('-username tester -remember-password -app 294100')
+    expect(argv).toContain('-manifest-only')
+    const scratch = readdirSync(steamHome(cfg.dataRoot)).filter((name) => name.startsWith('depotdownloader-login-'))
+    expect(scratch).toEqual([])
+  })
+
+  test('with no depotdownloader the login is steamcmd alone', async () => {
+    const { config } = tree()
+    const cfg = { ...config, steamcmd: { path: fakeSteamcmd() } } as unknown as RootConfig
+    expect(await login(cfg)).toBe(Exit.Ok)
+    expect(readFileSync(accountFile(cfg.dataRoot), 'utf8').trim()).toBe('tester')
+    expect(findDepotDownloaderToken(cfg.dataRoot)).toBeUndefined()
+  })
+
+  test('a depotdownloader run that saves no token fails the login and says so', async () => {
+    const { config } = tree()
+    const cfg = {
+      ...config,
+      games: { rimworld: { steamAppId: 294100 } },
+      steamcmd: { path: fakeSteamcmd() },
+      depotdownloader: { path: FAKE_DD },
+    } as unknown as RootConfig
+    process.env.FAKE_NO_TOKEN = '1'
+    await expect(login(cfg)).rejects.toThrow(/depotdownloader login did not leave a token/)
+  })
+
+  test('depotdownloader needs a game to log in through, and asks for --game before any prompt', async () => {
+    const { config } = tree()
+    const cfg = {
+      ...config,
+      games: { rimworld: {} },
+      steamcmd: { path: fakeSteamcmd() },
+      depotdownloader: { path: FAKE_DD },
+    } as unknown as RootConfig
+    const error = await login(cfg).then(() => null, (e: unknown) => e as GamecrateError)
+    expect(error?.code).toBe(Exit.Usage)
+    expect(error?.detail).toContain('--game')
+    expect(sessionPaths(steamHome(cfg.dataRoot)).some((path) => existsSync(path))).toBe(false)
   })
 })

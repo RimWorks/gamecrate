@@ -347,7 +347,7 @@ const LOGIN_FAILED = /Login Failure|FAILED \(Invalid Password\)|Account Logon De
 const STEAM_UNREACHABLE = /Info request for AppId \d+ returned error Timeout|Failed to load platform info/i
 const BOOTSTRAP_FAILED = /Steamcmd needs to be online to update/i
 
-function steamUnreachable(appId: number): GamecrateError {
+export function steamUnreachable(appId: number): GamecrateError {
   return new GamecrateError(
     `steam did not answer for app ${appId}`,
     Exit.Unavailable,
@@ -504,7 +504,7 @@ export async function publishedBuildId(
 }
 
 /** The tail of a captured run, joined onto one line so a log keeps it together. */
-function lastLines(output: string, count: number): string {
+export function lastLines(output: string, count: number): string {
   const lines = output.split('\n').map((line) => line.trim()).filter((line) => line !== '')
   return lines.slice(-count).join(' | ')
 }

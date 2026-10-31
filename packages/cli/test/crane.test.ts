@@ -95,7 +95,7 @@ async function runs(argvFile: string): Promise<string[][]> {
 }
 
 describe('craneAppend', () => {
-  test('the whole-game case carries both excludes and tars the staged prefix', async () => {
+  test('the whole-game case carries every built-in exclude and tars the staged prefix', async () => {
     const { argvFile } = await fakeDocker()
     const gameDir = await mkdtemp(join(tmp, 'game-'))
     const out = join(await mkdtemp(join(tmp, 'layers-')), 'linux-1.6.4871.tar')
@@ -111,6 +111,7 @@ describe('craneAppend', () => {
     const script = await readFile(argvFile, 'utf8')
     expect(script).toContain('--exclude=game/steamapps')
     expect(script).toContain('--exclude=game/lost+found')
+    expect(script).toContain('--exclude=game/.DepotDownloader')
     expect(script).not.toContain('--transform')
     expect(script).toContain("'-C' '/stage'")
     expect(script).toContain('-b')
@@ -139,6 +140,7 @@ describe('craneAppend', () => {
     expect(script).toContain('--exclude=game/Data/Anomaly')
     expect(script).toContain('--exclude=game/Data/Odyssey')
     expect(script).toContain('--exclude=game/steamapps')
+    expect(script).toContain('--exclude=game/.DepotDownloader')
   })
 
   test('a base-less append still carries the tag crane requires', async () => {

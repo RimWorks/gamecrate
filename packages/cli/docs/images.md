@@ -26,6 +26,12 @@ gamecrate steam build --game rimworld
 Every build loads the image into the local docker daemon. Adding `--push` also sends it to a
 registry, so CI or another machine can pull it.
 
+A signed-in `steamcmd` also copies every workshop item your account subscribes to into the
+download. With [DepotDownloader](https://github.com/SteamRE/DepotDownloader) on `PATH` as
+`depotdownloader`, or named by `depotdownloader.path`, `steam build` downloads the depots alone
+and `steam login` signs it in too. `steamcmd` still answers the build id check and downloads
+workshop items.
+
 The name comes from `--image`, or `games.<game>.image.ref` in the config. It includes the
 registry, so `--image ghcr.io/you/rimworld-game` pushes to GitHub's registry.
 
@@ -128,4 +134,6 @@ process list.
 - `GAMECRATE_REGISTRY_PASSWORD` is the registry token for `--push`.
 
 A beta password reaches `steamcmd` through a `+runscript` file at mode 0600, so it stays out of the
-argument list as well. A `--push` with no registry credentials fails before the download starts.
+argument list as well. DepotDownloader has no file or environment form for a branch password.
+With it, the password sits on its command line for the length of the download. A `--push` with no
+registry credentials fails before the download starts.
