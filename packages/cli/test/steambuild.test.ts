@@ -154,6 +154,9 @@ const realDepotDownloader = { ...(await import('../src/mods/depotdownloader')) }
 await mock.module('../src/mods/depotdownloader', () => ({
   ...realDepotDownloader,
   resolveDepotDownloader: () => state.depotdownloader,
+  currentBuildId: () => state.publishedThrows === null
+    ? Promise.resolve(state.published)
+    : Promise.reject(state.publishedThrows),
   downloadAppWithDepotDownloader: (binary: string, _config: unknown, opts: { branch: string; depot?: string }) => {
     state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
     state.calls.push(`depotdownloader ${binary} ${opts.branch}/${opts.depot ?? 'default'}`)

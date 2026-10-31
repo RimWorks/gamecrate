@@ -78,7 +78,9 @@ unscoped. A bare `stable` follows whichever branch you point it at.
 ## Skipping unnecessary builds
 
 gamecrate compares the build id Steam publishes against the `steam.buildid` label on the image
-already there. When they match, the cell skips and downloads nothing, saving time.
+already there. When they match, the cell skips and downloads nothing, saving time. With
+DepotDownloader installed, gamecrate reads that build id through it, so a fresh runner never
+starts `steamcmd` at all.
 
 A build skipped by the buildid gate still re-applies its moving tags to the image already there,
 so an alias from `--alias` lands. A `base: none` variant built without `--push` is skipped before
@@ -87,8 +89,9 @@ the tag step, and lists no tags, because it builds nothing to tag.
 ## Checking for a newer build
 
 A launch compares the image's `steam.buildid` label against what Steam publishes, then offers to
-rebuild. The check costs about four seconds and needs a Steam session, so it runs at most once every
-six hours per image. An image gamecrate did not build is never checked.
+rebuild. The check costs a few seconds and needs a Steam session, so it runs at most once every six
+hours per image. An image gamecrate did not build is never checked. A private branch needs its
+password variable set at launch too, or the check warns and continues.
 
 ```json
 { "image": { "ref": "ghcr.io/you/rimworld-game", "updates": { "check": true, "everyHours": 6 } } }

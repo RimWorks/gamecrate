@@ -5,7 +5,7 @@
 # FAKE_NO_TOKEN no stored login: the prompt, then the crash a real one dies with when stdin is closed
 # FAKE_TOKEN_REJECTED the stored token expired. FAKE_LOGIN_FAIL one EResult name
 # FAKE_BRANCH_FAIL the branch password was wrong. FAKE_NOT_OWNED the account lacks the app
-# FAKE_EXIT the exit code
+# FAKE_EXIT the exit code. FAKE_BUILDID what a -manifest-only run with no -dir names its directory
 
 PATH="/usr/bin:/bin:$PATH"
 
@@ -74,15 +74,20 @@ if [ -n "$FAKE_BRANCH_FAIL" ]; then
   printf 'Error: Password was invalid for branch %s (or the branch does not exist)\n' "$branch"
   exit "${FAKE_EXIT:-1}"
 fi
+printf "Using app branch: '%s'.\n" "$branch"
+if [ -n "$manifest_only" ]; then
+  # with no -dir a real one names the install dir after the branch's buildid, under the cwd
+  [ -z "$dir" ] && dir="depots/294103/${FAKE_BUILDID:-26340439}"
+  mkdir -p "$dir/.DepotDownloader"
+  printf 'Manifest 3402513235443928324 (public)\n' > "$dir/manifest_294103_3402513235443928324.txt"
+  printf 'Total downloaded: 0 bytes (0 bytes uncompressed) from 1 depots\n'
+  exit "${FAKE_EXIT:-0}"
+fi
 if [ -z "$dir" ]; then
   printf 'FAKE: no -dir, refusing to guess a layout\n' >&2
   exit 64
 fi
 mkdir -p "$dir"
-if [ -n "$manifest_only" ]; then
-  printf 'Manifest 3402513235443928324 (public)\n' > "$dir/manifest_294103_3402513235443928324.txt"
-  exit "${FAKE_EXIT:-0}"
-fi
 mkdir -p "$dir/.DepotDownloader"
 : > "$dir/.DepotDownloader/depot.config"
 printf '1.6.4871 rev598\n' > "$dir/Version.txt"
