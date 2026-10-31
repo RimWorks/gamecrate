@@ -1,14 +1,16 @@
 import { spawnSync } from 'node:child_process'
+import type { SpawnSyncReturns } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
-  accessSync, constants, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
-import { delimiter, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { warn } from '../cli/output'
 import { expandHome } from '../config/load'
+import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 import type { GameConfig, RootConfig } from '../types'
@@ -23,7 +25,7 @@ export const STEAMCMD_IMAGE = 'steamcmd/steamcmd'
  */
 export type SteamcmdRunner =
   | { kind: 'host'; argv: string[]; env: Record<string, string> }
-  | { kind: 'docker'; argv: string[]; env: Record<string, string> }
+  | { kind: 'docker'; argv: string[]; env: Record<string, string>; home: string }
 
 /** HOME for steamcmd. Everything it writes hangs off here, so it is per-dataRoot, not the user's. */
 export function steamHome(dataRoot: string): string {
@@ -102,6 +104,7 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
         STEAMCMD_IMAGE,
       ],
       env: {},
+      home,
     }
   }
   throw new GamecrateError(
@@ -111,23 +114,30 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
   )
 }
 
-function executable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return statSync(path).isFile()
-  } catch {
-    return false
+const IMAGE_STEAM = '/root/.local/share/Steam'
+
+function prewarm(runner: SteamcmdRunner): void {
+  if (runner.kind !== 'docker') return
+  const steam = join(runner.home, '.local', 'share', 'Steam')
+  const docker = onPath('docker')
+  if (docker === undefined || existsSync(join(steam, 'steamcmd'))) return
+
+  mkdirSync(steam, { recursive: true })
+  const owner = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`
+  const step = (tool: string, args: string[]): SpawnSyncReturns<string> => spawnSync(docker, [
+    'run', '--rm', '-v', `${runner.home}:${runner.home}`,
+    '--entrypoint', tool, STEAMCMD_IMAGE, ...args,
+  ], { encoding: 'utf8' })
+
+  const failed = [
+    step('cp', ['-a', `${IMAGE_STEAM}/.`, `${steam}/`]),
+    step('chown', ['-R', owner, runner.home]),
+  ].find((r) => r.status !== 0)
+  if (failed !== undefined) {
+    warn(`could not reuse the image's steamcmd, so it will update itself: ${failed.stderr ?? ''}`)
   }
 }
 
-function onPath(name: string): string | undefined {
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (dir.length === 0) continue
-    const candidate = join(dir, name)
-    if (executable(candidate)) return candidate
-  }
-  return undefined
-}
 
 /** The published file id out of a workshop url, or undefined if it is not one. */
 export function workshopUrlId(url: string | undefined): string | undefined {
@@ -280,6 +290,7 @@ async function spawnSteamcmdLive(
   runner: SteamcmdRunner,
   onChunk?: (text: string) => void,
 ): Promise<string> {
+  prewarm(runner)
   let text: string
   try {
     ({ text } = await captureLive(argv, { ...process.env, ...runner.env }, onChunk))
@@ -295,6 +306,7 @@ async function spawnSteamcmdLive(
 
 /** argv already carries runner.argv; the runner is here for its env. */
 function spawnSteamcmd(argv: string[], runner: SteamcmdRunner): string {
+  prewarm(runner)
   const r = spawnSync(argv[0] as string, argv.slice(1), {
     encoding: 'utf8',
     env: { ...process.env, ...runner.env },
