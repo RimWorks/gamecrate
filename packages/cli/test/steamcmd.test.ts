@@ -13,6 +13,7 @@ const {
   STEAMCMD_IMAGE,
   downloadItems,
   downloadRoot,
+  publishedBuildId,
   removeDownloads,
   resolveSteamcmd,
   steamHome,
@@ -178,6 +179,22 @@ describe('resolveSteamcmd', () => {
       STEAMCMD_IMAGE,
     ])
     expect(existsSync(home)).toBe(false)
+  })
+
+  test('reuses the image steamcmd before running, so it never self-updates', async () => {
+    const dir = await mkdtemp(join(tmp, 'rec-'))
+    const log = join(dir, 'argv.log')
+    await writeFile(join(dir, 'docker'), `#!/bin/sh\nprintf '%s\\n' "$*" >> ${log}\nexit 0\n`)
+    await chmod(join(dir, 'docker'), 0o755)
+    process.env.PATH = dir
+    process.env.STEAM_USERNAME = 'tester'
+
+    await publishedBuildId(config(), 294100, 'public')
+
+    const seen = await readFile(log, 'utf8')
+    expect(seen).toContain('/root/.local/share/Steam/.')
+    expect(seen).toContain('chown -R')
+    expect(existsSync(join(tmp, 'data', 'steam', '.local', 'share', 'Steam'))).toBe(true)
   })
 
   test('names all three places when none resolve', async () => {

@@ -23,7 +23,7 @@ export const STEAMCMD_IMAGE = 'steamcmd/steamcmd'
  */
 export type SteamcmdRunner =
   | { kind: 'host'; argv: string[]; env: Record<string, string> }
-  | { kind: 'docker'; argv: string[]; env: Record<string, string> }
+  | { kind: 'docker'; argv: string[]; env: Record<string, string>; home: string }
 
 /** HOME for steamcmd. Everything it writes hangs off here, so it is per-dataRoot, not the user's. */
 export function steamHome(dataRoot: string): string {
@@ -102,6 +102,7 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
         STEAMCMD_IMAGE,
       ],
       env: {},
+      home,
     }
   }
   throw new GamecrateError(
@@ -109,6 +110,25 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
     Exit.Environment,
     `steamcmd.path is unset, steamcmd is not on PATH, and docker is not there to run ${STEAMCMD_IMAGE}`,
   )
+}
+
+const IMAGE_STEAM = '/root/.local/share/Steam'
+
+function prewarm(runner: SteamcmdRunner): void {
+  if (runner.kind !== 'docker') return
+  const steam = join(runner.home, '.local', 'share', 'Steam')
+  if (existsSync(join(steam, 'steamcmd'))) return
+
+  mkdirSync(steam, { recursive: true })
+  const owner = `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`
+  const copy = `cp -a '${IMAGE_STEAM}/.' '${steam}/' && chown -R ${owner} '${runner.home}'`
+  const r = spawnSync('docker', [
+    'run', '--rm', '-v', `${runner.home}:${runner.home}`,
+    '--entrypoint', 'sh', STEAMCMD_IMAGE, '-c', copy,
+  ], { encoding: 'utf8' })
+  if (r.status !== 0) {
+    warn(`could not reuse the image's steamcmd, so it will update itself: ${r.stderr ?? r.error?.message ?? ''}`)
+  }
 }
 
 function executable(path: string): boolean {
@@ -280,6 +300,7 @@ async function spawnSteamcmdLive(
   runner: SteamcmdRunner,
   onChunk?: (text: string) => void,
 ): Promise<string> {
+  prewarm(runner)
   let text: string
   try {
     ({ text } = await captureLive(argv, { ...process.env, ...runner.env }, onChunk))
@@ -295,6 +316,7 @@ async function spawnSteamcmdLive(
 
 /** argv already carries runner.argv; the runner is here for its env. */
 function spawnSteamcmd(argv: string[], runner: SteamcmdRunner): string {
+  prewarm(runner)
   const r = spawnSync(argv[0] as string, argv.slice(1), {
     encoding: 'utf8',
     env: { ...process.env, ...runner.env },
