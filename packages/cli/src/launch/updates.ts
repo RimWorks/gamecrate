@@ -5,8 +5,9 @@ import { dirname, join } from 'node:path'
 import { status, warn } from '../cli/output'
 import { decideGate } from '../image/gate'
 import { steamBuild } from '../image/build'
-import { resolveSteamBuildInput } from '../image/input'
-import { isSteamUnavailable, publishedBuildId } from '../mods/steamcmd'
+import { branchPasswordIfSet, resolveSteamBuildInput } from '../image/input'
+import { currentBuildId } from '../mods/depotdownloader'
+import { isSteamUnavailable } from '../mods/steamcmd'
 import { imageDigest } from './prepare'
 import type { ImageFacts } from './image'
 import type { ParsedArgs, RootConfig, UpdateCheckSpec } from '../types'
@@ -88,7 +89,8 @@ export async function offerRebuild(input: {
 
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const built = await resolveSteamBuildInput(game, config, { plugins }, input.cwd, input.configFile)
-  const published = await publishedBuildId(config, built.steamAppId, facts.branch!)
+  const branch = built.branches.find((b) => b.name === facts.branch) ?? { name: facts.branch! }
+  const published = await currentBuildId(config, built.steamAppId, branch.name, branchPasswordIfSet(branch))
     .catch((error: unknown) => {
       if (isSteamUnavailable(error)) return null
       throw error

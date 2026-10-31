@@ -1,10 +1,26 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { lastCheckedAt, recordCheck, shouldCheck } from '../src/launch/updates'
+import * as realInput from '../src/image/input'
+import * as realDepotDownloader from '../src/mods/depotdownloader'
 import type { ImageFacts } from '../src/launch/image'
+
+const launch = { passwords: [] as (string | undefined)[] }
+await mock.module('../src/launch/prepare', () => ({ imageDigest: async () => 'sha256:img' }))
+await mock.module('../src/image/input', () => ({
+  ...realInput,
+  resolveSteamBuildInput: async () => ({ steamAppId: 294100, branches: [{ name: 'unstable', password: true }] }),
+}))
+await mock.module('../src/mods/depotdownloader', () => ({
+  ...realDepotDownloader,
+  currentBuildId: async (_config: unknown, _appId: number, _branch: string, password?: string) => {
+    launch.passwords.push(password)
+    return null
+  },
+}))
+const { lastCheckedAt, offerRebuild, recordCheck, shouldCheck } = await import('../src/launch/updates')
 
 const ours: ImageFacts = {
   present: true,
@@ -82,6 +98,37 @@ describe('the stamp file', () => {
     } finally {
       if (before === undefined) delete process.env['XDG_CACHE_HOME']
       else process.env['XDG_CACHE_HOME'] = before
+    }
+  })
+})
+
+describe('offerRebuild', () => {
+  test('a private branch with no password at launch is checked without one, and asks nothing', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'dg-updates-'))
+    const before = process.env['XDG_CACHE_HOME']
+    process.env['XDG_CACHE_HOME'] = cache
+    delete process.env['STEAM_BRANCH_PASSWORD_UNSTABLE']
+    delete process.env['STEAM_BRANCH_PASSWORD']
+    let asked = 0
+    try {
+      await offerRebuild({
+        game: 'rimworld',
+        config: { dataRoot: cache, games: { rimworld: { image: { ref: 'ghcr.io/x/game' } } } } as never,
+        args: {} as never,
+        facts: { ...ours, branch: 'unstable' },
+        cwd: cache,
+        ask: async () => {
+          asked += 1
+          return false
+        },
+      })
+      expect(launch.passwords).toEqual([undefined])
+      expect(asked).toBe(0)
+      expect(lastCheckedAt('sha256:img')).not.toBeNull()
+    } finally {
+      if (before === undefined) delete process.env['XDG_CACHE_HOME']
+      else process.env['XDG_CACHE_HOME'] = before
+      await rm(cache, { recursive: true, force: true })
     }
   })
 })

@@ -7,8 +7,8 @@ import { status, warn } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { pickExecutable } from '../executable'
-import { downloadAppWithDepotDownloader, resolveDepotDownloader } from '../mods/depotdownloader'
-import { downloadApp, isSteamUnavailable, publishedBuildId, steamHome } from '../mods/steamcmd'
+import { currentBuildId, downloadAppWithDepotDownloader, resolveDepotDownloader } from '../mods/depotdownloader'
+import { downloadApp, isSteamUnavailable, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
 import { Exit, GamecrateError } from '../types'
 import type { RootConfig, SteamBranch, SteamVariant } from '../types'
@@ -16,7 +16,7 @@ import type { RootConfig, SteamBranch, SteamVariant } from '../types'
 import { resolveBase } from './base'
 import { checkRegistryAuthEarly, craneAppend, craneDigest, craneLabels, craneMutateLabels, cranePush, craneTag } from './crane'
 import { decideGate } from './gate'
-import { branchPassword } from './input'
+import { branchPassword, branchPasswordIfSet } from './input'
 import type { SteamBuildInput } from './input'
 import { sanitizeVersion, tagsFor } from './tags'
 
@@ -85,7 +85,7 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   )
 
   for (const branch of branches) {
-    const published = await publishedBuildId(opts.config, input.steamAppId, branch.name)
+    const published = await currentBuildId(opts.config, input.steamAppId, branch.name, branchPasswordIfSet(branch))
       .catch((error: unknown) => {
         if (isSteamUnavailable(error)) throw error
         const said = error instanceof Error ? error.message : String(error)

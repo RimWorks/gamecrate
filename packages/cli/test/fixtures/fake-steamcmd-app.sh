@@ -5,6 +5,8 @@
 # FAKE_APP_STATE an error state code. FAKE_UP_TO_DATE a tree that needs no transfer
 # FAKE_LOGIN_FAIL one of steam's login failure strings. FAKE_EXIT the exit code
 
+PATH="/usr/bin:/bin:$PATH"
+
 [ -n "$HOME" ] && mkdir -p "$HOME" && printf '%s\n' "$*" > "$HOME/argv.txt"
 
 if [ -n "$FAKE_BOOTSTRAP_FAIL" ]; then
