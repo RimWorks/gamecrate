@@ -7,6 +7,7 @@ import { status, warn } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { pickExecutable } from '../executable'
+import { downloadAppWithDepotDownloader, resolveDepotDownloader } from '../mods/depotdownloader'
 import { downloadApp, isSteamUnavailable, publishedBuildId, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
 import { Exit, GamecrateError } from '../types'
@@ -284,7 +285,10 @@ async function moveTags(
   }
 }
 
-/** The cached +app_update for this branch and depot. Two variants on one depot share it. */
+/**
+ * The cached download for this branch and depot, by depotdownloader when one is installed and by
+ * steamcmd otherwise. Two variants on one depot share it.
+ */
 async function download(
   input: SteamBuildInput,
   opts: SteamBuildOptions,
@@ -294,14 +298,19 @@ async function download(
   const key = ctx.variant.depot ?? 'default'
   let pending = ctx.downloads.get(key)
   if (pending === undefined) {
-    say(`downloading ${input.steamAppId} (branch ${ctx.branch.name}, depot ${key})`)
-    pending = downloadApp(opts.config, {
+    const tool = resolveDepotDownloader(opts.config)
+    const how = tool === undefined ? '' : ' with depotdownloader'
+    say(`downloading ${input.steamAppId} (branch ${ctx.branch.name}, depot ${key})${how}`)
+    const request = {
       steamAppId: input.steamAppId,
       branch: ctx.branch.name,
       depot: ctx.variant.depot,
       password: branchPassword(ctx.branch),
       dataRoot: opts.config.dataRoot,
-    })
+    }
+    pending = tool === undefined
+      ? downloadApp(opts.config, request)
+      : downloadAppWithDepotDownloader(tool, opts.config, request)
     ctx.downloads.set(key, pending)
   } else {
     say(`reusing the ${ctx.branch.name} ${key} download`)

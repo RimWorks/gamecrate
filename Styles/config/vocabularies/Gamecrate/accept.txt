@@ -58,4 +58,6 @@ cron
 crontab
 steamless
 pxsteamdl
+depotdownloader
+DepotDownloader
 [Dd]ownloader

@@ -15,7 +15,9 @@ gamecrate steam login
 
 That prompts for your username, password, and any Steam Guard code, then stores it.
 `steam build` reads it and never prompts. On a runner with no session on disk, pass
-`STEAM_CONFIG_VDF_B64` instead: `steam login --print` writes it as base64 for a secret.
+`STEAM_CONFIG_VDF_B64` instead: `steam login --print` writes it as base64 for a secret. With
+DepotDownloader installed, `steam login` signs it in too, and `--print-token` writes its token
+the same way for `DEPOTDOWNLOADER_ACCOUNT_B64`.
 
 ## Build
 
@@ -25,6 +27,12 @@ gamecrate steam build --game rimworld
 
 Every build loads the image into the local docker daemon. Adding `--push` also sends it to a
 registry, so CI or another machine can pull it.
+
+A signed-in `steamcmd` also copies every workshop item your account subscribes to into the
+download. With [DepotDownloader](https://github.com/SteamRE/DepotDownloader) on `PATH` as
+`depotdownloader`, or named by `depotdownloader.path`, `steam build` downloads the depots alone
+and `steam login` signs it in too. `steamcmd` still answers the build id check and downloads
+workshop items.
 
 The name comes from `--image`, or `games.<game>.image.ref` in the config. It includes the
 registry, so `--image ghcr.io/you/rimworld-game` pushes to GitHub's registry.
@@ -122,10 +130,14 @@ process list.
 - `STEAM_CONFIG_VDF_B64` is base64 of a logged-in session, for a runner with nothing on disk.
 - `STEAM_CONFIG_VDF` is the path to a file holding that session, as base64 or as a raw
   `config.vdf`. The base64 variable outranks it.
+- `DEPOTDOWNLOADER_ACCOUNT_B64` is base64 of DepotDownloader's `account.config`, from
+  `steam login --print-token`, for a runner with nothing on disk.
 - `STEAM_BRANCH_PASSWORD_<BRANCH>` is one private beta's password. Uppercase the name, and dashes
   become underscores.
 - `GAMECRATE_REGISTRY_USER` is the registry username for `--push`.
 - `GAMECRATE_REGISTRY_PASSWORD` is the registry token for `--push`.
 
 A beta password reaches `steamcmd` through a `+runscript` file at mode 0600, so it stays out of the
-argument list as well. A `--push` with no registry credentials fails before the download starts.
+argument list as well. DepotDownloader has no file or environment form for a branch password.
+With it, the password sits on its command line for the length of the download. A `--push` with no
+registry credentials fails before the download starts.

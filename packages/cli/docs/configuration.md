@@ -43,6 +43,8 @@ key is required only once its parent is present.
 | `steamcmd.path` | `string` |  | A steamcmd executable. One that is not fails with exit `5`, rather than falling back. |
 | `pxsteamdl` | `object` |  | A parallel workshop downloader, preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`. |
 | `pxsteamdl.path` | `string` |  | A pxsteamdl executable. One that is not fails with exit `5`, rather than falling back. |
+| `depotdownloader` | `object` |  | Downloads a game for `steam build` as depots only, with no workshop sync. Preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`. |
+| `depotdownloader.path` | `string` |  | A depotdownloader executable. One that is not fails with exit `5`, rather than falling back. |
 | `prune` | `object` |  | What `gamecrate prune` deletes. Every key has a flag that overrides it for one run. |
 | `prune.keepRuns` | `number` |  | How many run log directories a profile keeps. Every launch trims to this, and so does `prune`. Default `10`. |
 | `prune.maxAgeDays` | `number` |  | How old something has to be before `prune` deletes it. Default `30`. |

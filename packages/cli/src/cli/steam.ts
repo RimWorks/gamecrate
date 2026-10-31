@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
@@ -7,6 +7,9 @@ import { createInterface } from 'node:readline/promises'
 import { namedGame } from './game'
 import { steamBuild } from '../image/build'
 import { resolveSteamBuildInput } from '../image/input'
+import {
+  depotDownloaderEnv, findDepotDownloaderToken, resolveDepotDownloader, seedDepotDownloaderToken,
+} from '../mods/depotdownloader'
 import { accountFile, resolveSteamcmd, steamAccount, steamHome } from '../mods/steamcmd'
 import type { GamePlugin } from '../plugin'
 import { Exit, GamecrateError } from '../types'
@@ -104,6 +107,7 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
 
   status(`steam session from ${resolveSession(ctx.config)}`)
   steamAccount(ctx.config.dataRoot)
+  if (seedDepotDownloaderToken(ctx.config) !== undefined) status('depotdownloader token from DEPOTDOWNLOADER_ACCOUNT_B64')
 
   const push = args.push === true
   const load = args.load !== false
@@ -150,13 +154,16 @@ export async function steamBuildCommand(args: ParsedArgs, ctx: SteamContext): Pr
 }
 
 /**
- * The one interactive path in gamecrate: steamcmd gets the TTY so it can ask for the password and
- * the 2FA code itself. Neither ever passes through an argv we build.
+ * The one interactive path in gamecrate: steamcmd, then depotdownloader when one is installed, get
+ * the TTY so each can ask for the password and the 2FA code itself. Neither ever passes through an
+ * argv we build.
  */
 export async function steamLogin(args: ParsedArgs, ctx: SteamContext): Promise<number> {
   const home = steamHome(ctx.config.dataRoot)
   mkdirSync(home, { recursive: true })
   const runner = resolveSteamcmd(ctx.config)
+  const depotdownloader = resolveDepotDownloader(ctx.config)
+  const appId = depotdownloader === undefined ? undefined : loginAppId(args, ctx.config)
   const username = args.username ?? (await prompt('steam account name: '))
   if (username === '') throw new GamecrateError('steam login needs an account name', Exit.Usage)
 
@@ -179,8 +186,52 @@ export async function steamLogin(args: ParsedArgs, ctx: SteamContext): Promise<n
   }
   writeFileSync(accountFile(ctx.config.dataRoot), `${username}\n`)
   status(`session written to ${vdf}`)
+  if (depotdownloader !== undefined) loginDepotDownloader(depotdownloader, username, appId as number, ctx.config.dataRoot)
   if (args.print === true) emit('data', `${readFileSync(vdf).toString('base64')}\n`)
+  if (args.printToken === true) {
+    const token = findDepotDownloaderToken(ctx.config.dataRoot)
+    if (token === undefined) {
+      throw new GamecrateError('no depotdownloader token to print', Exit.Environment, 'install depotdownloader and run steam login again')
+    }
+    emit('data', `${readFileSync(token).toString('base64')}\n`)
+  }
   return Exit.Ok
+}
+
+function loginAppId(args: ParsedArgs, config: RootConfig): number {
+  const name = args.game ?? Object.keys(config.games).find((game) => config.games[game]?.steamAppId !== undefined)
+  const id = name === undefined ? undefined : config.games[name]?.steamAppId
+  if (id === undefined) {
+    throw new GamecrateError(
+      'depotdownloader needs a game to log in through',
+      Exit.Usage,
+      'pass --game <name> for a game that has a steamAppId',
+    )
+  }
+  return id
+}
+
+function loginDepotDownloader(binary: string, username: string, appId: number, dataRoot: string): void {
+  const home = steamHome(dataRoot)
+  const scratch = mkdtempSync(join(home, 'depotdownloader-login-'))
+  const result = spawnSync(
+    binary,
+    ['-username', username, '-remember-password', '-app', String(appId), '-manifest-only', '-dir', scratch],
+    { stdio: 'inherit', env: { ...process.env, ...depotDownloaderEnv(dataRoot) } },
+  )
+  rmSync(scratch, { recursive: true, force: true })
+  if (result.error) {
+    throw new GamecrateError(`could not run depotdownloader: ${binary}`, Exit.Environment, result.error.message)
+  }
+  const token = findDepotDownloaderToken(dataRoot)
+  if (result.status !== 0 || token === undefined) {
+    throw new GamecrateError(
+      'depotdownloader login did not leave a token behind',
+      Exit.Environment,
+      `depotdownloader exited ${result.status ?? 'on a signal'} and wrote no account.config under ${home}`,
+    )
+  }
+  status(`depotdownloader token written to ${token}`)
 }
 
 async function prompt(question: string): Promise<string> {

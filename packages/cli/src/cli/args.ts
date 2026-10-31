@@ -297,7 +297,7 @@ export const SUBCOMMANDS: readonly SubcommandSpec[] = [
         summary: 'Save a Steam session so a build can download the game',
         usage: '',
         positionals: [],
-        flags: ['--print', '--username'],
+        flags: ['--print', '--print-token', '--username'],
       },
     },
     flags: [],
@@ -483,6 +483,7 @@ const OPTIONS: Readonly<Record<string, (cmd: Command) => unknown>> = {
   '--base': (cmd) => cmd.option('--base <ref>', 'Build on this runtime base instead of the published one'),
   '--platform': (cmd) => cmd.option('--platform <os/arch>', 'The os and arch the built manifest claims', 'linux/amd64'),
   '--print': (cmd) => cmd.option('--print', 'Also print the session as base64'),
+  '--print-token': (cmd) => cmd.option('--print-token', "Also print depotdownloader's token as base64"),
   '--username': (cmd) => cmd.option('--username <name>', 'Use this username and skip the prompt'),
   '--help': (cmd) => cmd.option('-h, --help', 'Show this help'),
 }
@@ -744,6 +745,7 @@ export function parseArgs(argv: string[], opts: ParseOptions = {}): ParsedArgs {
   out.base = values['base'] as string | undefined
   out.platform = (values['platform'] as string | undefined) ?? 'linux/amd64'
   out.print = values['print'] === true
+  out.printToken = values['print-token'] === true
   out.username = values['username'] as string | undefined
   out.olderThan = values['olderThan'] as number | undefined
   out.keep = values['keep'] as number | undefined

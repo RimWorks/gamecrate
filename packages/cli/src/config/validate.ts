@@ -556,6 +556,13 @@ const root = obj({
   })
     .optional()
     .describe('A parallel workshop downloader, preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`.'),
+  depotdownloader: obj({
+    path: str
+      .describe('A depotdownloader executable. One that is not fails with exit `5`, rather than falling back.')
+      .optional(),
+  })
+    .optional()
+    .describe('Downloads a game for `steam build` as depots only, with no workshop sync. Preferred over `steamcmd` when present. Absent looks on `PATH`, then uses `steamcmd`.'),
   prune: obj({
     keepRuns: num
       .describe('How many run log directories a profile keeps. Every launch trims to this, and so does `prune`. Default `10`.')

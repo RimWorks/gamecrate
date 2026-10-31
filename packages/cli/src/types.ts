@@ -313,6 +313,8 @@ export interface RootConfig {
   steamcmd?: { path?: string }
   /** Where the pxsteamdl binary is. Absent looks on PATH, then falls back to steamcmd. */
   pxsteamdl?: { path?: string }
+  /** Where the depotdownloader binary is. Absent looks on PATH, then falls back to steamcmd. */
+  depotdownloader?: { path?: string }
   /** What `prune` deletes, and what a launch's own run rotation keeps. */
   prune?: PruneConfig
   games: Record<string, GameConfig>
@@ -590,6 +592,7 @@ export interface ParsedArgs {
   base?: string
   platform?: string
   print?: boolean
+  printToken?: boolean
   username?: string
   /** `prune` only: one-run overrides for the `prune` config block. */
   olderThan?: number

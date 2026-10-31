@@ -227,6 +227,7 @@ export async function craneAppend(opts: {
           '/stage',
           `--exclude=${prefix}/steamapps`,
           `--exclude=${prefix}/lost+found`,
+          `--exclude=${prefix}/.DepotDownloader`,
           ...(opts.exclude ?? []).map((p) => `--exclude=${prefix}/${p}`),
           '-cf',
           layer,

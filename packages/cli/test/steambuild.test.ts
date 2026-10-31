@@ -24,6 +24,8 @@ const state = {
   /** True when the host docker config uses a credential helper the crane container cannot run. */
   credsRefused: false,
   downloads: [] as string[],
+  /** The depotdownloader binary the build finds, or none. */
+  depotdownloader: undefined as string | undefined,
   /** Every status() line, in order. */
   said: [] as string[],
   /** Every out tar craneAppend was asked for, so a test can prove each one is gone. */
@@ -148,6 +150,17 @@ await mock.module('../src/docker/run', () => {
   }
 })
 
+const realDepotDownloader = { ...(await import('../src/mods/depotdownloader')) }
+await mock.module('../src/mods/depotdownloader', () => ({
+  ...realDepotDownloader,
+  resolveDepotDownloader: () => state.depotdownloader,
+  downloadAppWithDepotDownloader: (binary: string, _config: unknown, opts: { branch: string; depot?: string }) => {
+    state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
+    state.calls.push(`depotdownloader ${binary} ${opts.branch}/${opts.depot ?? 'default'}`)
+    return Promise.resolve({ dir: state.gameDir, warnings: [] })
+  },
+}))
+
 const { steamBuild } = await import('../src/image/build')
 import type { CellResult, SteamBuildOptions } from '../src/image/build'
 
@@ -199,6 +212,7 @@ beforeEach(() => {
   state.said.length = 0
   state.tagged.length = 0
   state.downloads.length = 0
+  state.depotdownloader = undefined
   state.tars.length = 0
   state.excluded.length = 0
   state.appendTag = ''
@@ -552,6 +566,16 @@ describe('steamBuild', () => {
     expect(state.calls).toContain(line)
     expect(state.calls.indexOf(line)).toBeLessThan(state.calls.indexOf('download public/default'))
     expect(state.said).toContain(`public/linux  pushing ${IMAGE}:1.6.4871`)
+  })
+
+  test('with depotdownloader on the machine the cell downloads with it and says so', async () => {
+    state.depotdownloader = '/usr/bin/depotdownloader'
+    await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+    expect(state.calls).toContain('depotdownloader /usr/bin/depotdownloader public/default')
+    expect(state.calls).not.toContain('download public/default')
+    expect(state.calls).toContain(
+      'say public/linux  downloading 294100 (branch public, depot default) with depotdownloader',
+    )
   })
 
   test('a skipped cell says its reason at once, not only in the table', async () => {
