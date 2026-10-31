@@ -63,8 +63,8 @@ gives `130` and stops the container. [Reference](reference.md#exit-codes) lists 
 A C# source newer than the assembly it compiled into means stale code. Resolution checks every
 local mod including git clones and worktrees. A failed build stops the launch with exit `5`.
 
-There are three policies. `auto`, the default, builds every local mod that looks stale, counting a
-mod with sources and no assembly at all. `always` builds every local mod with a `.csproj` or
+There are three policies. `auto`, the default, builds every local mod that looks stale. A mod with
+sources and no assembly at all counts as stale. `always` builds every local mod with a `.csproj` or
 `.slnx`. `never` builds nothing.
 
 - `--build` selects `always`, and `--no-build` selects `never`.
