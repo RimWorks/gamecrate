@@ -6,16 +6,18 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
-  depotDownloaderEnv, downloadAppWithDepotDownloader, findDepotDownloaderToken, resolveDepotDownloader,
-  seedDepotDownloaderToken,
+  currentBuildId, depotDownloaderEnv, downloadAppWithDepotDownloader, findDepotDownloaderToken,
+  publishedBuildIdWithDepotDownloader, resolveDepotDownloader, seedDepotDownloaderToken,
 } from '../src/mods/depotdownloader'
 import { appDownloadRoot, steamHome } from '../src/mods/steamcmd'
 import { Exit } from '../src/types'
 import type { GamecrateError, RootConfig } from '../src/types'
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-depotdownloader.sh', import.meta.url))
+const FAKE_STEAMCMD = fileURLToPath(new URL('./fixtures/fake-steamcmd-app.sh', import.meta.url))
 const fakeEnv = [
   'FAKE_NO_TOKEN', 'FAKE_TOKEN_REJECTED', 'FAKE_LOGIN_FAIL', 'FAKE_BRANCH_FAIL', 'FAKE_NOT_OWNED', 'FAKE_EXIT',
+  'FAKE_BUILDID',
 ]
 
 let tmp = ''
@@ -276,5 +278,70 @@ describe('seedDepotDownloaderToken', () => {
     }
     expect(error?.code).toBe(Exit.Environment)
     expect(error?.message).toContain('DEPOTDOWNLOADER_ACCOUNT_B64')
+  })
+})
+
+describe('publishedBuildIdWithDepotDownloader', () => {
+  test('reads the buildid off the directory a manifest-only run names, with no -dir and no download', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_BUILDID = '26340439'
+    expect(await publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'unstable' })).toBe('26340439')
+    const argv = await recordedArgv(root)
+    expect(argv).toContain('-username tester -remember-password -app 294100 -branch unstable')
+    expect(argv).toContain('-manifest-only')
+    expect(argv).not.toContain('-dir')
+    expect(argv).not.toContain('-os')
+  })
+
+  test('a branch password rides the argv', async () => {
+    const { root, cfg } = await fake()
+    await publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'private-beta', password: 'hunter2' })
+    expect(await recordedArgv(root)).toContain('-branch private-beta -branchpassword hunter2')
+  })
+
+  test('leaves no scratch directory behind', async () => {
+    const { root, cfg } = await fake()
+    await publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'public' })
+    const { readdir } = await import('node:fs/promises')
+    expect((await readdir(steamHome(root))).filter((name) => name.startsWith('buildid-'))).toEqual([])
+  })
+
+  test('a branch depotdownloader cannot read is null, not a throw', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_BRANCH_FAIL = '1'
+    expect(await publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'nope' })).toBeNull()
+    void root
+  })
+
+  test('no stored login says to run steam login', async () => {
+    const { cfg } = await fake()
+    process.env.FAKE_NO_TOKEN = '1'
+    const error = await failure(() => publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'public' }))
+    expect(error.code).toBe(Exit.Environment)
+    expect(error.detail).toContain('gamecrate steam login')
+  })
+
+  test('a steam that is down is worth a retry', async () => {
+    const { cfg } = await fake()
+    process.env.FAKE_LOGIN_FAIL = 'ServiceUnavailable'
+    const error = await failure(() => publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'public' }))
+    expect(error.code).toBe(Exit.Unavailable)
+  })
+})
+
+describe('currentBuildId', () => {
+  test('asks depotdownloader when it is installed', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_BUILDID = '777'
+    expect(await currentBuildId(cfg, 294100, 'public')).toBe('777')
+    expect(await recordedArgv(root)).toContain('-manifest-only')
+  })
+
+  test('asks steamcmd when it is not', async () => {
+    const root = await mkdtemp(join(tmp, 'app-'))
+    process.env.PATH = join(tmp, 'empty-bin')
+    const cfg: RootConfig = { dataRoot: root, games: {}, steamcmd: { path: FAKE_STEAMCMD } }
+    expect(await currentBuildId(cfg, 294100, 'public')).toBe('111')
+    expect(await recordedArgv(root)).toContain('+app_info_print 294100')
   })
 })

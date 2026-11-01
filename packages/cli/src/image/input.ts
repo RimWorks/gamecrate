@@ -43,19 +43,24 @@ export function branchPasswordKey(branch: string): string {
  * every branch in a build, so it stays behind `password: true`.
  */
 export function branchPassword(branch: SteamBranch): string | undefined {
-  const key = branchPasswordKey(branch.name)
-  const keyed = process.env[key]
-  if (keyed !== undefined && keyed !== '') return keyed
-  if (branch.password !== true) return undefined
-  const bare = process.env.STEAM_BRANCH_PASSWORD
-  if (bare === undefined || bare === '') {
+  const found = branchPasswordIfSet(branch)
+  if (found === undefined && branch.password === true) {
     throw new GamecrateError(
       `branch "${branch.name}" needs a password and none is set`,
       Exit.Environment,
-      `set ${key}, or STEAM_BRANCH_PASSWORD, when you build one branch`,
+      `set ${branchPasswordKey(branch.name)}, or STEAM_BRANCH_PASSWORD, when you build one branch`,
     )
   }
-  return bare
+  return found
+}
+
+/** The same lookup with no throw, for a check that only warns when the password is missing. */
+export function branchPasswordIfSet(branch: SteamBranch): string | undefined {
+  const keyed = process.env[branchPasswordKey(branch.name)]
+  if (keyed !== undefined && keyed !== '') return keyed
+  if (branch.password !== true) return undefined
+  const bare = process.env.STEAM_BRANCH_PASSWORD
+  return bare === undefined || bare === '' ? undefined : bare
 }
 
 function repoOf(ref: string): string {

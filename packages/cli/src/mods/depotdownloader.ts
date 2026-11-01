@@ -1,14 +1,17 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
+import { warn } from '../cli/output'
 import { expandHome } from '../config/load'
 import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
 import type { RootConfig } from '../types'
 import { lockDir } from './source'
-import { appDownloadRoot, lastLines, steamAccount, steamHome, steamUnreachable } from './steamcmd'
+import {
+  appDownloadRoot, lastLines, publishedBuildId, steamAccount, steamHome, steamUnreachable,
+} from './steamcmd'
 import type { AppDownload } from './steamcmd'
 
 const NO_LOGIN = /Enter account password for|Access token was rejected/
@@ -136,24 +139,13 @@ export async function downloadAppWithDepotDownloader(binary: string, config: Roo
   }
 
   if (code === 0) return { dir, warnings: [] }
-  if (NO_LOGIN.test(text)) throw needsLogin(user, 'it has no stored login for that account')
-  const login = LOGIN_FAILED.exec(text)
-  if (login !== null) {
-    if (STEAM_DOWN.test(login[1] as string)) throw steamUnreachable(opts.steamAppId)
-    throw needsLogin(user, `steam said ${login[1]}`)
-  }
+  const failure = loginFailure(text, user, opts.steamAppId)
+  if (failure !== null) throw failure
   if (BRANCH_FAILED.test(text)) {
     throw new GamecrateError(
       `depotdownloader did not find branch "${opts.branch}" for app ${opts.steamAppId}`,
       Exit.Environment,
       'the branch may not exist, or the password may be wrong',
-    )
-  }
-  if (NOT_OWNED.test(text)) {
-    throw new GamecrateError(
-      `app ${opts.steamAppId} is not available to ${user}`,
-      Exit.Environment,
-      'the account that logged in does not own it',
     )
   }
   throw new GamecrateError(
@@ -169,4 +161,87 @@ function needsLogin(user: string, why: string): GamecrateError {
     Exit.Environment,
     `${why}. run \`gamecrate steam login\` to sign in again, including the steam guard tap`,
   )
+}
+
+function loginFailure(text: string, user: string, appId: number): GamecrateError | null {
+  if (NO_LOGIN.test(text)) return needsLogin(user, 'it has no stored login for that account')
+  const login = LOGIN_FAILED.exec(text)
+  if (login !== null) {
+    return STEAM_DOWN.test(login[1] as string) ? steamUnreachable(appId) : needsLogin(user, `steam said ${login[1]}`)
+  }
+  if (NOT_OWNED.test(text)) {
+    return new GamecrateError(
+      `app ${appId} is not available to ${user}`,
+      Exit.Environment,
+      'the account that logged in does not own it',
+    )
+  }
+  return null
+}
+
+/**
+ * The branch's buildid with no download: a `-manifest-only` run given no `-dir` names its
+ * directory `depots/<depot>/<buildid>`. null when depotdownloader found no manifest for the branch.
+ */
+export async function publishedBuildIdWithDepotDownloader(
+  binary: string,
+  config: RootConfig,
+  opts: { steamAppId: number; branch: string; password?: string },
+): Promise<string | null> {
+  const user = steamAccount(config.dataRoot)
+  const home = steamHome(config.dataRoot)
+  mkdirSync(home, { recursive: true })
+  const scratch = mkdtempSync(join(home, 'buildid-'))
+  const argv = [
+    '-username', user,
+    '-remember-password',
+    '-app', String(opts.steamAppId),
+    '-branch', opts.branch,
+    ...(opts.password === undefined ? [] : ['-branchpassword', opts.password]),
+    '-manifest-only',
+  ]
+  const release = await lockDir(home)
+  try {
+    const probe = spawnSync(binary, argv, {
+      cwd: scratch,
+      encoding: 'utf8',
+      env: { ...process.env, ...depotDownloaderEnv(config.dataRoot) },
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    if (probe.error) {
+      throw new GamecrateError(`could not run depotdownloader: ${binary}`, Exit.Environment, probe.error.message)
+    }
+    const found = buildIdUnder(join(scratch, 'depots'))
+    if (found !== null) return found
+    const text = `${probe.stdout ?? ''}\n${probe.stderr ?? ''}`
+    const failure = loginFailure(text, user, opts.steamAppId)
+    if (failure !== null) throw failure
+    warn(`depotdownloader named no buildid for "${opts.branch}". it said: ${lastLines(text, 4)}`)
+    return null
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+    await release()
+  }
+}
+
+function buildIdUnder(depots: string): string | null {
+  if (!existsSync(depots)) return null
+  for (const depot of readdirSync(depots)) {
+    const found = readdirSync(join(depots, depot)).find((name) => /^\d+$/.test(name))
+    if (found !== undefined) return found
+  }
+  return null
+}
+
+/** The branch's published buildid, from depotdownloader when one is installed and steamcmd otherwise. */
+export async function currentBuildId(
+  config: RootConfig,
+  appId: number,
+  branch: string,
+  password?: string,
+): Promise<string | null> {
+  const tool = resolveDepotDownloader(config)
+  return tool === undefined
+    ? publishedBuildId(config, appId, branch)
+    : publishedBuildIdWithDepotDownloader(tool, config, { steamAppId: appId, branch, password })
 }
