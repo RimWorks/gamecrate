@@ -1,5 +1,7 @@
-import { accessSync, constants, existsSync, statSync } from 'node:fs'
+import { accessSync, chmodSync, constants, existsSync, statSync } from 'node:fs'
 import { basename, delimiter, join } from 'node:path'
+
+const ExecBits = 0o111
 
 /** True when `path` is a file this process may run. A directory is not one. */
 export function executable(path: string): boolean {
@@ -35,4 +37,27 @@ export function pickExecutable(
     if (existsSync(join(dir, basename(candidate)))) return candidate
   }
   return configured
+}
+
+/** Adds the exec bits to each of `names` found under `dir`, and returns the ones it changed. */
+export function ensureExecutable(dir: string, names: string[]): string[] {
+  const changed: string[] = []
+  for (const name of new Set(names)) {
+    if (name === '') continue
+
+    const path = join(dir, name)
+    let mode: number
+    try {
+      const found = statSync(path)
+      if (!found.isFile()) continue
+      mode = found.mode
+    } catch {
+      continue
+    }
+
+    if ((mode & ExecBits) === ExecBits) continue
+    chmodSync(path, mode | ExecBits)
+    changed.push(name)
+  }
+  return changed
 }
