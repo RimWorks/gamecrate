@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test'
-import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync, statSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -483,6 +483,43 @@ describe('steamBuild', () => {
     }
     await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
     expect(state.local.get(`${IMAGE}:1.6.4871`)?.['gamecrate.executable']).toBe('./RimWorldLinux')
+  })
+
+  test('a downloaded game binary is made runnable before it is tarred', async () => {
+    const binary = join(state.gameDir, 'RimWorldLinux')
+    await writeFile(binary, '')
+    await chmod(binary, 0o644)
+
+    await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+
+    expect(statSync(binary).mode & 0o111).toBe(0o111)
+    expect(state.said.some((line) => line.includes('made ./RimWorldLinux runnable'))).toBe(true)
+  })
+
+  test('every candidate binary is made runnable, not just the configured one', async () => {
+    const configured = join(state.gameDir, 'RimWorldLinux')
+    const shipped = join(state.gameDir, 'RimWorld')
+    await writeFile(configured, '')
+    await writeFile(shipped, '')
+    await chmod(configured, 0o644)
+    await chmod(shipped, 0o644)
+
+    const renamed = { ...ONE, executables: ['./RimWorld', './RimWorldLinux'] }
+    await steamBuild(renamed, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+
+    expect(statSync(shipped).mode & 0o111).toBe(0o111)
+    expect(statSync(configured).mode & 0o111).toBe(0o111)
+  })
+
+  test('a binary that already runs is left alone and goes unreported', async () => {
+    const binary = join(state.gameDir, 'RimWorldLinux')
+    await writeFile(binary, '')
+    await chmod(binary, 0o755)
+
+    await steamBuild(ONE, { ...opts, push: false, load: true, onlyVariants: ['linux'] })
+
+    expect(statSync(binary).mode & 0o777).toBe(0o755)
+    expect(state.said.some((line) => line.includes('runnable'))).toBe(false)
   })
 
   test('the append is tagged with the versioned ref, so docker load names the image', async () => {

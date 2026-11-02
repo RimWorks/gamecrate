@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { status, warn } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
-import { pickExecutable } from '../executable'
+import { ensureExecutable, pickExecutable } from '../executable'
 import { currentBuildId, downloadAppWithDepotDownloader, resolveDepotDownloader } from '../mods/depotdownloader'
 import { downloadApp, isSteamUnavailable, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
@@ -315,7 +315,11 @@ async function download(
   } else {
     say(`reusing the ${ctx.branch.name} ${key} download`)
   }
-  return (await pending).dir
+
+  const { dir } = await pending
+  const changed = ensureExecutable(dir, [input.executable, ...(input.executables ?? [])])
+  if (changed.length > 0) say(`made ${changed.join(', ')} runnable`)
+  return dir
 }
 
 function loadOutput(stdout: string, stderr: string): string {
