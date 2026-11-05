@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,12 +17,55 @@ function config(managed?: string[]): GameConfig {
   } as unknown as GameConfig
 }
 
+function run(script: string, tree: Record<string, string[]>): string[] {
+  const base = mkdtempSync(join(tmpdir(), 'gamecrate-refs-'))
+  const out = join(base, 'out')
+  mkdirSync(out)
+  for (const [dir, files] of Object.entries(tree)) {
+    const target = join(base, 'game', dir)
+    mkdirSync(target, { recursive: true })
+    for (const name of files) writeFileSync(join(target, name), '')
+  }
+  const local = script.replaceAll("'/game", `'${join(base, 'game')}`).replaceAll('/out/', `${out}/`)
+  const done = spawnSync('sh', ['-c', local], { encoding: 'utf8' })
+  expect(done.status).toBe(0)
+  return readdirSync(out).sort()
+}
+
 describe('the extraction script', () => {
-  test('copies assemblies only', () => {
+  test('the native runtime copy is guarded by System.Private.CoreLib.dll', () => {
     const text = extractScript(['Foo_Data/Managed'], '/game')
     expect(text).toContain('set -- "$d"/*.dll')
     expect(text).toContain('cp "$@" /out/')
-    expect(text).not.toMatch(/"\$d"\/\*(?!\.dll)/)
+    expect(text).toContain('if [ -f "$d/System.Private.CoreLib.dll" ]; then')
+    expect(text).toMatch(/if \[ -f "\$d\/System\.Private\.CoreLib\.dll" \]; then\n\s*cp "\$d"\/\*\.so \/out\//)
+  })
+
+  test('a Unity-style Managed directory copies dlls and nothing else', () => {
+    const managed = ['Foo.dll', 'Bar.dll', 'libsomething.so', 'Foo.runtimeconfig.json']
+    expect(run(extractScript(['Foo_Data/Managed'], '/game'), { 'Foo_Data/Managed': managed })).toEqual([
+      'Bar.dll',
+      'Foo.dll',
+    ])
+  })
+
+  test('a self-contained game root brings its native runtime along', () => {
+    const root = [
+      'System.Private.CoreLib.dll',
+      'RimWorld.dll',
+      'libcoreclr.so',
+      'libclrjit.so',
+      'RimWorld.runtimeconfig.json',
+      'RimWorld.deps.json',
+    ]
+    expect(run(extractScript(['Foo_Data/Managed', '.'], '/game'), { '.': root })).toEqual([
+      'RimWorld.deps.json',
+      'RimWorld.dll',
+      'RimWorld.runtimeconfig.json',
+      'System.Private.CoreLib.dll',
+      'libclrjit.so',
+      'libcoreclr.so',
+    ])
   })
 
   test('probes the declared directories in order, under the container path', () => {

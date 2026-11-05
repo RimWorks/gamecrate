@@ -124,6 +124,12 @@ The digest and the assembly count go to standard error.
 Point a project at the `refs/version/<game>/<major.minor>` link, not at `refs/current/<game>`, which
 every `refs` run moves.
 
+When the game is self-contained, the directory holds `System.Private.CoreLib.dll` next to the
+game's own assemblies. In that case the printed directory also holds the runtime's own assemblies
+and its native `.so` files, and the game's `*.runtimeconfig.json` and `*.deps.json` next to them.
+A project can compile against the directory, and a test host can
+overlay it to run on that runtime.
+
 ## Credentials
 
 Every credential comes from the environment, never from a flag. A flag value is readable in the
