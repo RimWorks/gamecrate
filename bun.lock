@@ -31,6 +31,16 @@
         "typescript": "^7.0.2",
       },
     },
+    "packages/elin": {
+      "name": "@gamecrate/elin",
+      "version": "0.0.0-dev",
+      "devDependencies": {
+        "@gamecrate/cli": "*",
+        "@types/bun": "^1.4.4",
+        "@types/node": "^26.6.5",
+        "typescript": "^7.0.2",
+      },
+    },
     "packages/rimworld": {
       "name": "@gamecrate/rimworld",
       "version": "0.0.0-dev",
@@ -48,6 +58,8 @@
   },
   "packages": {
     "@gamecrate/cli": ["@gamecrate/cli@workspace:packages/cli"],
+
+    "@gamecrate/elin": ["@gamecrate/elin@workspace:packages/elin"],
 
     "@gamecrate/rimworld": ["@gamecrate/rimworld@workspace:packages/rimworld"],
 

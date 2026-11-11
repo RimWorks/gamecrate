@@ -13,7 +13,7 @@ import { expandHome } from '../config/load'
 import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
-import type { GameConfig, RootConfig } from '../types'
+import type { DepotOs, GameConfig, RootConfig } from '../types'
 import type { TaskState } from '../cli/taskboard'
 import { lockDir } from './source'
 
@@ -390,7 +390,7 @@ export function isSteamUnavailable(error: unknown): boolean {
 export async function downloadApp(config: RootConfig, opts: {
   steamAppId: number
   branch: string
-  depot?: 'linux' | 'windows' | 'macos'
+  depot?: DepotOs
   password?: string
   dataRoot: string
 }): Promise<AppDownload> {

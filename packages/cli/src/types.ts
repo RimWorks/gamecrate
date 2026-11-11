@@ -224,9 +224,11 @@ export interface ProfileConfig {
 /** Which game build the base has to run. Both runnable bases carry a virtual display. */
 export type BaseKind = 'linux' | 'windows' | 'none'
 
+export type DepotOs = 'linux' | 'windows' | 'macos'
+
 export interface SteamVariant {
   name: string
-  depot?: 'linux' | 'windows' | 'macos'
+  depot?: DepotOs
   base: BaseKind
   include: string[]
   executable?: string

@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -e
+unset $(git rev-parse --local-env-vars)
 
 echo "pre-push: lint"
 bun run lint

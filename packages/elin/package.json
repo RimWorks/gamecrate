@@ -1,0 +1,46 @@
+{
+  "name": "@gamecrate/elin",
+  "version": "0.0.0-dev",
+  "description": "Elin plugin for gamecrate: builds a reference image of the game's managed dlls and BepInEx core from steam.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RimWorks/gamecrate.git",
+    "directory": "packages/elin"
+  },
+  "homepage": "https://github.com/RimWorks/gamecrate/tree/main/packages/elin#readme",
+  "bugs": "https://github.com/RimWorks/gamecrate/issues",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/types/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --parallel",
+    "build": "bun run build:node && bun run build:types",
+    "build:node": "bun build ./src/index.ts --target=node --outfile dist/index.js",
+    "build:types": "tsc -p tsconfig.build.json",
+    "prepare": "bun run build",
+    "prepack": "bun run build"
+  },
+  "devDependencies": {
+    "@gamecrate/cli": "*",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}
