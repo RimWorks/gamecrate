@@ -28,6 +28,8 @@ facts, so the same core serves every title. Most work lands in `packages/cli/src
 - `packages/cli/` - the `gamecrate` command, the config loader, and the plugin contract
 - `packages/rimworld/` - the RimWorld plugin: `About.xml`, `ModsConfig.xml`, `Prefs.xml`, the
   per-mod `Mod_*.xml` settings files, and `Version.txt`
+- `packages/elin/` - the Elin plugin for Steam app `2135150`. It builds a refs-only image:
+  the game's managed assemblies and BepInEx core, with no runnable game
 - `Styles/` - the Vale style used on every markdown file here
 
 ## Setup and build
