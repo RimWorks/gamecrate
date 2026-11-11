@@ -7,7 +7,7 @@ import { expandHome } from '../config/load'
 import { executable, onPath } from '../executable'
 import { captureLive } from '../docker/run'
 import { Exit, GamecrateError } from '../types'
-import type { RootConfig } from '../types'
+import type { DepotOs, RootConfig } from '../types'
 import { lockDir } from './source'
 import {
   appDownloadRoot, lastLines, publishedBuildId, steamAccount, steamHome, steamUnreachable,
@@ -104,7 +104,7 @@ export function seedDepotDownloaderToken(
 export async function downloadAppWithDepotDownloader(binary: string, config: RootConfig, opts: {
   steamAppId: number
   branch: string
-  depot?: 'linux' | 'windows' | 'macos'
+  depot?: DepotOs
   password?: string
   dataRoot: string
 }): Promise<AppDownload> {
@@ -186,7 +186,7 @@ function loginFailure(text: string, user: string, appId: number): GamecrateError
 export async function publishedBuildIdWithDepotDownloader(
   binary: string,
   config: RootConfig,
-  opts: { steamAppId: number; branch: string; password?: string; depot?: 'linux' | 'windows' | 'macos' },
+  opts: { steamAppId: number; branch: string; password?: string; depot?: DepotOs },
 ): Promise<string | null> {
   const user = steamAccount(config.dataRoot)
   const home = steamHome(config.dataRoot)
@@ -240,7 +240,7 @@ export async function currentBuildId(
   appId: number,
   branch: string,
   password?: string,
-  depot?: 'linux' | 'windows' | 'macos',
+  depot?: DepotOs,
 ): Promise<string | null> {
   const tool = resolveDepotDownloader(config)
   return tool === undefined
