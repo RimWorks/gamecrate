@@ -90,7 +90,9 @@ export async function offerRebuild(input: {
   const plugins = args.plugin !== undefined && args.plugin.length > 0 ? args.plugin : undefined
   const built = await resolveSteamBuildInput(game, config, { plugins }, input.cwd, input.configFile)
   const branch = built.branches.find((b) => b.name === facts.branch) ?? { name: facts.branch! }
-  const published = await currentBuildId(config, built.steamAppId, branch.name, branchPasswordIfSet(branch))
+  const variant = facts.variant ?? built.variants[0]!.name
+  const depot = built.variants.find((v) => v.name === variant)?.depot
+  const published = await currentBuildId(config, built.steamAppId, branch.name, branchPasswordIfSet(branch), depot)
     .catch((error: unknown) => {
       if (isSteamUnavailable(error)) return null
       throw error
@@ -112,6 +114,6 @@ export async function offerRebuild(input: {
     platform: args.platform ?? 'linux/amd64',
     force: true,
     onlyBranches: [facts.branch!],
-    onlyVariants: [facts.variant ?? built.variants[0]!.name],
+    onlyVariants: [variant],
   })
 }

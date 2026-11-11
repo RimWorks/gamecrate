@@ -11,7 +11,11 @@ const launch = { passwords: [] as (string | undefined)[] }
 await mock.module('../src/launch/prepare', () => ({ imageDigest: async () => 'sha256:img' }))
 await mock.module('../src/image/input', () => ({
   ...realInput,
-  resolveSteamBuildInput: async () => ({ steamAppId: 294100, branches: [{ name: 'unstable', password: true }] }),
+  resolveSteamBuildInput: async () => ({
+    steamAppId: 294100,
+    branches: [{ name: 'unstable', password: true }],
+    variants: [{ name: 'linux', base: 'linux', include: [] }],
+  }),
 }))
 await mock.module('../src/mods/depotdownloader', () => ({
   ...realDepotDownloader,

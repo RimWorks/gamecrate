@@ -85,7 +85,7 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   )
 
   for (const branch of branches) {
-    const published = await currentBuildId(opts.config, input.steamAppId, branch.name, branchPasswordIfSet(branch))
+    const published = await currentBuildId(opts.config, input.steamAppId, branch.name, branchPasswordIfSet(branch), variants[0]!.depot)
       .catch((error: unknown) => {
         if (isSteamUnavailable(error)) throw error
         const said = error instanceof Error ? error.message : String(error)

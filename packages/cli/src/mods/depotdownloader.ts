@@ -186,7 +186,7 @@ function loginFailure(text: string, user: string, appId: number): GamecrateError
 export async function publishedBuildIdWithDepotDownloader(
   binary: string,
   config: RootConfig,
-  opts: { steamAppId: number; branch: string; password?: string },
+  opts: { steamAppId: number; branch: string; password?: string; depot?: 'linux' | 'windows' | 'macos' },
 ): Promise<string | null> {
   const user = steamAccount(config.dataRoot)
   const home = steamHome(config.dataRoot)
@@ -198,6 +198,7 @@ export async function publishedBuildIdWithDepotDownloader(
     '-app', String(opts.steamAppId),
     '-branch', opts.branch,
     ...(opts.password === undefined ? [] : ['-branchpassword', opts.password]),
+    ...(opts.depot === undefined ? [] : ['-os', opts.depot, '-osarch', '64']),
     '-manifest-only',
   ]
   const release = await lockDir(home)
@@ -239,9 +240,10 @@ export async function currentBuildId(
   appId: number,
   branch: string,
   password?: string,
+  depot?: 'linux' | 'windows' | 'macos',
 ): Promise<string | null> {
   const tool = resolveDepotDownloader(config)
   return tool === undefined
     ? publishedBuildId(config, appId, branch)
-    : publishedBuildIdWithDepotDownloader(tool, config, { steamAppId: appId, branch, password })
+    : publishedBuildIdWithDepotDownloader(tool, config, { steamAppId: appId, branch, password, depot })
 }
