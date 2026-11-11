@@ -30,6 +30,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "bun test --parallel",
     "build": "bun run build:node && bun run build:types",
     "build:node": "bun build ./src/index.ts --target=node --outfile dist/index.js",
     "build:types": "tsc -p tsconfig.build.json",

@@ -3,25 +3,42 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import * as realBuild from '../src/image/build'
 import * as realInput from '../src/image/input'
 import * as realDepotDownloader from '../src/mods/depotdownloader'
 import type { ImageFacts } from '../src/launch/image'
 
-const launch = { passwords: [] as (string | undefined)[] }
+const launch = {
+  passwords: [] as (string | undefined)[],
+  depots: [] as (string | undefined)[],
+  published: null as string | null,
+  builds: [] as { onlyVariants?: string[] }[],
+}
 await mock.module('../src/launch/prepare', () => ({ imageDigest: async () => 'sha256:img' }))
 await mock.module('../src/image/input', () => ({
   ...realInput,
   resolveSteamBuildInput: async () => ({
     steamAppId: 294100,
     branches: [{ name: 'unstable', password: true }],
-    variants: [{ name: 'linux', base: 'linux', include: [] }],
+    variants: [
+      { name: 'linux', base: 'linux', include: [] },
+      { name: 'windows', base: 'windows', include: [], depot: 'windows' },
+    ],
   }),
+}))
+await mock.module('../src/image/build', () => ({
+  ...realBuild,
+  steamBuild: async (_input: unknown, opts: { onlyVariants?: string[] }) => {
+    launch.builds.push(opts)
+    return []
+  },
 }))
 await mock.module('../src/mods/depotdownloader', () => ({
   ...realDepotDownloader,
-  currentBuildId: async (_config: unknown, _appId: number, _branch: string, password?: string) => {
+  currentBuildId: async (_config: unknown, _appId: number, _branch: string, password?: string, depot?: string) => {
     launch.passwords.push(password)
-    return null
+    launch.depots.push(depot)
+    return launch.published
   },
 }))
 const { lastCheckedAt, offerRebuild, recordCheck, shouldCheck } = await import('../src/launch/updates')
@@ -130,6 +147,32 @@ describe('offerRebuild', () => {
       expect(asked).toBe(0)
       expect(lastCheckedAt('sha256:img')).not.toBeNull()
     } finally {
+      if (before === undefined) delete process.env['XDG_CACHE_HOME']
+      else process.env['XDG_CACHE_HOME'] = before
+      await rm(cache, { recursive: true, force: true })
+    }
+  })
+
+  test('a rebuild after a buildid change probes and builds the variant the image was built from', async () => {
+    const cache = await mkdtemp(join(tmpdir(), 'dg-updates-'))
+    const before = process.env['XDG_CACHE_HOME']
+    process.env['XDG_CACHE_HOME'] = cache
+    launch.depots.length = 0
+    launch.builds.length = 0
+    launch.published = '200'
+    try {
+      await offerRebuild({
+        game: 'rimworld',
+        config: { dataRoot: cache, games: { rimworld: { image: { ref: 'ghcr.io/x/game' } } } } as never,
+        args: {} as never,
+        facts: { ...ours, variant: 'windows' },
+        cwd: cache,
+        ask: async () => true,
+      })
+      expect(launch.depots).toEqual(['windows'])
+      expect(launch.builds.map((b) => b.onlyVariants)).toEqual([['windows']])
+    } finally {
+      launch.published = null
       if (before === undefined) delete process.env['XDG_CACHE_HOME']
       else process.env['XDG_CACHE_HOME'] = before
       await rm(cache, { recursive: true, force: true })
