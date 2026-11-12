@@ -98,6 +98,7 @@ export function resolveSteamcmd(config: RootConfig): SteamcmdRunner {
       kind: 'docker',
       argv: [
         'docker', 'run', '--rm',
+        '--security-opt', 'seccomp=unconfined',
         '--user', `${process.getuid?.() ?? 0}:${process.getgid?.() ?? 0}`,
         '-v', `${home}:${home}`,
         '-e', `HOME=${home}`,
