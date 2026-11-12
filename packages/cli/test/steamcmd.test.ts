@@ -165,7 +165,7 @@ describe('resolveSteamcmd', () => {
     expect(thrown?.message).toContain(dir)
   })
 
-  test('falls back to docker, mapping the host user onto the bind', async () => {
+  test('falls back to docker, mapping the host user onto the bind, with seccomp off for 32-bit sockets', async () => {
     const dir = await binDir('docker')
     process.env.PATH = dir
     const runner = resolveSteamcmd(config())
@@ -173,6 +173,7 @@ describe('resolveSteamcmd', () => {
     expect(runner.kind).toBe('docker')
     expect(runner.argv).toEqual([
       'docker', 'run', '--rm',
+      '--security-opt', 'seccomp=unconfined',
       '--user', `${process.getuid?.()}:${process.getgid?.()}`,
       '-v', `${home}:${home}`,
       '-e', `HOME=${home}`,
