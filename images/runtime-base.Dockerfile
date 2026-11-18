@@ -24,6 +24,11 @@ RUN apt-get update \
         libsdl2-2.0-0 \
         libvulkan1 \
         libx11-6 \
+        libxcb-damage0 \
+        libxcb-render0 \
+        libxcb-screensaver0 \
+        libxcb-shape0 \
+        libxcb-xinput0 \
         libxcursor1 \
         libxext6 \
         libxi6 \
