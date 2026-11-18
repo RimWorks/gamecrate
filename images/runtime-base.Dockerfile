@@ -28,6 +28,7 @@ RUN apt-get update \
         libxext6 \
         libxi6 \
         libxinerama1 \
+        libxkbcommon-x11-0 \
         libxrandr2 \
         libxrender1 \
         mesa-vulkan-drivers \
