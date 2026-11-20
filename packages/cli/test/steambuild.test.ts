@@ -24,6 +24,8 @@ const state = {
   /** True when the host docker config uses a credential helper the crane container cannot run. */
   credsRefused: false,
   downloads: [] as string[],
+  /** What a download rejects with, or none. */
+  downloadThrows: null as Error | null,
   /** The depotdownloader binary the build finds, or none. */
   depotdownloader: undefined as string | undefined,
   /** Every status() line, in order. */
@@ -110,6 +112,7 @@ await mock.module('../src/mods/steamcmd', () => {
     downloadApp: (_config: unknown, opts: { branch: string; depot?: string }) => {
       state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
       state.calls.push(`download ${opts.branch}/${opts.depot ?? 'default'}`)
+      if (state.downloadThrows !== null) return Promise.reject(state.downloadThrows)
       return Promise.resolve({ dir: state.gameDir, warnings: [] })
     },
   }
@@ -160,11 +163,13 @@ await mock.module('../src/mods/depotdownloader', () => ({
   downloadAppWithDepotDownloader: (binary: string, _config: unknown, opts: { branch: string; depot?: string }) => {
     state.downloads.push(`${opts.branch}/${opts.depot ?? 'default'}`)
     state.calls.push(`depotdownloader ${binary} ${opts.branch}/${opts.depot ?? 'default'}`)
+    if (state.downloadThrows !== null) return Promise.reject(state.downloadThrows)
     return Promise.resolve({ dir: state.gameDir, warnings: [] })
   },
 }))
 
 const { steamBuild } = await import('../src/image/build')
+const { NoDepotsError } = realDepotDownloader
 import type { CellResult, SteamBuildOptions } from '../src/image/build'
 
 const VARIANTS: SteamVariant[] = [
@@ -215,6 +220,7 @@ beforeEach(() => {
   state.said.length = 0
   state.tagged.length = 0
   state.downloads.length = 0
+  state.downloadThrows = null
   state.depotdownloader = undefined
   state.tars.length = 0
   state.excluded.length = 0
@@ -275,6 +281,57 @@ describe('steamBuild', () => {
     expect(said).toContain('steam gave no buildid for public')
     expect(said).toContain('could not read the manifest')
     expect(state.downloads.length).toBeGreaterThan(0)
+  })
+
+  test('steam listing no depots keeps an image that exists, says so, and downloads nothing', async () => {
+    state.publishedThrows = new NoDepotsError(294100, 'public')
+    state.labels.set(`${IMAGE}:latest`, { 'steam.buildid': '1' })
+    const seen: string[] = []
+    const probe = useSink({ write: (_c, chunk) => void seen.push(String(chunk)), close() {} })
+    let results: CellResult[]
+    try {
+      results = await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+    } finally {
+      probe.close()
+    }
+    expect(results[0]).toMatchObject({ status: 'skipped', reason: 'steam-named-no-depots' })
+    expect(results[0]!.tags).toContain('latest')
+    expect(state.downloads).toEqual([])
+    expect(seen.join('')).toContain(`${IMAGE}:latest stays as it is`)
+  })
+
+  test('steam listing no depots with no image to keep fails the cell and names steam', async () => {
+    state.depotdownloader = '/fake/depotdownloader'
+    state.publishedThrows = new NoDepotsError(294100, 'public')
+    state.downloadThrows = new NoDepotsError(294100, 'public')
+    const results = await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+    expect(results[0]).toMatchObject({ status: 'failed', tags: [] })
+    expect(results[0]!.reason).toContain('steam listed no depots')
+  })
+
+  test('a download steam answers with no depots keeps the image it would have replaced', async () => {
+    state.depotdownloader = '/fake/depotdownloader'
+    state.labels.set(`${IMAGE}:latest`, { 'steam.buildid': '1' })
+    state.downloadThrows = new NoDepotsError(294100, 'public')
+    const seen: string[] = []
+    const probe = useSink({ write: (_c, chunk) => void seen.push(String(chunk)), close() {} })
+    let results: CellResult[]
+    try {
+      results = await steamBuild(ONE, { ...opts, onlyVariants: ['linux'] })
+    } finally {
+      probe.close()
+    }
+    expect(results[0]).toMatchObject({ status: 'skipped', reason: 'steam-named-no-depots' })
+    expect(state.downloads).toEqual(['public/default'])
+    expect(seen.join('')).toContain(`${IMAGE}:latest stays as it is`)
+  })
+
+  test('--force does not keep an image when steam lists no depots', async () => {
+    state.depotdownloader = '/fake/depotdownloader'
+    state.labels.set(`${IMAGE}:latest`, { 'steam.buildid': '9999' })
+    state.downloadThrows = new NoDepotsError(294100, 'public')
+    const results = await steamBuild(ONE, { ...opts, force: true, onlyVariants: ['linux'] })
+    expect(results[0]).toMatchObject({ status: 'failed', tags: [] })
   })
 
   test('the gate skips an up-to-date cell and builds a missing one', async () => {

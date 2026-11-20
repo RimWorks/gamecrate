@@ -19,6 +19,7 @@ const LOGIN_FAILED = /Unable to login to Steam3: (\S+)/
 const STEAM_DOWN = /^(ServiceUnavailable|TryAnotherCM|Timeout)$/
 const BRANCH_FAILED = /Password was invalid for branch|was not found, either it does not exist or it has a password/
 const NOT_OWNED = /is not available from this account/
+const NO_DEPOTS = /Couldn't find any depots to download for app/
 const TOKEN_VAR = 'DEPOTDOWNLOADER_ACCOUNT_B64'
 
 /**
@@ -97,6 +98,17 @@ export function seedDepotDownloaderToken(
   return path
 }
 
+/** Steam took the login and then listed no depots for the app, which comes and goes on its side. */
+export class NoDepotsError extends GamecrateError {
+  constructor(appId: number, branch: string) {
+    super(
+      `steam listed no depots for app ${appId} on branch "${branch}"`,
+      Exit.Unavailable,
+      'the login worked and steam named nothing to download. that comes and goes on its side, so retry in a few minutes. if it never passes, check the depot the variant asks for',
+    )
+  }
+}
+
 /**
  * Depots only, so the account's workshop subscriptions never come along. The output maps onto the
  * failures `downloadApp` raises, so a build reads either the same way.
@@ -148,6 +160,7 @@ export async function downloadAppWithDepotDownloader(binary: string, config: Roo
       'the branch may not exist, or the password may be wrong',
     )
   }
+  if (NO_DEPOTS.test(text)) throw new NoDepotsError(opts.steamAppId, opts.branch)
   throw new GamecrateError(
     `depotdownloader exited ${code} for app ${opts.steamAppId} on branch "${opts.branch}"`,
     Exit.Environment,
@@ -217,6 +230,7 @@ export async function publishedBuildIdWithDepotDownloader(
     const text = `${probe.stdout ?? ''}\n${probe.stderr ?? ''}`
     const failure = loginFailure(text, user, opts.steamAppId)
     if (failure !== null) throw failure
+    if (NO_DEPOTS.test(text)) throw new NoDepotsError(opts.steamAppId, opts.branch)
     warn(`depotdownloader named no buildid for "${opts.branch}". it said: ${lastLines(text, 4)}`)
     return null
   } finally {

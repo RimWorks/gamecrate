@@ -41,6 +41,31 @@ describe('decideGate', () => {
     })
   })
 
+  test('steam listing no depots keeps an image that exists, labelled or not', () => {
+    expect(decideGate({ ...current, published: null, noDepots: true })).toEqual({
+      build: false,
+      reason: 'steam-named-no-depots',
+    })
+    expect(decideGate({ ...current, published: null, labelled: null, noDepots: true })).toEqual({
+      build: false,
+      reason: 'steam-named-no-depots',
+    })
+  })
+
+  test('steam listing no depots still builds when there is no image to keep', () => {
+    expect(decideGate({ published: null, imagePresent: false, labelled: null, force: false, noDepots: true })).toEqual({
+      build: true,
+      reason: 'no-image',
+    })
+  })
+
+  test('force beats a steam that listed no depots', () => {
+    expect(decideGate({ ...current, published: null, force: true, noDepots: true })).toEqual({
+      build: true,
+      reason: 'forced',
+    })
+  })
+
   test('force beats a match', () => {
     expect(decideGate({ ...current, force: true })).toEqual({ build: true, reason: 'forced' })
   })

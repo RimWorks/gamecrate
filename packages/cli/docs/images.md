@@ -82,6 +82,12 @@ already there. When they match, the cell skips and downloads nothing, saving tim
 DepotDownloader installed, gamecrate reads that build id through it, so a fresh runner never
 starts `steamcmd` at all.
 
+Steam can accept the login and then list no depots for a game the account owns. That state clears
+within minutes, and no download can finish while it lasts. When an image already exists, gamecrate
+keeps it and skips the cell with the reason `steam-named-no-depots`. It also warns that the image
+might be behind. A cell with no image fails, and `--force` never keeps an image. DepotDownloader
+reports this state, so the rule applies when gamecrate downloads with it.
+
 A build skipped by the buildid gate still re-applies its moving tags to the image already there,
 so an alias from `--alias` lands. A `base: none` variant built without `--push` is skipped before
 the tag step, and lists no tags, because it builds nothing to tag.
