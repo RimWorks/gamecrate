@@ -7,7 +7,9 @@ import { status, warn } from '../cli/output'
 import { gatedDlc } from '../dlcgate'
 import { capture } from '../docker/run'
 import { ensureExecutable, pickExecutable } from '../executable'
-import { currentBuildId, downloadAppWithDepotDownloader, resolveDepotDownloader } from '../mods/depotdownloader'
+import {
+  currentBuildId, downloadAppWithDepotDownloader, NoDepotsError, resolveDepotDownloader,
+} from '../mods/depotdownloader'
 import { downloadApp, isSteamUnavailable, steamHome } from '../mods/steamcmd'
 import type { AppDownload } from '../mods/steamcmd'
 import { Exit, GamecrateError } from '../types'
@@ -16,6 +18,7 @@ import type { RootConfig, SteamBranch, SteamVariant } from '../types'
 import { resolveBase } from './base'
 import { checkRegistryAuthEarly, craneAppend, craneDigest, craneLabels, craneMutateLabels, cranePush, craneTag } from './crane'
 import { decideGate } from './gate'
+import type { GateDecision } from './gate'
 import { branchPassword, branchPasswordIfSet } from './input'
 import type { SteamBuildInput } from './input'
 import { sanitizeVersion, tagsFor } from './tags'
@@ -85,8 +88,13 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
   )
 
   for (const branch of branches) {
+    let noDepots = false
     const published = await currentBuildId(opts.config, input.steamAppId, branch.name, branchPasswordIfSet(branch), variants[0]!.depot)
       .catch((error: unknown) => {
+        if (error instanceof NoDepotsError) {
+          noDepots = true
+          return null
+        }
         if (isSteamUnavailable(error)) throw error
         const said = error instanceof Error ? error.message : String(error)
         warn(`steam gave no buildid for ${branch.name}, so this cell cannot skip: ${said}`)
@@ -95,7 +103,7 @@ export async function steamBuild(input: SteamBuildInput, opts: SteamBuildOptions
     // per branch, because a branch is a different set of files
     const downloads = new Map<string, Promise<AppDownload>>()
     for (const variant of variants) {
-      results.push(await cell(input, opts, { branch, variant, published, defaultBranch, defaultVariant, downloads }))
+      results.push(await cell(input, opts, { branch, variant, published, noDepots, defaultBranch, defaultVariant, downloads }))
     }
   }
   return results
@@ -134,6 +142,7 @@ interface CellContext {
   branch: SteamBranch
   variant: SteamVariant
   published: string | null
+  noDepots: boolean
   defaultBranch: string
   defaultVariant: string
   downloads: Map<string, Promise<AppDownload>>
@@ -170,21 +179,13 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
   const found = await readGate(gateRef, opts)
   const decision = decideGate({
     published: ctx.published,
+    noDepots: ctx.noDepots,
     imagePresent: found.present,
     labelled: found.buildid,
     force: opts.force,
   })
-  if (!decision.build) {
-    try {
-      await moveTags(input.image, gateRef, moving.slice(1), opts)
-    } catch (error) {
-      opts.onCell?.(id, { state: 'failed', detail: message(error) })
-      return { ...row, status: 'failed', reason: message(error), tags: [] }
-    }
-    opts.onCell?.(id, { state: 'skipped', detail: decision.reason })
-    say(`skipped, ${decision.reason}`)
-    return { ...row, status: 'skipped', reason: decision.reason, tags: moving }
-  }
+  const kept = { id, row, gateRef, moving, say }
+  if (!decision.build) return skipCell(input, opts, kept, decision.reason)
 
   try {
     const dir = await download(input, opts, ctx, say)
@@ -239,9 +240,42 @@ async function cell(input: SteamBuildInput, opts: SteamBuildOptions, ctx: CellCo
     opts.onCell?.(id, { state: 'done', detail: decision.reason })
     return { ...row, status: 'built', reason: decision.reason, tags }
   } catch (error) {
+    if (keepsImage(error, found.present, opts.force)) return skipCell(input, opts, kept, 'steam-named-no-depots')
     opts.onCell?.(id, { state: 'failed', detail: message(error) })
     return { ...row, status: 'failed', reason: message(error), tags: [] }
   }
+}
+
+interface KeptCell {
+  id: string
+  row: { branch: string; variant: string }
+  gateRef: string
+  moving: string[]
+  say: (text: string) => void
+}
+
+function keepsImage(error: unknown, imagePresent: boolean, force: boolean): boolean {
+  return error instanceof NoDepotsError && imagePresent && !force
+}
+
+async function skipCell(
+  input: SteamBuildInput,
+  opts: SteamBuildOptions,
+  at: KeptCell,
+  reason: GateDecision['reason'],
+): Promise<CellResult> {
+  if (reason === 'steam-named-no-depots') {
+    warn(`steam listed no depots for ${at.row.branch}, so ${at.gateRef} stays as it is and may be behind`)
+  }
+  try {
+    await moveTags(input.image, at.gateRef, at.moving.slice(1), opts)
+  } catch (error) {
+    opts.onCell?.(at.id, { state: 'failed', detail: message(error) })
+    return { ...at.row, status: 'failed', reason: message(error), tags: [] }
+  }
+  opts.onCell?.(at.id, { state: 'skipped', detail: reason })
+  at.say(`skipped, ${reason}`)
+  return { ...at.row, status: 'skipped', reason, tags: at.moving }
 }
 
 async function gatedDataDirs(

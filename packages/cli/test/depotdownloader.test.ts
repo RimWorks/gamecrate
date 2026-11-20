@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   currentBuildId, depotDownloaderEnv, downloadAppWithDepotDownloader, findDepotDownloaderToken,
-  publishedBuildIdWithDepotDownloader, resolveDepotDownloader, seedDepotDownloaderToken,
+  NoDepotsError, publishedBuildIdWithDepotDownloader, resolveDepotDownloader, seedDepotDownloaderToken,
 } from '../src/mods/depotdownloader'
 import { appDownloadRoot, steamHome } from '../src/mods/steamcmd'
 import { Exit } from '../src/types'
@@ -17,7 +17,7 @@ const FAKE = fileURLToPath(new URL('./fixtures/fake-depotdownloader.sh', import.
 const FAKE_STEAMCMD = fileURLToPath(new URL('./fixtures/fake-steamcmd-app.sh', import.meta.url))
 const fakeEnv = [
   'FAKE_NO_TOKEN', 'FAKE_TOKEN_REJECTED', 'FAKE_LOGIN_FAIL', 'FAKE_BRANCH_FAIL', 'FAKE_NOT_OWNED', 'FAKE_EXIT',
-  'FAKE_BUILDID',
+  'FAKE_BUILDID', 'FAKE_NO_DEPOTS',
 ]
 
 let tmp = ''
@@ -222,6 +222,19 @@ describe('downloadAppWithDepotDownloader', () => {
     expect(error.message).toContain('tester')
   })
 
+  test('a login steam answers with no depots is steam, worth a retry, and names the branch', async () => {
+    const { root, cfg } = await fake()
+    process.env.FAKE_NO_DEPOTS = '1'
+    const error = await failure(() => downloadAppWithDepotDownloader(FAKE, cfg, {
+      steamAppId: 294100, branch: 'unstable', dataRoot: root,
+    }))
+    expect(error).toBeInstanceOf(NoDepotsError)
+    expect(error.code).toBe(Exit.Unavailable)
+    expect(error.message).toContain('294100')
+    expect(error.message).toContain('unstable')
+    expect(error.detail).toContain('retry')
+  })
+
   test('an unexplained exit carries the code and the last lines', async () => {
     const { root, cfg } = await fake()
     process.env.FAKE_EXIT = '3'
@@ -319,6 +332,14 @@ describe('publishedBuildIdWithDepotDownloader', () => {
     const error = await failure(() => publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'public' }))
     expect(error.code).toBe(Exit.Environment)
     expect(error.detail).toContain('gamecrate steam login')
+  })
+
+  test('steam listing no depots is a throw, because null would send the build off to download', async () => {
+    const { cfg } = await fake()
+    process.env.FAKE_NO_DEPOTS = '1'
+    const error = await failure(() => publishedBuildIdWithDepotDownloader(FAKE, cfg, { steamAppId: 294100, branch: 'public' }))
+    expect(error).toBeInstanceOf(NoDepotsError)
+    expect(error.code).toBe(Exit.Unavailable)
   })
 
   test('a steam that is down is worth a retry', async () => {

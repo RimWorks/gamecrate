@@ -5,6 +5,7 @@
 # FAKE_NO_TOKEN no stored login: the prompt, then the crash a real one dies with when stdin is closed
 # FAKE_TOKEN_REJECTED the stored token expired. FAKE_LOGIN_FAIL one EResult name
 # FAKE_BRANCH_FAIL the branch password was wrong. FAKE_NOT_OWNED the account lacks the app
+# FAKE_NO_DEPOTS steam took the login and listed no depots for the app
 # FAKE_EXIT the exit code. FAKE_BUILDID what a -manifest-only run with no -dir names its directory
 
 PATH="/usr/bin:/bin:$PATH"
@@ -75,6 +76,10 @@ if [ -n "$FAKE_BRANCH_FAIL" ]; then
   exit "${FAKE_EXIT:-1}"
 fi
 printf "Using app branch: '%s'.\n" "$branch"
+if [ -n "$FAKE_NO_DEPOTS" ]; then
+  printf "Couldn't find any depots to download for app %s\nDisconnected from Steam\n" "$app"
+  exit "${FAKE_EXIT:-1}"
+fi
 if [ -n "$manifest_only" ]; then
   # with no -dir a real one names the install dir after the branch's buildid, under the cwd
   [ -z "$dir" ] && dir="depots/294103/${FAKE_BUILDID:-26340439}"
