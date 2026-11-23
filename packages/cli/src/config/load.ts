@@ -414,6 +414,8 @@ function resolveNamed(game: GameConfig, name: string, seen: string[]): ProfileCo
   }
   const instances = deepMerge(parent.instances ?? {}, self.instances ?? {}, true)
   if (Object.keys(instances).length > 0) out.instances = instances
+  const modSettings = [...(parent.modSettings ?? []), ...(self.modSettings ?? [])]
+  if (modSettings.length > 0) out.modSettings = modSettings
   const includeBase = self.includeBase ?? parent.includeBase
   if (includeBase !== undefined) out.includeBase = includeBase
   const auto = self.autoDependencies ?? parent.autoDependencies
