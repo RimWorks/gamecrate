@@ -194,9 +194,13 @@ describe('merge chain', () => {
 })
 
 describe('resolveProfile', () => {
+  const loud = { file: 'Mod_Kitted.Core_KittedMod.xml', class: 'Kitted.Settings', values: { level: 'Trace' }, replace: ['level'] }
+  const dev = { file: 'Mod_Kitted.Roshar_RosharMod.xml', class: 'Kitted.RosharSettings', values: { devMode: true } }
   const game: GameConfig = {
     ...structuredClone(ATLAS_DEFAULTS),
     profiles: {
+      tuned: { mods: [], modSettings: [loud] },
+      retuned: { extends: 'tuned', modSettings: [dev] },
       kitted: { mods: ['Kitted.Core', 'Kitted.Roshar'], settings: { devMode: false } },
       lightweave: { mods: ['Kitted.LightweaveRimBridge'], extends: 'kitted' },
       trimmed: { extends: 'lightweave', exclude: ['Kitted.Roshar', 'patchlib.*'] },
@@ -243,6 +247,18 @@ describe('resolveProfile', () => {
 
   test('settings merge down the extends chain', () => {
     expect(resolveProfile(game, 'lightweave').settings).toEqual({ devMode: false })
+  })
+
+  test('the mod settings files survive resolution', () => {
+    expect(resolveProfile(game, 'tuned').modSettings).toEqual([loud])
+  })
+
+  test('a child writes its parent mod settings files, then its own', () => {
+    expect(resolveProfile(game, 'retuned').modSettings).toEqual([loud, dev])
+  })
+
+  test('a profile that sets no mod settings files resolves without the list', () => {
+    expect(resolveProfile(game, 'kitted').modSettings).toBeUndefined()
   })
 
   test('alias resolves to modless, which drops base mods', () => {
